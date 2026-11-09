@@ -23,10 +23,13 @@ jobs:
             cloudflare/backend/package-lock.json
       - run: npm ci --no-audit --no-fund
       - run: npm ci --prefix backend --no-audit --no-fund
+      - run: npm run runtime:check --prefix backend
       - run: npm run types --prefix backend
       - run: npm run typecheck --prefix backend
       - run: npm test
       - run: npm test --prefix backend
+      - name: Build the pinned Bubblewrap compatibility helper
+        run: docker build --platform linux/amd64 --target bubblewrap-compat-build --file backend/Dockerfile .
       - name: Compile Linux security probes
         run: |
           gcc -std=c11 -O2 -Wall -Wextra -Werror backend/native/proc-guard.c -o /tmp/hivemind-proc-guard

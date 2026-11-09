@@ -1,7 +1,7 @@
 # Cloudflare 백엔드
 
 공식 Codex·Claude Code CLI를 작업별 Cloudflare Container에서 실행하는 초기 백엔드다.
-현재 Codex 원격 수용을 통과했고, Claude 운영 실행은 실제 명령 경로의 수용이 끝날 때까지 차단한다.
+현재 계정에서 Codex·Claude 동시 원격 실행, native worker, 별도 테스트와 인증 회수를 검증했다.
 [최신 검증 상태](../docs/verification/2026-11-10-cloudflare.md)를 확인한다.
 로컬 클라이언트는 소스를 올리고 결과를 검토한다. 모델 호출은 사용자 구독 인증을 사용한다.
 
@@ -33,6 +33,7 @@ Node.js 24.14 이상 25 미만, Docker, Wrangler 로그인 계정이 필요하�
 
 ```sh
 npm ci
+npm run runtime:check
 npm run types
 npm run typecheck
 npm test
@@ -57,8 +58,15 @@ R2 구독을 먼저 활성화하고 artifact·credential 버킷 두 개를 만�
 | `AUTH_RETURN_PRIVATE_KEY` | 대응하는 RSA PKCS8 PEM. Worker에서만 복호화 |
 
 ```sh
+npm run runtime:stamp
+npm run runtime:check
 npx wrangler deploy --config wrangler.json --secrets-file ../.hivemind/backend-secrets.json
 ```
+
+실행 소스나 빌드 입력을 바꾸면 버전 파일을 갱신하고 함께 커밋한다.
+배포 후 `/health`의 `expectedRuntimeRevision`이 `runtime-build.json`의 `digest`와 같은지 확인한다.
+컨테이너 지문이 맞기 전에는 인증을 전달하지 않는다. 확인한 버전은 시도별로 고정한다.
+[버전 확인 규칙](../docs/adr/0004-runtime-revision-fence.md)과 배포 이미지 digest도 함께 기록한다.
 
 관리 비밀과 반환 개인키는 컨테이너에 전달하지 않는다.
 구독 인증은 제어 API로 별도 등록하며 일반 소스 snapshot에 포함하지 않는다.
@@ -73,6 +81,7 @@ Claude는 공식 setup-token의 OAuth 토큰만 허용한다. API 키는 허용�
 Claude는 검증 조건을 통과하기 전 `CLAUDE_NESTED_APPROVED=false`를 유지한다.
 Cloudflare에서 파일 쓰기·private/proc 읽기·부모 환경·토큰 환경 제거·권한 제거를 검증한 뒤에만 `true`로 바꾼다.
 호환 모드에는 [추가 격리](../docs/adr/0002-claude-layered-sandbox.md)를 적용한다.
+현재 설정의 `true` 값은 문서에 기록한 계정의 검증 결과다. 새 계정에서는 검증 전 `false`로 설정한다.
 관리 Bash 훅이 공식 Codex 로컬 sandbox와 namespace 필터를 함께 실행한다.
 이 경로는 모델을 호출하지 않으며 Codex 인증이 필요하지 않다.
 실제 Claude 모델과 내부 서브에이전트는 Claude 구독을 사용한다.

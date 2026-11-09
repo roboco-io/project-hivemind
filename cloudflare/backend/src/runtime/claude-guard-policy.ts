@@ -9,5 +9,8 @@ export function filteredEnvironment(source:NodeJS.ProcessEnv):Record<string,stri
  return Object.fromEntries(Object.entries(source).filter((entry):entry is [string,string]=>entry[1]!==undefined&&!excluded.has(entry[0])&&!/^(OPENAI_|ANTHROPIC_|CLOUDFLARE_|CF_API_|AWS_|CODEX_)/.test(entry[0])));
 }
 export function claudeGuardEnvironment(source:NodeJS.ProcessEnv,paths:GuardPaths=CLAUDE_GUARD_PATHS):Record<string,string>{
- return {...filteredEnvironment(source),TMPDIR:'/tmp',CODEX_HOME:claudeGuardHome(paths)};
+ const env=filteredEnvironment(source),compat='/opt/hivemind/compat-bin';
+ const inherited=env.PATH||'/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+ const path=[compat,...inherited.split(':').filter(part=>part!==compat)].join(':');
+ return {...env,PATH:path,TMPDIR:'/tmp',CODEX_HOME:claudeGuardHome(paths)};
 }

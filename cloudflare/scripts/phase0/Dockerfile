@@ -1,3 +1,11 @@
+FROM node:24.14.0-bookworm-slim AS bubblewrap-compat-build
+RUN sed -i 's/Types: deb$/Types: deb deb-src/' /etc/apt/sources.list.d/debian.sources && apt-get update && apt-get install -y --no-install-recommends build-essential meson ninja-build pkg-config libcap-dev libselinux1-dev dpkg-dev patch xz-utils
+COPY backend/native/build-bubblewrap-compat.sh backend/native/bubblewrap-nested-proc.patch backend/native/BUBBLEWRAP-NOTICE.md /build-input/
+COPY docs/bubblewrap-compatibility.md /build-input/bubblewrap-compatibility.md
+COPY backend/Dockerfile /build-input/Dockerfile.backend
+COPY scripts/phase0/Dockerfile /build-input/Dockerfile.phase0
+RUN sh /build-input/build-bubblewrap-compat.sh
+
 FROM node:24.14.0-bookworm-slim AS proc-guard-build
 RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev linux-libc-dev
 COPY backend/native/proc-guard.c /build/proc-guard.c
@@ -38,6 +46,7 @@ COPY --chown=node:node scripts/phase0/claude-codex-layer-probe.ts scripts/phase0
 COPY --chown=node:node scripts/phase0/compute-stdio-probe.ts scripts/phase0/compute-stdio-probe.ts
 COPY --chown=node:node scripts/phase0/claude-command-concurrency-probe.ts scripts/phase0/claude-command-concurrency-probe.ts
 COPY backend/src/contracts.ts backend/src/snapshot.ts ./backend/src/
+COPY backend/runtime-build.json ./backend/runtime-build.json
 COPY backend/src/runtime/providers.ts backend/src/runtime/claude-bash-hook.ts backend/src/runtime/process.ts backend/src/runtime/compute-sandbox.ts backend/src/runtime/claude-command-guard.ts backend/src/runtime/claude-guard-policy.ts ./backend/src/runtime/
 COPY --chown=node:node scripts/phase0/run-bounded.ts scripts/phase0/run-bounded.ts
 COPY --chown=node:node tests/phase0-mcp.test.ts tests/phase0-mcp.test.ts
@@ -46,6 +55,8 @@ COPY --from=proc-guard-build /build/proc-guard /opt/hivemind/bin/proc-guard
 COPY --from=proc-guard-build /build/namespace-probe /opt/hivemind/bin/namespace-probe
 COPY --from=proc-guard-build /build/namespace-guard /opt/hivemind/bin/namespace-guard
 COPY backend/config/claude-managed-settings.json /etc/claude-code/managed-settings.json
+COPY --from=bubblewrap-compat-build --chown=0:0 --chmod=0755 /artifacts/bin/bwrap /opt/hivemind/compat-bin/bwrap
+COPY --from=bubblewrap-compat-build --chown=0:0 /artifacts/bubblewrap-source/ /usr/share/hivemind/bubblewrap-source/
 
 USER node
 WORKDIR /workspace

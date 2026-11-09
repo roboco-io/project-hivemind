@@ -16,7 +16,7 @@
     ]
   },
   "vars": {
-    "CLAUDE_NESTED_APPROVED": "false",
+    "CLAUDE_NESTED_APPROVED": "true",
     "CODEX_SANDBOX_APPROVED": "true"
   },
   "r2_buckets": [

@@ -1,6 +1,7 @@
 import type {RuntimeInput,Provider,ProcessResult} from '../contracts.ts';
 import {validateSnapshot} from '../snapshot.ts';
 import {claudeOuterSandboxSettings} from './claude-guard-policy.ts';
+import {isDeepStrictEqual} from 'node:util';
 export interface ProviderPaths {home:string;privateDir:string;workspace:string;scriptRoot:string}
 const object=(x:unknown):Record<string,any>|null=>x!==null&&typeof x==='object'&&!Array.isArray(x)?x as Record<string,any>:null;
 const string=(x:unknown,max=24000):x is string=>typeof x==='string'&&x.length>0&&x.length<=max&&!x.includes('\0');
@@ -94,16 +95,65 @@ function mcpReceipts(provider:Provider,events:Record<string,any>[]):McpReceipt[]
  }
  return receipts;
 }
-export function parseProviderResult(provider:Provider,process:ProcessResult):{success:boolean;summary:string;sessionId?:string;usage?:Record<string,number>;errorCode?:'NEEDS_REAUTH';mcpReceipts:McpReceipt[]} {
+export type ProviderFailureReason='AUTHENTICATION_REQUIRED'|'PROCESS_NOT_PASSED'|'CAPTURE_TRUNCATED'|'CODEX_MISSING_COMPLETION'|'CODEX_ERROR_EVENT'|'CLAUDE_NATIVE_ERROR'|'CLAUDE_RESULT_COUNT'|'CLAUDE_RESULT_SCOPE'|'CLAUDE_RESULT_RECEIPTS'|'CLAUDE_RESULT_NOT_LAST'|'CLAUDE_RESULT_SUBTYPE'|'CLAUDE_RESULT_ERROR_FLAG'|'CLAUDE_RESULT_TEXT_MISSING'|'CLAUDE_REFUSAL'|'CLAUDE_PERMISSION_DENIALS';
+export type TrailingEventKind='RATE_LIMIT_EVENT'|'SYSTEM_HOOK'|'OTHER';
+export interface ClaudeResultShape {initialSession:'ROOT'|'OTHER'|'MISSING';finalSession:'ROOT'|'OTHER'|'MISSING';parentToolUse:'NONEMPTY'|'NULL'|'MISSING';uuidPresent:boolean;uuidDuplicate:boolean;identicalToFinal:boolean;subtype:'SUCCESS'|'OTHER';isError:'TRUE'|'FALSE'|'MISSING'}
+export function parseProviderResult(provider:Provider,process:ProcessResult):{success:boolean;summary:string;sessionId?:string;usage?:Record<string,number>;errorCode?:'NEEDS_REAUTH';mcpReceipts:McpReceipt[];failureReasons:ProviderFailureReason[];trailingEventKinds?:TrailingEventKind[];permissionDenialCount?:number;resultCount?:number;resultShapes?:ClaudeResultShape[];resultShapesTruncated?:boolean} {
  const events=records(process.stdout),errorCode=authFailure(provider,events,process)?'NEEDS_REAUTH' as const:undefined,receipts=mcpReceipts(provider,events);let summary='',sessionId:string|undefined,usage:Record<string,number>|undefined;
+ const failureReasons:ProviderFailureReason[]=[];
+ if(errorCode)failureReasons.push('AUTHENTICATION_REQUIRED');
+ if(process.status!=='passed')failureReasons.push('PROCESS_NOT_PASSED');
+ if(process.truncated)failureReasons.push('CAPTURE_TRUNCATED');
  if(provider==='codex'){
   for(const e of events){if(e.type==='thread.started'&&typeof e.thread_id==='string')sessionId=e.thread_id;if(e.type==='item.completed'&&e.item?.type==='agent_message'&&typeof e.item.text==='string')summary=e.item.text;}
   const final=events.filter(e=>e.type==='turn.completed').at(-1);if(object(final?.usage))usage=Object.fromEntries(Object.entries(final!.usage).filter(([,v])=>typeof v==='number'&&Number.isSafeInteger(v)&&Number(v)>=0)) as Record<string,number>;
-  return {success:!errorCode&&process.status==='passed'&&!process.truncated&&Boolean(final)&&!events.some(e=>['error','turn.failed'].includes(e.type)),summary,sessionId,usage,errorCode,mcpReceipts:receipts};
+  if(!final)failureReasons.push('CODEX_MISSING_COMPLETION');
+  if(events.some(e=>['error','turn.failed'].includes(e.type)))failureReasons.push('CODEX_ERROR_EVENT');
+  return {success:!errorCode&&process.status==='passed'&&!process.truncated&&Boolean(final)&&!events.some(e=>['error','turn.failed'].includes(e.type)),summary,sessionId,usage,errorCode,mcpReceipts:receipts,failureReasons};
  }
  const finals=events.filter(e=>e.type==='result'),final=finals.at(-1);
+ const nativeError=events.some(event=>event.type==='error'||event.type==='assistant'&&event.error!=null);
+ const uuid=(value:unknown):value is string=>typeof value==='string'&&/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i.test(value);
+ const inits=events.filter(event=>event.type==='system'&&event.subtype==='init');
+ const rootIds=new Set(inits.filter(event=>uuid(event.session_id)).map(event=>event.session_id.toLowerCase()));
+ const rootBound=inits.length>0&&rootIds.size===1&&inits.every(event=>uuid(event.session_id)&&event.parent_tool_use_id==null);
+ const rootId=rootIds.values().next().value;
+ const boundReceipt=(receipt:Record<string,any>)=>rootBound&&uuid(receipt.session_id)&&receipt.session_id.toLowerCase()===rootId&&receipt.parent_tool_use_id==null;
+ const multiple=finals.length>1;
+ const scopeValid=multiple?rootBound&&finals.every(boundReceipt):inits.length>0?!!final&&boundReceipt(final):final?.parent_tool_use_id==null;
+ const successfulReceipt=(receipt:Record<string,any>)=>receipt.subtype==='success'&&receipt.is_error===false&&typeof receipt.result==='string'&&receipt.stop_reason!=='refusal'&&(receipt.permission_denials===undefined||(Array.isArray(receipt.permission_denials)&&receipt.permission_denials.length===0));
+ const receiptIds=finals.filter(receipt=>uuid(receipt.uuid)).map(receipt=>receipt.uuid.toLowerCase());
+ const receiptsValid=!multiple||(receiptIds.length===finals.length&&new Set(receiptIds).size===finals.length&&finals.every(successfulReceipt));
+ const countValid=finals.length===1||(multiple&&finals.length<=16&&scopeValid&&receiptsValid);
  if(typeof final?.result==='string')summary=final.result;else if(Array.isArray(final?.errors))summary=final.errors.filter((x:unknown)=>typeof x==='string').join('\n');
  if(typeof final?.session_id==='string')sessionId=final.session_id;
  if(object(final?.usage))usage=Object.fromEntries(Object.entries(final!.usage).filter(([,v])=>typeof v==='number'&&Number.isSafeInteger(v)&&Number(v)>=0)) as Record<string,number>;
- return {success:!errorCode&&process.status==='passed'&&!process.truncated&&finals.length===1&&events.at(-1)===final&&final?.subtype==='success'&&final?.is_error===false&&typeof final?.result==='string'&&final?.stop_reason!=='refusal'&&(final?.permission_denials===undefined||(Array.isArray(final.permission_denials)&&final.permission_denials.length===0)),summary,sessionId,usage,errorCode,mcpReceipts:receipts};
+ if(process.status==='passed'&&process.exitCode!==0)failureReasons.push('PROCESS_NOT_PASSED');
+ if(nativeError)failureReasons.push('CLAUDE_NATIVE_ERROR');
+ if(!countValid)failureReasons.push('CLAUDE_RESULT_COUNT');
+ if(!scopeValid)failureReasons.push('CLAUDE_RESULT_SCOPE');
+ if(!receiptsValid)failureReasons.push('CLAUDE_RESULT_RECEIPTS');
+ if(events.at(-1)!==final)failureReasons.push('CLAUDE_RESULT_NOT_LAST');
+ if(final?.subtype!=='success')failureReasons.push('CLAUDE_RESULT_SUBTYPE');
+ if(final?.is_error!==false)failureReasons.push('CLAUDE_RESULT_ERROR_FLAG');
+ if(typeof final?.result!=='string')failureReasons.push('CLAUDE_RESULT_TEXT_MISSING');
+ if(final?.stop_reason==='refusal')failureReasons.push('CLAUDE_REFUSAL');
+ if(final?.permission_denials!==undefined&&!(Array.isArray(final.permission_denials)&&final.permission_denials.length===0))failureReasons.push('CLAUDE_PERMISSION_DENIALS');
+ let trailingEventKinds:TrailingEventKind[]|undefined;
+ if(final&&events.at(-1)!==final){
+  const trailing=events.slice(events.lastIndexOf(final)+1).map((event):TrailingEventKind=>event.type==='rate_limit_event'?'RATE_LIMIT_EVENT':event.type==='system'&&['hook_started','hook_progress','hook_response','hook_summary','hook_end'].includes(event.subtype)?'SYSTEM_HOOK':'OTHER');
+  trailingEventKinds=[...new Set(trailing)];
+ }
+ const denialCount=Array.isArray(final?.permission_denials)?final.permission_denials.length:undefined;
+ const permissionDenialCount=Number.isSafeInteger(denialCount)?denialCount:undefined;
+ let resultCount:number|undefined,resultShapes:ClaudeResultShape[]|undefined,resultShapesTruncated:boolean|undefined;
+ if(finals.length!==1){
+  const present=(value:unknown):value is string=>typeof value==='string'&&value.trim().length>0;
+  const initial=events.find(event=>event.type==='system'&&event.subtype==='init');
+  const relation=(value:unknown,reference:unknown):'ROOT'|'OTHER'|'MISSING'=>!present(value)||!present(reference)?'MISSING':value===reference||(uuid(value)&&uuid(reference)&&value.toLowerCase()===reference.toLowerCase())?'ROOT':'OTHER';
+  const uuids=new Map<string,number>();for(const record of finals)if(present(record.uuid)){const key=record.uuid.toLowerCase();uuids.set(key,Math.min(2,(uuids.get(key)??0)+1));}
+  resultCount=Math.min(finals.length,16);resultShapesTruncated=finals.length>16;
+  resultShapes=finals.slice(0,16).map(record=>({initialSession:relation(record.session_id,initial?.session_id),finalSession:relation(record.session_id,final?.session_id),parentToolUse:present(record.parent_tool_use_id)?'NONEMPTY':record.parent_tool_use_id===null?'NULL':'MISSING',uuidPresent:present(record.uuid),uuidDuplicate:present(record.uuid)&&(uuids.get(record.uuid.toLowerCase())??0)>1,identicalToFinal:isDeepStrictEqual(record,final),subtype:record.subtype==='success'?'SUCCESS':'OTHER',isError:record.is_error===true?'TRUE':record.is_error===false?'FALSE':'MISSING'}));
+ }
+ return {success:!errorCode&&!nativeError&&process.status==='passed'&&process.exitCode===0&&!process.truncated&&countValid&&scopeValid&&receiptsValid&&events.at(-1)===final&&final?.subtype==='success'&&final?.is_error===false&&typeof final?.result==='string'&&final?.stop_reason!=='refusal'&&(final?.permission_denials===undefined||(Array.isArray(final.permission_denials)&&final.permission_denials.length===0)),summary,sessionId,usage,errorCode,mcpReceipts:receipts,failureReasons,trailingEventKinds,permissionDenialCount,resultCount,resultShapes,resultShapesTruncated};
 }

@@ -48,8 +48,8 @@ export class Phase0Container extends DurableObject<Env> {
     if (kind === 'claude') {
       if (!this.env.CLAUDE_CODE_OAUTH_TOKEN) throw new Error('Claude subscription probe is not configured');
       const accepted = await this.ctx.blockConcurrencyWhile(async () => {
-        if (this.ctx.storage.kv.get('claude-probe-v3-used')) return false;
-        this.ctx.storage.kv.put('claude-probe-v3-used', true);
+        if (this.ctx.storage.kv.get('claude-probe-v5-used')) return false;
+        this.ctx.storage.kv.put('claude-probe-v5-used', true);
         return true;
       });
       if (!accepted) throw new Error('One-shot Claude probe already used');

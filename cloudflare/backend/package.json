@@ -9,6 +9,8 @@
     "test": "node --test test/*.test.ts",
     "types": "wrangler types worker-env.d.ts --config wrangler.json --include-env false",
     "typecheck": "tsc --noEmit",
+    "runtime:stamp": "node scripts/runtime-build.ts --write",
+    "runtime:check": "node scripts/runtime-build.ts --check",
     "deploy": "wrangler deploy --config wrangler.json"
   },
   "dependencies": { "@modelcontextprotocol/sdk": "1.32.2", "zod": "4.6.7" },

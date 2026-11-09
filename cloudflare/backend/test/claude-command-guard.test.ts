@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {createHash,generateKeyPairSync} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {CLAUDE_GUARD_PATHS,claudeGuardHome,claudeGuardSandboxArgs,claudeGuardEnvironment,claudeOuterSandboxSettings,guardTraceMetadata} from '../src/runtime/claude-command-guard.ts';
-import {providerArgs,claudeSettings} from '../src/runtime/providers.ts';
+import {providerArgs,claudeSettings,buildEnv} from '../src/runtime/providers.ts';
 import {claudeCodexLayerArgs,claudeCodexLayerSettings} from '../../scripts/phase0/claude-codex-layer-probe.ts';
 import {executeRuntime} from '../src/runtime/run.ts';
 import {createSnapshot} from '../src/snapshot.ts';
@@ -33,7 +33,12 @@ test('optional trace metadata contains only bounded identities, environment name
 });
 test('guard environment clears auth and loader injection while retaining vendor proxy variables',()=>{
  const source:NodeJS.ProcessEnv={HOME:'/home/node',PATH:'/usr/bin',SRT_PROXY_SOCKET:'/tmp/srt.sock',HTTPS_PROXY:'http://proxy',ALL_PROXY:'http://proxy',NODE_EXTRA_CA_CERTS:'/etc/ca',TMPDIR:'/tmp/vendor',CODEX_HOME:'/private/auth',CODEX_AUTH_JSON:'secret',CODEX_API_KEY:'secret',OPENAI_API_KEY:'secret',ANTHROPIC_AUTH_TOKEN:'secret',CLAUDE_CODE_OAUTH_TOKEN:'secret',CONTROL_TOKEN:'secret',AUTH_STORAGE_KEY:'secret',AUTH_RETURN_PRIVATE_KEY:'secret',CLOUDFLARE_API_TOKEN:'secret',AWS_SECRET_ACCESS_KEY:'secret',NODE_OPTIONS:'secret',NODE_PATH:'secret',LD_PRELOAD:'secret',LD_LIBRARY_PATH:'secret',BASH_ENV:'secret',ENV:'secret',UNDEFINED:undefined};
- assert.deepEqual(claudeGuardEnvironment(source),{HOME:'/home/node',PATH:'/usr/bin',SRT_PROXY_SOCKET:'/tmp/srt.sock',HTTPS_PROXY:'http://proxy',ALL_PROXY:'http://proxy',NODE_EXTRA_CA_CERTS:'/etc/ca',TMPDIR:'/tmp',CODEX_HOME:'/home/node/.codex-guard'});assert.equal(source.CLAUDE_CODE_OAUTH_TOKEN,'secret');
+ assert.deepEqual(claudeGuardEnvironment(source),{HOME:'/home/node',PATH:'/opt/hivemind/compat-bin:/usr/bin',SRT_PROXY_SOCKET:'/tmp/srt.sock',HTTPS_PROXY:'http://proxy',ALL_PROXY:'http://proxy',NODE_EXTRA_CA_CERTS:'/etc/ca',TMPDIR:'/tmp',CODEX_HOME:'/home/node/.codex-guard'});assert.equal(source.CLAUDE_CODE_OAUTH_TOKEN,'secret');
+});
+test('only the Claude command guard prepends the fixed compatibility binary directory',()=>{
+ const source={PATH:'/usr/local/bin:/usr/bin',OPENAI_API_KEY:'private-fake',CLAUDE_CODE_OAUTH_TOKEN:'private-fake'};
+ const guarded=claudeGuardEnvironment(source);assert.equal(guarded.PATH,'/opt/hivemind/compat-bin:/usr/local/bin:/usr/bin');assert.deepEqual(claudeGuardEnvironment(guarded),guarded);assert.ok(!JSON.stringify(guarded).includes('private-fake'));
+ assert.equal(buildEnv(source,'/home/node','codex').PATH,source.PATH);assert.ok(claudeGuardEnvironment({}).PATH!.startsWith('/opt/hivemind/compat-bin:/usr/local/sbin:'));
 });
 test('native outer settings and tested settings use one policy while retaining the nested approval gate',()=>{
  assert.deepEqual(claudeOuterSandboxSettings(),claudeCodexLayerSettings());

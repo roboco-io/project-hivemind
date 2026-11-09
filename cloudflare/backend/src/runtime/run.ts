@@ -75,7 +75,7 @@ export async function executeRuntime(raw:unknown,options:RuntimeOptions={}):Prom
  await mkdir(runtimeDir,{recursive:true,mode:0o700});await mkdir(home,{recursive:true,mode:0o700});
  const controller=new AbortController();let timer:ReturnType<typeof setInterval>|undefined;
  const result:RuntimeResult&{boundary?:RuntimeBoundary}={version:1,jobId:input.jobId,attempt:input.attempt,inputSnapshotId:input.snapshot.digest,process:notRun(),summary:'Execution did not start',sourceUnchanged:true,sandboxPolicy:input.mode==='compute'?'compute-workspace':input.provider==='codex'?'codex-workspace':input.claudeNestedCompatible?'claude-nested-compatible':'claude-strict',...(input.provider?{provider:input.provider}:{})};
- let latestAuth=input.auth,codexAuthWritten=false,materialized=false;
+ let latestAuth=input.auth,codexAuthWritten=false,materialized=false,providerFailureDiagnostic:string|undefined;
  try {
   if(options.boundaryCheck){result.boundary=await options.boundaryCheck();if(!result.boundary.verified)throw new Error('Linux capability boundary failed');}
   await restoreSnapshot(workspace,input.snapshot);materialized=true;
@@ -107,7 +107,13 @@ export async function executeRuntime(raw:unknown,options:RuntimeOptions={}):Prom
    }
    const prompt=`Work only in ${workspace}. Do not inspect authentication files, environment secrets or private runtime state. Do not commit, push, or modify Git metadata. Native worker subagents may divide independent files. The service will run the required final checks after you finish.\n\n${input.instructions}`;
    const processResult=await runProcess([options.commands?.[input.provider!]??input.provider!,...providerArgs(input.provider!,prompt,paths)],{cwd:workspace,env:buildEnv(process.env,home,input.provider,input.auth),timeoutMs:input.timeoutMs,signal:controller.signal,maxBytes:1024*1024});
-   const parsed:ReturnType<typeof parseProviderResult>=processResult.truncated?{success:false,summary:'',mcpReceipts:[]}:parseProviderResult(input.provider!,processResult);
+   const parsed:ReturnType<typeof parseProviderResult>=processResult.truncated?{success:false,summary:'',mcpReceipts:[],failureReasons:['CAPTURE_TRUNCATED']}:parseProviderResult(input.provider!,processResult);
+   if(processResult.exitCode===0&&!parsed.success&&!processResult.truncated){
+    providerFailureDiagnostic=`HIVEMIND_PROVIDER_RESULT_REJECTED:${parsed.failureReasons.join(',')}`;
+    if(parsed.trailingEventKinds?.length)providerFailureDiagnostic+=` TRAILING_EVENT_KINDS:${parsed.trailingEventKinds.join(',')}`;
+    if(parsed.permissionDenialCount!==undefined)providerFailureDiagnostic+=` PERMISSION_DENIAL_COUNT:${parsed.permissionDenialCount}`;
+    if(parsed.resultCount!==undefined)providerFailureDiagnostic+=` RESULT_COUNT:${parsed.resultCount} RESULT_SHAPES:${JSON.stringify(parsed.resultShapes??[])} RESULT_SHAPES_TRUNCATED:${parsed.resultShapesTruncated===true}`;
+   }
    // Keep the bounded capture intact until refreshed authentication is available.
    result.process={...processResult,status:processResult.status==='passed'&&!parsed.success?'error':processResult.status,stdout:parsed.summary,stderr:processResult.stderr};
    result.summary=parsed.summary||`${input.provider} ${result.process.status}`;result.sessionId=parsed.sessionId;result.usage=parsed.usage;result.errorCode=parsed.errorCode;result.mcpReceipts=parsed.mcpReceipts;
@@ -134,7 +140,9 @@ export async function executeRuntime(raw:unknown,options:RuntimeOptions={}):Prom
  const scrubValue=(value:unknown):unknown=>typeof value==='string'?scrub(value):Array.isArray(value)?value.map(scrubValue):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,scrubValue(v)])):value;
  if(result.subagentReceipts)result.subagentReceipts=scrubValue(result.subagentReceipts) as unknown[];
  if(result.sandboxReceipts)result.sandboxReceipts=scrubValue(result.sandboxReceipts) as SandboxReceipt[];
- result.summary=scrub(result.summary).slice(0,12000);result.process.stdout=scrub(result.process.stdout).slice(0,16000);result.process.stderr=scrub(result.process.stderr).slice(0,16000);
+ result.summary=scrub(result.summary).slice(0,12000);result.process.stdout=scrub(result.process.stdout).slice(0,16000);
+ const safeStderr=scrub(result.process.stderr),diagnostic=providerFailureDiagnostic?scrub(providerFailureDiagnostic):'',separator=safeStderr&&diagnostic?'\n':'';
+ result.process.stderr=safeStderr.slice(0,16000-diagnostic.length-separator.length)+separator+diagnostic;
  return result;
 }
 export async function runFromFile(runtimeDir='/runtime',options:RuntimeOptions={}):Promise<RuntimeResult|null> {

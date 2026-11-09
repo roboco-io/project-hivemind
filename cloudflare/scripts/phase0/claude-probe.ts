@@ -24,7 +24,8 @@ await writeFile(`${directory}/mcp.json`, JSON.stringify({ mcpServers: { phase0: 
 } } }), { mode: 0o600 });
 const nonce = randomBytes(16).toString('hex');
 const sessionId = randomUUID();
-const prompt = `Fixed Hivemind feasibility fixture. Work only in /workspace. Never inspect credentials, environment values or private home files.
+const single=process.env.HIVEMIND_CLAUDE_SINGLE==='1';
+const prompt = single?'Run exactly one Bash tool call: node /opt/hivemind/scripts/phase0/check-claude-boundary.ts . Do not wrap or modify the command. Wait for completion and report the real result. Do not inspect credentials or private files. Do not start subagents.':`Fixed Hivemind feasibility fixture. Work only in /workspace. Never inspect credentials, environment values or private home files.
 Start exactly two foreground worker subagents in parallel, using two Agent calls in the same response, and wait for both:
 1. First worker: use Bash with Node.js to wait 5 seconds, then write alpha-claude.txt containing exactly ALPHA_CLAUDE followed by a newline.
 2. Second worker: use Bash with Node.js to wait 5 seconds, then write beta-claude.txt containing exactly BETA_CLAUDE followed by a newline.
@@ -39,7 +40,7 @@ const result = await runBounded('claude', [
   '--session-id', sessionId, '--settings', `${directory}/settings.json`,
   '--strict-mcp-config', '--mcp-config', `${directory}/mcp.json`,
   '--permission-mode', 'dontAsk', '--permission-prompts', 'none',
-  '--tools', 'Bash,Agent', '--allowedTools', 'Bash,Agent,mcp__phase0__phase0_probe',
+  '--tools', single?'Bash':'Bash,Agent', '--allowedTools', 'Bash,Agent,mcp__phase0__phase0_probe',
   '--disallowedTools', 'Write,Edit,NotebookEdit', '--disable-slash-commands',
   '--forward-subagent-text', '--include-hook-events',
   '--agents', JSON.stringify({ worker: { description: 'Carry out the assigned independent fixed fixture task.', prompt: 'Work only in /workspace using sandboxed Bash and Node.js. Do not inspect credentials or private home files.', tools: ['Bash'] } }),
@@ -62,7 +63,7 @@ const optionalFile = async (path: string) => { try { return clean((await readFil
 const guardTrace=(await readFile('/workspace/.hivemind-guard-trace.jsonl','utf8').then(text=>clean(text).slice(0,8192),()=>'')).split(/\r?\n/).filter(Boolean).flatMap(line=>{try{return[JSON.parse(line)]}catch{return[]}});
 const guardFiles=(await readdir(claudeGuardHome(),{recursive:true}).catch(()=>[])).slice(0,40);
 process.stdout.write(JSON.stringify({
-  scope: 'claude-subscription-fixed-fixture', sessionId, nonce,
+  scope: single?'claude-single-context-diagnostic':'claude-subscription-fixed-fixture', single, sessionId, nonce,
   exitCode: result.exitCode, timedOut: result.timedOut, captureLimit: result.captureLimit,
   events, agents, sandboxReceipts, guardTrace, guardFiles, stderr: clean(result.stderr).slice(-16384),
   alpha: await optionalFile('/workspace/alpha-claude.txt'), beta: await optionalFile('/workspace/beta-claude.txt'),

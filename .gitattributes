@@ -1,0 +1,2 @@
+# 통합 diff의 빈 문맥 줄은 접두 공백을 포함한다.
+cloudflare/backend/native/bubblewrap-nested-proc.patch whitespace=-blank-at-eol

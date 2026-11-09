@@ -9,8 +9,7 @@
   ],
   "secrets": {
     "required": [
-      "PROBE_TOKEN",
-      "CLAUDE_CODE_OAUTH_TOKEN"
+      "PROBE_TOKEN"
     ]
   },
   "containers": [

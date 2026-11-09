@@ -9,6 +9,7 @@ import {bashHookReply,shellQuote,GUARD} from '../../backend/src/runtime/claude-b
 import {runBounded} from './run-bounded.ts';
 
 const paths=CLAUDE_GUARD_PATHS,settingsFile=paths.privateDir+'/claude-command-concurrency-settings.json';
+const causeReceipt='/workspace/claude-nested-bwrap-cause.json',causeStderr='/workspace/claude-nested-bwrap-stderr.log';
 const labels=['alpha','beta','serial'] as const;
 type Label=typeof labels[number];
 const checked=(label:string):Label=>{if(!labels.includes(label as Label))throw new Error('Invalid fixed command label');return label as Label;};
@@ -62,6 +63,56 @@ export async function collectConcurrencyDiagnostics(guardHome=claudeGuardHome(pa
  finally{await handle?.close();}
  return {cache:{entries,truncated,errors,authEntriesOmitted},trace:{records,bytesRead,truncated:traceTruncated,malformedLines,error:traceError}};
 }
+export async function collectConcurrencyWaitState(procRoot='/proc',temporaryRoot='/tmp'){
+ const sampledAt=new Date().toISOString();
+ let processNames:string[]=[];let procError:string|null=null;
+ try{processNames=(await readdir(procRoot)).filter(name=>/^\d+$/.test(name)).sort((a,b)=>Number(a)-Number(b));}catch(error){procError=errorCode(error);}
+ const processRows=await Promise.all(processNames.slice(0,64).map(async name=>{
+  const values=await Promise.all(['comm','status','wchan','syscall'].map(async file=>{try{return {file,text:await readFile(join(procRoot,name,file),'utf8'),error:null};}catch(error){return {file,text:'',error:errorCode(error)};}}));
+  const data=Object.fromEntries(values.map(value=>[value.file,value.text]));
+  const comm=data.comm!.trim(),wchan=data.wchan!.trim(),syscall=data.syscall!.trim().split(/\s+/,1)[0]??'';
+  const parent=data.status!.match(/^PPid:\s*(\d+)$/m),state=data.status!.match(/^State:\s*([A-Z])/m),namespace=data.status!.match(/^NSpid:\s*([\d\s]+)$/m);
+  return {pid:Number(name),comm:/^[A-Za-z0-9_.:+-]{1,32}$/.test(comm)?comm:null,ppid:parent?Number(parent[1]):null,state:state?.[1]??null,namespacePids:namespace?namespace[1]!.trim().split(/\s+/).map(Number).slice(0,8):[],wchan:/^[A-Za-z0-9_.]{1,96}$/.test(wchan)?wchan:null,syscallNumber:/^-?\d+$/.test(syscall)?Number(syscall):null,syscallRunning:syscall==='running',errors:Object.fromEntries(values.filter(value=>value.error).map(value=>[value.file,value.error]))};
+ }));
+ const entries:Array<{name:string;type:string;size:number}>=[],registryErrors:Array<{name:string;error:string}>=[];let registryTruncated=false;
+ const walk=async(relative:string,depth=0):Promise<void>=>{
+  if(entries.length>=64||relative.length>200){registryTruncated=true;return;}
+  try{
+   const info=await lstat(join(temporaryRoot,relative));const item={name:relative,type:info.isSymbolicLink()?'symlink':info.isDirectory()?'directory':info.isFile()?'file':'other',size:info.size};
+   if(Buffer.byteLength(JSON.stringify([...entries,item]))>8192){registryTruncated=true;return;}entries.push(item);
+   if(info.isDirectory()){if(depth>=3){registryTruncated=true;return;}for(const name of (await readdir(join(temporaryRoot,relative))).sort())await walk(relative+'/'+name,depth+1);}
+  }catch(error){if(registryErrors.length<16)registryErrors.push({name:relative,error:errorCode(error)});}
+ };
+ try{for(const name of (await readdir(temporaryRoot)).filter(name=>/^codex-bwrap-synthetic-mount-targets-\d+$/.test(name)).sort().slice(0,8))await walk(name);}catch(error){registryErrors.push({name:'.',error:errorCode(error)});}
+ return {sampledAt,finishedAt:new Date().toISOString(),processes:processRows,processesTruncated:processNames.length>64,procError,registries:{entries,truncated:registryTruncated,errors:registryErrors}};
+}
+export function nestedBwrapCauseArgs(){return ['--unshare-user','--unshare-pid','--ro-bind','/','/','--proc','/proc','--dev','/dev','--','/bin/true'];}
+export function warmupNestedBwrapPid(spawnTrue:()=>{pid?:number;status:number|null;error?:unknown},probeNamespace:(pid:number)=>{exists:boolean;error:string|null}){
+ const startedAt=Date.now();let attempts=0,lastWarmupPid=0,selectedMissingTarget=false;
+ for(;attempts<128;){
+  const child=spawnTrue();attempts++;
+  if(child.error||child.status!==0||!Number.isSafeInteger(child.pid)||Number(child.pid)<1)break;
+  lastWarmupPid=child.pid!;
+  if(attempts>=64){const lookup=probeNamespace(lastWarmupPid+2);if(!lookup.exists&&lookup.error==='ENOENT'){selectedMissingTarget=true;break;}}
+  if(Date.now()-startedAt>=3000)break;
+ }
+ return {attempts,lastWarmupPid,predictedBwrapPid:lastWarmupPid+1,predictedChildPid:lastWarmupPid+2,selectedMissingTarget,durationMs:Date.now()-startedAt};
+}
+export function assessNestedBwrapCause(observed:Record<string,unknown>){
+ return {hypothesisMatched:observed.parentExitCode===1&&observed.parentExitedBeforeGuard===true&&observed.orphanGroupAliveBeforeKill===true&&typeof observed.stderr==='string'&&/open \/proc\/\d+\/ns(?:\/ns)? failed.*No such file or directory/.test(observed.stderr)};
+}
+export function nestedBwrapCauseScript(){return `
+const fs=require('node:fs'),cp=require('node:child_process');
+const stderrPath=${JSON.stringify(causeStderr)},receiptPath=${JSON.stringify(causeReceipt)};
+const warmupNestedBwrapPid=${warmupNestedBwrapPid.toString()};
+const warmup=warmupNestedBwrapPid(()=>cp.spawnSync('/bin/true',[],{stdio:'ignore',timeout:250}),pid=>{try{return {exists:fs.statSync('/proc/'+pid+'/ns').isDirectory(),error:null}}catch(error){return {exists:false,error:typeof error.code==='string'?error.code:'UNKNOWN'}}});
+const stderrFd=fs.openSync(stderrPath,'r+');fs.ftruncateSync(stderrFd,0);
+const startedAt=Date.now();const child=cp.spawn('/usr/bin/bwrap',${JSON.stringify(nestedBwrapCauseArgs())},{detached:true,stdio:['ignore','ignore',stderrFd],env:process.env});fs.closeSync(stderrFd);
+const result={startedAt,warmup,runnerPid:process.pid,bwrapPid:child.pid||null,parentPidPredictionMatched:child.pid===warmup.predictedBwrapPid,parentExitCode:null,parentExitSignal:null,parentExitedAt:null,parentExitedBeforeGuard:false,orphanGroupAliveBeforeKill:false};
+child.on('error',error=>{result.spawnError=typeof error.code==='string'?error.code:'UNKNOWN'});
+child.on('exit',(code,signal)=>{result.parentExitCode=code;result.parentExitSignal=signal;result.parentExitedAt=Date.now()});
+setTimeout(()=>{result.parentExitedBeforeGuard=result.parentExitedAt!==null;try{process.kill(-child.pid,0);result.orphanGroupAliveBeforeKill=result.parentExitedBeforeGuard}catch{};try{process.kill(-child.pid,'SIGKILL');result.groupKillSent=true}catch(error){result.groupKillError=typeof error.code==='string'?error.code:'UNKNOWN'};setTimeout(()=>{let file;try{file=fs.openSync(stderrPath,'r');const stat=fs.fstatSync(file),buffer=Buffer.alloc(Math.min(stat.size,4096));const bytes=fs.readSync(file,buffer,0,buffer.length,0);result.stderrBytes=stat.size;result.stderr=buffer.subarray(0,bytes).toString('utf8')}catch(error){result.stderrReadError=typeof error.code==='string'?error.code:'UNKNOWN'}finally{if(file!==undefined)fs.closeSync(file)}result.finishedAt=Date.now();const encoded=JSON.stringify(result);fs.writeFileSync(receiptPath,encoded,{flag:'r+',mode:0o600});fs.writeSync(1,'HIVEMIND_NESTED_BWRAP_CAUSE '+encoded+String.fromCharCode(10));},50);},3000);
+`;}
 
 export function concurrencyBashCommand(rawLabel:string,nodeExecutable='/usr/local/bin/node',workspace=paths.workspace){
  const label=checked(rawLabel),output=filename(label,workspace),receipt=receiptName(label,workspace),content=label.toUpperCase()+'_DONE\n';
@@ -91,7 +142,7 @@ export async function runClaudeCommandConcurrencyProbe(){
   await mkdir(paths.privateDir,{recursive:true,mode:0o700});await mkdir(baseline.guardHome,{recursive:true,mode:0o700});
   if(!await absent(baseline.guardHome+'/auth.json'))throw new Error('Guard cache contains authentication');
   const settings=claudeOuterSandboxSettings(paths,true);
-  for(const [path,content] of [[settingsFile,JSON.stringify(settings)],...labels.flatMap(label=>[[filename(label),''],[receiptName(label),'']])]){await writeFile(path!,content!,{flag:'wx',mode:0o600});owned.push(path!);}
+  for(const [path,content] of [[settingsFile,JSON.stringify(settings)],[causeReceipt,''],[causeStderr,''],...labels.flatMap(label=>[[filename(label),''],[receiptName(label),'']])]){await writeFile(path!,content!,{flag:'wx',mode:0o600});owned.push(path!);}
   const initialGuardCacheEntries=(await readdir(baseline.guardHome)).length;
   const env=claudeCommandConcurrencyEnvironment(process.env);
   const diagnosticsBefore=await collectConcurrencyDiagnostics();
@@ -103,9 +154,21 @@ export async function runClaudeCommandConcurrencyProbe(){
   };
   const parallel=await Promise.all([run('alpha'),run('beta')]);
   const diagnosticsAfterParallel=await collectConcurrencyDiagnostics();
-  const serial=await run('serial');
+  const serialPromise=run('serial');let sampleTimer:ReturnType<typeof setTimeout>|undefined;
+  const serialFirst=await Promise.race([serialPromise.then(value=>({kind:'finished' as const,value})),new Promise<{kind:'sample'}>(resolve=>{sampleTimer=setTimeout(()=>resolve({kind:'sample'}),2000);})]);
+  if(sampleTimer)clearTimeout(sampleTimer);
+  const serialInFlight=serialFirst.kind==='sample'?{sampled:true,trigger:'serial-pending-after-2000ms',...await collectConcurrencyWaitState(),guardDiagnostics:await collectConcurrencyDiagnostics()}:{sampled:false,reason:'serial-finished-before-2000ms'};
+  const serial=serialFirst.kind==='finished'?serialFirst.value:await serialPromise;
   const diagnosticsAfterSerial=await collectConcurrencyDiagnostics();
-  report={...baseline,guardTraceEnabled:env.HIVEMIND_GUARD_TRACE==='1',initialGuardCacheEntries,configuredOuterSettings:settings,proxyEnvironmentPresent:Object.fromEntries(['HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY'].map(key=>[key,!!env[key]])),parallel,serial,diagnosticsBefore,diagnosticsAfterParallel,diagnosticsAfterSerial,guardCacheCredentialsAbsent:await absent(baseline.guardHome+'/auth.json'),limitations:['Standalone SRT reproduces the exact managed hook Bash rewrite, without a Claude model or native tool supervisor.','The parallel phase runs before the serial control; existing guard-cache state is recorded.']};
+  const causePromise=runBounded('srt',['--settings',settingsFile,'--','/usr/local/bin/node','-e',nestedBwrapCauseScript()],{cwd:paths.workspace,env,timeoutMs:10000,maxBytes:8192});
+  let causeSampleTimer:ReturnType<typeof setTimeout>|undefined;
+  const causeFirst=await Promise.race([causePromise.then(value=>({kind:'finished' as const,value})),new Promise<{kind:'sample'}>(resolve=>{causeSampleTimer=setTimeout(()=>resolve({kind:'sample'}),2000);})]);
+  if(causeSampleTimer)clearTimeout(causeSampleTimer);
+  const causeInFlight=causeFirst.kind==='sample'?await collectConcurrencyWaitState():null;
+  const causeProcess=causeFirst.kind==='finished'?causeFirst.value:await causePromise;
+  let causeObserved:Record<string,unknown>={};try{const raw=await readFile(causeReceipt,'utf8');if(raw.length<8192)causeObserved=object(JSON.parse(raw))??{};}catch{}
+  const nestedBwrapCause={...causeObserved,assessment:assessNestedBwrapCause(causeObserved),inFlight:causeInFlight,outerExitCode:causeProcess.exitCode,outerTimedOut:causeProcess.timedOut,outerCaptureLimit:causeProcess.captureLimit,outerStderr:causeProcess.stderr.slice(-2000)};
+  report={...baseline,guardTraceEnabled:env.HIVEMIND_GUARD_TRACE==='1',initialGuardCacheEntries,configuredOuterSettings:settings,proxyEnvironmentPresent:Object.fromEntries(['HTTP_PROXY','HTTPS_PROXY','ALL_PROXY','NO_PROXY'].map(key=>[key,!!env[key]])),parallel,serial,serialInFlight,nestedBwrapCause,diagnosticsBefore,diagnosticsAfterParallel,diagnosticsAfterSerial,guardCacheCredentialsAbsent:await absent(baseline.guardHome+'/auth.json'),limitations:['Standalone SRT reproduces the exact managed hook Bash rewrite, without a Claude model or native tool supervisor.','The parallel phase runs before the serial control; existing guard-cache state is recorded.','The final trusted no-auth cause probe runs raw nested bwrap with regular stderr and a 3-second process-group watchdog.']};
  }catch{report={...report,error:'No-auth command concurrency preparation or bounded execution failed'};}
  finally{await Promise.all(owned.map(path=>rm(path,{force:true}).catch(()=>undefined)));}
  return {...report,assessment:assessClaudeCommandConcurrency(report)};

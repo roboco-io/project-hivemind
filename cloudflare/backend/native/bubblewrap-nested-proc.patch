@@ -1,0 +1,19 @@
+Subject: Read namespace identifiers only when metadata output is requested
+SPDX-License-Identifier: LGPL-2.0-or-later
+
+HIVEMIND modification to Debian bubblewrap 0.8.0-2+deb12u1.
+Do not look up a namespace-local child PID in inherited procfs when neither
+metadata output descriptor needs the identifiers. Keep all security operations.
+
+--- a/bubblewrap.c
++++ b/bubblewrap.c
+@@ -2954,7 +2954,8 @@
+         }
+ 
+       /* Discover namespace ids before we drop privileges */
+-      namespace_ids_read (pid);
++      if (opt_info_fd != -1 || opt_json_status_fd != -1)
++        namespace_ids_read (pid);
+ 
+       if (is_privileged && opt_unshare_user && opt_userns_block_fd == -1)
+         {

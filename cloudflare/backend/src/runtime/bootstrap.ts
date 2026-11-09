@@ -4,12 +4,13 @@ import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {validateRuntimeInput} from './providers.ts';
 import {validateSnapshot} from '../snapshot.ts';
+import runtimeBuild from '../../runtime-build.json' with {type:'json'};
 export function createBootstrap(runtimeDir='/runtime') {
  return createServer(async(req,res)=>{
   const send=(status:number,value:unknown)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(value));};
   try {
    const path=new URL(req.url??'/','http://runtime').pathname;
-   if(req.method==='GET'&&path==='/health')return send(200,{ok:true});
+   if(req.method==='GET'&&path==='/health')return send(200,{ok:true,runtimeRevision:runtimeBuild.digest});
    if(req.method==='POST'&&path==='/prepare'){
     let bytes=0;const chunks:Buffer[]=[];
     for await(const chunk of req){const b=Buffer.from(chunk);bytes+=b.length;if(bytes>8*1024*1024)return send(413,{error:'Runtime input is too large'});chunks.push(b);}

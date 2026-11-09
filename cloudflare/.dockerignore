@@ -21,6 +21,7 @@
 !backend/
 !backend/package.json
 !backend/package-lock.json
+!backend/runtime-build.json
 !backend/Dockerfile
 !backend/src/
 !backend/src/**
@@ -33,4 +34,9 @@
 !scripts/phase0/claude-codex-layer-probe.ts
 !scripts/phase0/compute-stdio-probe.ts
 !backend/native/namespace-guard.c
+!backend/native/build-bubblewrap-compat.sh
+!backend/native/bubblewrap-nested-proc.patch
+!backend/native/BUBBLEWRAP-NOTICE.md
+!docs/
+!docs/bubblewrap-compatibility.md
 !scripts/phase0/claude-command-concurrency-probe.ts

@@ -5,6 +5,7 @@ import {Scheduler,type AgentOutcome,type ComputeOutcome} from '../scheduler.ts';
 import {validateSnapshot} from '../snapshot.ts';
 import {openAuthReturn,openCredential,sealCredential,validateAuth,type StoredCredential} from '../crypto.ts';
 import {ApiError,authorize,handleApi,json,type ApiService} from './api.ts';
+import runtimeBuild from '../../runtime-build.json' with {type:'json'};
 declare global {namespace Cloudflare {interface GlobalProps {mainModule:typeof import('./worker.ts')}}}
 
 interface Env {
@@ -22,16 +23,18 @@ export class CodexOutbound extends WorkerEntrypoint<Env>{fetch(request:Request){
 export class ClaudeOutbound extends WorkerEntrypoint<Env>{fetch(request:Request){return outbound(request,['api.anthropic.com','claude.ai','claude.com','platform.claude.com']);}}
 export class ComputeOutbound extends WorkerEntrypoint<Env>{fetch(request:Request){return outbound(request,['registry.npmjs.org','github.com','codeload.github.com','objects.githubusercontent.com','release-assets.githubusercontent.com']);}}
 
-interface RunnerMetadata {jobId:string;attempt:string;kind:'agent'|'compute';provider?:'codex'|'claude';prepared:boolean;launchIssued:boolean;pid?:number;stopped:boolean}
+interface RunnerMetadata {jobId:string;attempt:string;kind:'agent'|'compute';provider?:'codex'|'claude';prepared:boolean;launchIssued:boolean;pid?:number;stopped:boolean;runtimeRevision?:string}
 interface RuntimeState {prepared:boolean;started:{jobId:string;attempt:string;pid:number;startedAt:number}|null;resultReady:boolean;cancelRequested:boolean}
 class InvalidRuntimeResult extends Error {}
 type Completion={kind:'agent';outcome:AgentOutcome}|{kind:'compute';outcome:ComputeOutcome};
 export class RunnerDO extends DurableObject<Env>{
  private metadata?:RunnerMetadata;
+ private revisionVerified=false;
  constructor(ctx:DurableObjectState,env:Env){super(ctx,env);ctx.blockConcurrencyWhile(async()=>{this.metadata=await ctx.storage.get<RunnerMetadata>('metadata');});}
  private async save(){await this.ctx.storage.put('metadata',this.metadata!);}
  private async request(path:string,method='GET',value?:unknown,timeout=1500){const container=this.ctx.container;if(!container?.running)throw new Error('Runtime unavailable');return container.getTcpPort(3000).fetch(new Request(`http://runtime${path}`,{method,headers:{'content-type':'application/json'},...(value===undefined?{}:{body:JSON.stringify(value)}),signal:AbortSignal.timeout(timeout)}));}
- async ensure(job:JobRecord):Promise<{ready:boolean;lost:boolean;prepared:boolean;launchIssued:boolean}>{return this.ctx.blockConcurrencyWhile(async()=>{
+ async ensure(job:JobRecord):Promise<{ready:boolean;lost:boolean;prepared:boolean;launchIssued:boolean;legacy?:boolean}>{return this.ctx.blockConcurrencyWhile(async()=>{
+  this.revisionVerified=false;
   if(this.metadata&&(this.metadata.jobId!==job.id||this.metadata.attempt!==job.attempt))throw new Error('Attempt mismatch');
   if(!this.metadata){this.metadata={jobId:job.id,attempt:job.attempt,kind:job.kind,provider:job.provider,prepared:false,launchIssued:false,stopped:false};await this.save();}
   const container=this.ctx.container;if(!container)throw new Error('Runtime binding missing');
@@ -39,16 +42,33 @@ export class RunnerDO extends DurableObject<Env>{
   if(!container.running)container.start({image:container.images.runtime,instance:'standard-1',enableInternet:false});
   const handler=job.kind==='compute'?this.ctx.exports.ComputeOutbound:job.provider==='claude'?this.ctx.exports.ClaudeOutbound:this.ctx.exports.CodexOutbound;
   await container.interceptAllOutboundHttp(handler);await container.interceptOutboundHttps('*',handler);
-  let ready=false;try{ready=(await this.request('/health')).ok;}catch{/* Cold starts are retried by the next alarm. */}
-  return {ready,lost:false,prepared:this.metadata.prepared,launchIssued:this.metadata.launchIssued};
+  const legacy=!this.metadata.runtimeRevision&&(this.metadata.prepared||this.metadata.launchIssued);let ready=false,revisionToPin:string|undefined;
+  try{const response=await this.request('/health');if(response.ok){
+   const health=await response.json() as {ok?:unknown;runtimeRevision?:unknown};
+   if(legacy)ready=health.ok===true;
+   else{
+    const expected=this.metadata.runtimeRevision??runtimeBuild.digest;
+    ready=health.ok===true&&typeof health.runtimeRevision==='string'&&/^[a-f0-9]{64}$/.test(health.runtimeRevision)&&health.runtimeRevision===expected;
+    if(ready&&!this.metadata.runtimeRevision)revisionToPin=expected;
+   }
+  }}catch{/* Cold starts and stale images stay unprepared. */}
+  if(revisionToPin!==undefined){
+   const candidate:RunnerMetadata={...this.metadata,runtimeRevision:revisionToPin};
+   await this.ctx.storage.put('metadata',candidate);
+   this.metadata=candidate;
+  }
+  this.revisionVerified=ready&&!legacy;
+  return {ready,lost:false,prepared:this.metadata.prepared,launchIssued:this.metadata.launchIssued,...(legacy?{legacy:true}:{})};
  });}
  async prepare(input:RuntimeInput){return this.ctx.blockConcurrencyWhile(async()=>{
+  if(!this.revisionVerified||!this.metadata?.runtimeRevision)throw new Error('Runtime revision is not verified');
   if(!this.metadata||input.jobId!==this.metadata.jobId||input.attempt!==this.metadata.attempt||this.metadata.stopped)throw new Error('Attempt mismatch');
   const response=await this.request('/prepare','POST',input,3000);if(!response.ok)throw new Error('Prepare rejected');this.metadata.prepared=true;await this.save();
  });}
  async launch(){return this.ctx.blockConcurrencyWhile(async()=>{
   if(!this.metadata?.prepared||this.metadata.stopped)throw new Error('Runtime not prepared');
   if(this.metadata.launchIssued)return;
+  if(!this.revisionVerified||!this.metadata.runtimeRevision)throw new Error('Runtime revision is not verified');
   // Persist before exec: an uncertain exec is never automatically replayed.
   this.metadata.launchIssued=true;await this.save();
   const process=await this.ctx.container!.exec(['setpriv','--no-new-privs','--inh-caps=-all','--ambient-caps=-all','--bounding-set=-all','node','/opt/hivemind/backend/src/runtime/run.ts'],{cwd:'/workspace',stdout:'ignore',stderr:'ignore',env:{SSL_CERT_FILE:CA,NODE_EXTRA_CA_CERTS:CA}});
@@ -124,7 +144,7 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
   const readiness=await runner.ensure(job);
   if(readiness.lost){const stopped=await runner.stop();this.scheduler.quarantine(job.id,job.attempt,'CONTAINER_LOST',Date.now(),stopped);return;}
   if(!readiness.ready){if(Date.now()>await this.hardDeadline(job)){const stopped=await runner.stop();this.scheduler.quarantine(job.id,job.attempt,'RUNTIME_START_TIMEOUT',Date.now(),stopped);}return;}
-  if(!readiness.prepared){
+  if(!readiness.legacy&&!readiness.prepared){
    const timeoutKey=`runtimeTimeout:${job.id}:${job.attempt}`;
    let timeoutMs=await this.ctx.storage.get<number>(timeoutKey);
    if(timeoutMs===undefined){timeoutMs=Math.max(1000,Math.min(job.timeoutMs,job.deadline-Date.now()));await this.ctx.storage.put(timeoutKey,timeoutMs);}
@@ -138,7 +158,7 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
    await runner.prepare(input);
   }
   if(job.cancellationRequested||job.status==='CANCELLING')await runner.cancel();
-  await runner.launch();const polled=JSON.parse(await runner.poll()) as {lost:boolean;state?:RuntimeState;result?:RuntimeResult};
+  if(!readiness.legacy)await runner.launch();const polled=JSON.parse(await runner.poll()) as {lost:boolean;state?:RuntimeState;result?:RuntimeResult};
   if(polled.lost){const stopped=await runner.stop();this.scheduler.quarantine(job.id,job.attempt,'CONTAINER_LOST',Date.now(),stopped);return;}
   if(polled.state?.started&&job.status==='STARTING')this.scheduler.running(job.id,job.attempt,Date.now());
   if(polled.result){try{await this.complete(job,polled.result);}catch(error){if(!(error instanceof InvalidRuntimeResult))throw error;const stopped=await runner.stop();this.scheduler.quarantine(job.id,job.attempt,'INVALID_RUNTIME_RESULT',Date.now(),stopped);}return;}
@@ -175,4 +195,4 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
   await this.save();await this.ctx.storage.delete(`completion:${job.id}`);
  }
 }
-export default {async fetch(request:Request,env:Env){const path=new URL(request.url).pathname;if(path==='/health'&&request.method==='GET')return json({ok:true,service:'hivemind-cloudflare',workerVersion:env.CF_VERSION_METADATA?.id});if(!path.startsWith('/v1/'))return json({error:'Not found'},404);const denied=authorize(request,env.CONTROL_TOKEN);if(denied)return denied;try{return await env.SCHEDULER.getByName('owner').fetch(request);}catch{return json({error:'Service is unavailable'},503);}}};
+export default {async fetch(request:Request,env:Env){const path=new URL(request.url).pathname;if(path==='/health'&&request.method==='GET')return json({ok:true,service:'hivemind-cloudflare',workerVersion:env.CF_VERSION_METADATA?.id,expectedRuntimeRevision:runtimeBuild.digest});if(!path.startsWith('/v1/'))return json({error:'Not found'},404);const denied=authorize(request,env.CONTROL_TOKEN);if(denied)return denied;try{return await env.SCHEDULER.getByName('owner').fetch(request);}catch{return json({error:'Service is unavailable'},503);}}};
