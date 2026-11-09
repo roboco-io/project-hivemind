@@ -15,7 +15,7 @@
     <div class="identity"><img class="brand-logo" src="/brand/hivemind-logo.png" alt="Project HIVEMIND — 손그림 꿀벌 로고" width="240" height="80"><span>One Vision. Many Agents.</span></div>
     <div class="connection"><span id="connection-status" role="status">연결 대기</span><span id="last-sync">아직 동기화하지 않음</span></div>
   </header>
-  <div class="demo-notice"><strong>로컬 실행</strong><span>Codex 작업은 지정한 저장소의 Git worktree에서 실행합니다. mock 작업은 합성 diff와 모의 비용을 사용합니다.</span></div>
+  <div class="demo-notice"><strong>로컬 실행</strong><span>Codex·Claude Code 작업은 지정한 저장소의 Git worktree에서 실행합니다. mock 작업은 합성 diff와 모의 비용을 사용합니다.</span></div>
   <main>
     <section class="overview" aria-labelledby="page-title">
       <div><p class="context">사람이 방향을 정하고, 워커가 실행합니다.</p><h1 id="page-title">개발 관제실</h1></div>
@@ -43,8 +43,8 @@
           <section class="result-section" aria-labelledby="result-title"><h3 id="result-title">실행 결과</h3><p id="task-summary" class="empty">아직 보고된 결과가 없습니다.</p><h4>Git diff <span id="diff-kind" class="quiet">합성 예시 · 자동 적용하지 않음</span></h4><p id="diff-truncated" class="evidence-warning" hidden>diff가 표시 한도를 넘어 일부만 저장되었습니다. worktree에서 전체 변경을 확인하세요.</p><pre id="task-diff" tabindex="0">워커 실행 후 변경 제안이 표시됩니다.</pre></section>
           <section id="execution-section" class="execution-section" aria-labelledby="execution-title" hidden>
             <div class="section-title"><h3 id="execution-title">실제 실행 근거</h3><span id="execution-status" class="pill">아직 보고되지 않음</span></div>
-            <dl class="repository-facts"><div><dt>저장소</dt><dd id="execution-repository"></dd></div><div><dt>고정 시작 커밋</dt><dd id="execution-base"></dd></div><div><dt>실행 후 HEAD</dt><dd id="execution-head"></dd></div><div><dt>테스트 프로필</dt><dd id="execution-profile"></dd></div><div class="wide"><dt>작업 worktree</dt><dd id="execution-worktree"></dd></div><div><dt>Codex 실행</dt><dd id="codex-status"></dd></div><div><dt>Codex 세션</dt><dd id="codex-thread"></dd></div><div><dt>모델</dt><dd id="codex-model"></dd></div><div><dt>토큰 사용량</dt><dd id="codex-usage"></dd></div></dl>
-            <div id="codex-error-block" hidden><h4>Codex 오류 출력</h4><pre id="codex-stderr" tabindex="0"></pre></div>
+            <dl class="repository-facts"><div><dt>저장소</dt><dd id="execution-repository"></dd></div><div><dt>고정 시작 커밋</dt><dd id="execution-base"></dd></div><div><dt>실행 후 HEAD</dt><dd id="execution-head"></dd></div><div><dt>테스트 프로필</dt><dd id="execution-profile"></dd></div><div class="wide"><dt>작업 worktree</dt><dd id="execution-worktree"></dd></div><div><dt id="agent-execution-label">제공자 실행</dt><dd id="agent-status"></dd></div><div><dt>실행 세션</dt><dd id="agent-thread"></dd></div><div><dt>모델</dt><dd id="agent-model"></dd></div><div><dt>토큰 사용량</dt><dd id="agent-usage"></dd></div></dl>
+            <div id="agent-error-block" hidden><h4 id="agent-error-title">제공자 오류 출력</h4><pre id="agent-stderr" tabindex="0"></pre></div>
             <section id="setup-section" class="process-evidence" aria-labelledby="setup-title" hidden><div class="section-title"><h4 id="setup-title">실행 준비</h4><span id="setup-status" class="pill"></span></div><p id="setup-metadata" class="process-metadata"></p><details><summary>준비 명령 출력</summary><h4>표준 출력 (stdout)</h4><pre id="setup-stdout" tabindex="0"></pre><h4>오류 출력 (stderr)</h4><pre id="setup-stderr" tabindex="0"></pre></details><p id="setup-truncated" class="evidence-warning" hidden>준비 명령 출력이 한도를 넘어 일부만 저장되었습니다.</p></section>
             <section class="process-evidence" aria-labelledby="tests-title"><div class="section-title"><h4 id="tests-title">테스트 결과</h4><span id="tests-status" class="pill">아직 실행하지 않음</span></div><p id="tests-metadata" class="process-metadata"></p><h4>표준 출력 (stdout)</h4><pre id="tests-stdout" tabindex="0">아직 보고된 테스트 출력이 없습니다.</pre><h4>오류 출력 (stderr)</h4><pre id="tests-stderr" tabindex="0">아직 보고된 테스트 출력이 없습니다.</pre><p id="tests-truncated" class="evidence-warning" hidden>테스트 출력이 한도를 넘어 일부만 저장되었습니다.</p></section>
           </section>

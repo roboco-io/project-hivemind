@@ -5,6 +5,8 @@ const statuses = {
   awaiting_execution_approval: '실행 승인 대기', queued: '배정 대기', running: '실행 중',
   awaiting_review: '결과 검토 대기', completed: '수락 완료', rejected: '반려', cancelled: '중단', failed: '실패'
 };
+const realProviders = new Set(['codex', 'claude']);
+const providerNames = { mock: '모의 워커', codex: 'Codex', claude: 'Claude Code' };
 const terminal = new Set(['completed', 'rejected', 'cancelled', 'failed']);
 const state = { tasks: [], workers: [], events: [], capabilities: null, selectedId: null, creating: true, busy: false, refreshing: false, error: null };
 const processStatuses = { passed: '통과', failed: '실패', timed_out: '시간 초과', error: '실행 오류', not_run: '실행하지 않음' };
@@ -90,25 +92,25 @@ function renderWorkers() {
 function renderProvider() {
   const select = $('task-provider');
   const providers = state.capabilities?.providers || [];
-  const allowCodex = providers.includes('codex') && state.capabilities.repository;
-  const allowed = ['mock', ...(allowCodex ? ['codex'] : [])];
+  const repository = state.capabilities?.repository;
+  const availableReal = Array.from(realProviders).filter(provider => providers.includes(provider) && repository);
+  const allowed = ['mock', ...availableReal];
   const signature = allowed.join(',');
   if (select.dataset.signature !== signature) {
     const previous = select.value;
     select.replaceChildren();
     for (const provider of allowed) {
-      const option = node('option', provider === 'codex' ? '실제 Codex 워커' : '모의 워커 (mock)');
+      const option = node('option', realProviders.has(provider) ? '실제 ' + providerNames[provider] + ' 워커' : '모의 워커 (mock)');
       option.value = provider;
       select.append(option);
     }
     select.value = allowed.includes(previous) ? previous : 'mock';
     select.dataset.signature = signature;
   }
-  const real = select.value === 'codex';
-  const repository = state.capabilities?.repository;
+  const real = realProviders.has(select.value);
   $('create-route').textContent = select.value + ' / local';
   $('create-repository').hidden = !real;
-  $('provider-help').textContent = !state.capabilities ? '실행 가능한 워커 설정을 확인하고 있습니다.' : real ? '표시한 고정 커밋으로 별도 worktree를 만듭니다. 등록 후 사람이 실행을 승인합니다.' : allowCodex ? 'mock은 합성 결과를 만듭니다. 실제 변경과 테스트는 Codex 워커를 선택하세요.' : '현재 모의 워커만 사용할 수 있습니다. 실제 Codex 실행은 서버의 저장소 설정과 Codex 워커 연결이 필요합니다.';
+  $('provider-help').textContent = !state.capabilities ? '실행 가능한 워커 설정을 확인하고 있습니다.' : real ? '표시한 고정 커밋으로 별도 worktree를 만듭니다. 등록 후 사람이 실행을 승인합니다.' : availableReal.length ? 'mock은 합성 결과를 만듭니다. 실제 변경과 테스트는 Codex 또는 Claude Code 워커를 선택하세요.' : '현재 모의 워커만 사용할 수 있습니다. 실제 실행은 서버의 저장소 설정과 선택한 제공자의 워커 연결이 필요합니다.';
   if (real && repository) {
     $('create-repository-name').textContent = repository.name + ' (' + repository.id + ')';
     $('create-base-commit').textContent = repository.baseCommit;
@@ -116,7 +118,7 @@ function renderProvider() {
     $('create-test-command').textContent = JSON.stringify(repository.testCommand);
   }
   $('task-budget').min = real ? '0' : '0.001';
-  $('budget-help').textContent = real ? 'Codex 비용은 미확정으로 보고합니다. 이 예산은 외부 과금의 상한을 보장하지 않습니다.' : '모의 워커 예상 비용은 $0.001000입니다. 예산이 이보다 작으면 등록할 수 없습니다.';
+  $('budget-help').textContent = real ? providerNames[select.value] + ' 비용은 미확정으로 보고합니다. 이 예산은 외부 과금의 상한을 보장하지 않습니다.' : '모의 워커 예상 비용은 $0.001000입니다. 예산이 이보다 작으면 등록할 수 없습니다.';
   select.disabled = state.busy || !state.capabilities;
 }
 function renderProcess(prefix, process) {
@@ -129,22 +131,27 @@ function renderProcess(prefix, process) {
 }
 function renderExecution(task) {
   const evidence = task.execution;
-  $('execution-section').hidden = task.provider !== 'codex';
-  if (task.provider !== 'codex') return;
-  $('execution-status').textContent = evidence ? (evidence.status === 'succeeded' ? '실행·검증 성공' : '실행·검증 실패') : '아직 보고되지 않음';
-  $('execution-status').className = 'pill process-' + (evidence ? (evidence.status === 'succeeded' ? 'passed' : 'failed') : 'pending');
+  const agent = evidence?.[task.provider];
+  const name = providerNames[task.provider] || task.provider;
+  $('execution-section').hidden = !realProviders.has(task.provider);
+  if (!realProviders.has(task.provider)) return;
+  const completeEvidence = evidence && agent;
+  $('execution-status').textContent = completeEvidence ? (evidence.status === 'succeeded' ? '실행·검증 성공' : '실행·검증 실패') : evidence ? '제공자 실행 근거 확인 필요' : '아직 보고되지 않음';
+  $('execution-status').className = 'pill process-' + (completeEvidence ? (evidence.status === 'succeeded' ? 'passed' : 'failed') : evidence ? 'error' : 'pending');
   $('execution-repository').textContent = evidence?.repositoryId || task.repositoryId || '알 수 없음';
   $('execution-base').textContent = evidence?.baseCommit || task.baseCommit || '알 수 없음';
   $('execution-head').textContent = evidence?.headCommit || '아직 보고되지 않음';
   $('execution-profile').textContent = task.testProfile || '알 수 없음';
   $('execution-worktree').textContent = evidence?.worktreePath || '워커가 작업 공간을 준비한 뒤 보고합니다.';
-  $('codex-status').textContent = evidence ? (processStatuses[evidence.codex.status] || evidence.codex.status) + ' · 종료 코드 ' + (evidence.codex.exitCode === null ? '없음' : evidence.codex.exitCode) : '아직 보고되지 않음';
-  $('codex-thread').textContent = evidence?.codex.threadId || '아직 보고되지 않음';
-  $('codex-model').textContent = evidence?.codex.model || '기본 모델 · 모델명 미보고';
-  const usage = evidence?.codex.usage;
-  $('codex-usage').textContent = usage ? '입력 ' + usage.inputTokens.toLocaleString('ko-KR') + ' / 캐시 입력 ' + usage.cachedInputTokens.toLocaleString('ko-KR') + ' / 출력 ' + usage.outputTokens.toLocaleString('ko-KR') : '사용량 미제공';
-  $('codex-error-block').hidden = !evidence?.codex.stderr;
-  $('codex-stderr').textContent = evidence?.codex.stderr || '';
+  $('agent-execution-label').textContent = name + ' 실행';
+  $('agent-status').textContent = agent ? (processStatuses[agent.status] || agent.status) + ' · 종료 코드 ' + (agent.exitCode === null ? '없음' : agent.exitCode) : '아직 보고되지 않음';
+  $('agent-thread').textContent = agent?.threadId || '아직 보고되지 않음';
+  $('agent-model').textContent = agent?.model || '기본 모델 · 모델명 미보고';
+  const usage = agent?.usage;
+  $('agent-usage').textContent = usage ? '입력(캐시 포함) ' + usage.inputTokens.toLocaleString('ko-KR') + ' / 캐시 입력 ' + usage.cachedInputTokens.toLocaleString('ko-KR') + ' / 출력 ' + usage.outputTokens.toLocaleString('ko-KR') : '사용량 미제공';
+  $('agent-error-block').hidden = !agent?.stderr;
+  $('agent-error-title').textContent = name + ' 오류 출력';
+  $('agent-stderr').textContent = agent?.stderr || '';
   $('setup-section').hidden = !evidence?.setup;
   if (evidence?.setup) renderProcess('setup', evidence.setup);
   renderProcess('tests', evidence?.tests);
@@ -176,7 +183,7 @@ function renderSelected() {
   $('reject-button').hidden = !awaitingExecution && !awaitingReview;
   $('task-summary').textContent = task.summary || '아직 보고된 결과가 없습니다.';
   $('task-summary').className = task.summary ? '' : 'empty';
-  $('diff-kind').textContent = task.provider === 'codex' ? '고정 시작 커밋 기준 실제 변경 · 자동 적용하지 않음' : '합성 예시 · 자동 적용하지 않음';
+  $('diff-kind').textContent = realProviders.has(task.provider) ? '고정 시작 커밋 기준 실제 변경 · 자동 적용하지 않음' : '합성 예시 · 자동 적용하지 않음';
   $('task-diff').textContent = task.diff === '' ? '변경 사항이 없습니다.' : task.diff ?? '아직 보고된 diff가 없습니다.';
   $('diff-truncated').hidden = !task.execution?.diffTruncated;
   renderExecution(task);
@@ -237,7 +244,7 @@ $('create-form').addEventListener('submit', async event => {
   if (state.busy || !state.capabilities) return;
   const provider = $('task-provider').value;
   const repository = state.capabilities.repository;
-  if (provider === 'codex' && (!state.capabilities.providers.includes('codex') || !repository)) { setError('Codex 실행 설정을 확인한 뒤 다시 등록하세요.'); return; }
+  if (!state.capabilities.providers.includes(provider) || (realProviders.has(provider) && !repository)) { setError('선택한 워커의 실행 설정을 확인한 뒤 다시 등록하세요.'); return; }
   const title = $('task-title').value.trim();
   const instructions = $('task-instructions').value.trim();
   const budgetMicros = Math.round(Number($('task-budget').value) * 1_000_000);
@@ -247,7 +254,7 @@ $('create-form').addEventListener('submit', async event => {
   render();
   try {
     const payload = { title, instructions, budgetMicros, provider, runtime: 'local' };
-    if (provider === 'codex') Object.assign(payload, { repositoryId: repository.id, baseCommit: repository.baseCommit, testProfile: repository.testProfile });
+    if (realProviders.has(provider)) Object.assign(payload, { repositoryId: repository.id, baseCommit: repository.baseCommit, testProfile: repository.testProfile });
     const result = await api('/api/tasks', payload);
     state.selectedId = result.id;
     state.creating = false;
