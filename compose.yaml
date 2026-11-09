@@ -1,0 +1,31 @@
+# Local container demonstration only; no cloud deployment target.
+services:
+  control-plane:
+    image: project-hivemind:local
+    build: .
+    environment:
+      HIVEMIND_HOST: 0.0.0.0
+      HIVEMIND_OPERATOR_TOKEN: ${HIVEMIND_OPERATOR_TOKEN:?Set a custom operator token of at least 24 characters}
+      HIVEMIND_WORKER_TOKEN: ${HIVEMIND_WORKER_TOKEN:?Set a distinct worker token of at least 24 characters}
+    ports:
+      - "127.0.0.1:4310:4310"
+    volumes:
+      - hivemind-data:/app/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4310/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+  worker:
+    image: project-hivemind:local
+    build: .
+    command: ["node", "dist/apps/worker/src/main.js"]
+    environment:
+      HIVEMIND_API_URL: http://control-plane:4310
+      HIVEMIND_WORKER_TOKEN: ${HIVEMIND_WORKER_TOKEN:?Set a distinct worker token of at least 24 characters}
+      HIVEMIND_WORKER_ID: worker-container-1
+    depends_on:
+      control-plane:
+        condition: service_healthy
+volumes:
+  hivemind-data:
