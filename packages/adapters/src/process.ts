@@ -12,13 +12,17 @@ export interface ProcessOptions {
   onStdout?: (chunk: Buffer) => void;
 }
 
-export function processEnvironment(home: string, codex = false): NodeJS.ProcessEnv {
+export function processEnvironment(home: string, mode: boolean | 'claude' = false): NodeJS.ProcessEnv {
   const environment: NodeJS.ProcessEnv = { HOME: home, USERPROFILE: home, CI: '1', TERM: 'dumb' };
   for (const key of ['PATH','TMPDIR','TMP','TEMP','SystemRoot','WINDIR','LANG','LC_ALL']) {
     if (process.env[key] !== undefined) environment[key] = process.env[key];
   }
-  // Inference credentials are available only to Codex, never to repository tests.
-  if (codex) for (const key of ['CODEX_HOME','CODEX_API_KEY','CODEX_ACCESS_TOKEN','CODEX_CA_CERTIFICATE','HTTPS_PROXY','HTTP_PROXY','NO_PROXY','SSL_CERT_FILE','SSL_CERT_DIR']) {
+  // Each inference process receives only its own authentication environment.
+  if (mode === true) for (const key of ['CODEX_HOME','CODEX_API_KEY','CODEX_ACCESS_TOKEN','CODEX_CA_CERTIFICATE','HTTPS_PROXY','HTTP_PROXY','NO_PROXY','SSL_CERT_FILE','SSL_CERT_DIR']) {
+    if (process.env[key] !== undefined) environment[key] = process.env[key];
+  }
+  // Native macOS Claude account selection needs the non-secret user name.
+  if (mode === 'claude') for (const key of ['USER','CLAUDE_CONFIG_DIR','CLAUDE_CODE_OAUTH_TOKEN','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_BASE_URL','HTTPS_PROXY','HTTP_PROXY','NO_PROXY','SSL_CERT_FILE','SSL_CERT_DIR']) {
     if (process.env[key] !== undefined) environment[key] = process.env[key];
   }
   environment.GIT_CONFIG_GLOBAL = '/dev/null';

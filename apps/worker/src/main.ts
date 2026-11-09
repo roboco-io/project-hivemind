@@ -8,7 +8,7 @@ process.once('SIGINT', () => controller.abort());
 process.once('SIGTERM', () => controller.abort());
 
 const settings = loadWorkerSettings(process.env);
-const config = {...settings,adapter:getAdapter(settings.provider,settings.codex)};
+const config = {...settings,adapter:getAdapter(settings.provider,settings.codex ?? settings.claude)};
 const once = process.argv.includes('--once');
 
 do {

@@ -15,13 +15,14 @@ const log = {type:'string',maxLength:16000};
 const processProperties = {command,status,exitCode:code,durationMs:{type:'integer',minimum:0,maximum:86400000},stdout:log,stderr:log,truncated:{type:'boolean'}};
 const processEvidence = {type:'object',additionalProperties:false,required:Object.keys(processProperties),properties:processProperties};
 const usageProperties = {inputTokens:{type:'integer',minimum:0,maximum:Number.MAX_SAFE_INTEGER},cachedInputTokens:{type:'integer',minimum:0,maximum:Number.MAX_SAFE_INTEGER},outputTokens:{type:'integer',minimum:0,maximum:Number.MAX_SAFE_INTEGER}};
-const codexProperties = {status,exitCode:code,threadId:{type:['string','null'],minLength:1,maxLength:200},model:{type:['string','null'],minLength:1,maxLength:200},usage:{anyOf:[{type:'null'},{type:'object',additionalProperties:false,required:Object.keys(usageProperties),properties:usageProperties}]},stderr:log};
+const agentProperties = {status,exitCode:code,threadId:{type:['string','null'],minLength:1,maxLength:200},model:{type:['string','null'],minLength:1,maxLength:200},usage:{anyOf:[{type:'null'},{type:'object',additionalProperties:false,required:Object.keys(usageProperties),properties:usageProperties}]},stderr:log};
 const executionProperties = {
   repositoryId:{...string,maxLength:120},baseCommit:{type:'string',pattern:'^[a-fA-F0-9]{40}$'},headCommit:{type:'string',pattern:'^[a-fA-F0-9]{40}$'},
   worktreePath:{...string,maxLength:4096},diffTruncated:{type:'boolean'},status:{type:'string',enum:['succeeded','failed']},setup:processEvidence,tests:processEvidence,
-  codex:{type:'object',additionalProperties:false,required:Object.keys(codexProperties),properties:codexProperties},
+  codex:{type:'object',additionalProperties:false,required:Object.keys(agentProperties),properties:agentProperties},
+  claude:{type:'object',additionalProperties:false,required:Object.keys(agentProperties),properties:agentProperties},
 };
-const executionEvidence = {anyOf:[{type:'null'},{type:'object',additionalProperties:false,required:Object.keys(executionProperties).filter(key=>key !== 'setup'),properties:executionProperties}]};
+const executionEvidence = {anyOf:[{type:'null'},{type:'object',additionalProperties:false,required:Object.keys(executionProperties).filter(key=>!['setup','codex','claude'].includes(key)),properties:executionProperties}]};
 
 export function buildApp(options: AppOptions = {}) {
   const operatorToken = options.operatorToken ?? 'local-development-only';
@@ -50,7 +51,7 @@ export function buildApp(options: AppOptions = {}) {
   for (const [route,file,mime] of [['/','index.html','text/html'],['/app.js','app.js','application/javascript'],['/styles.css','styles.css','text/css'],['/brand/hivemind-logo.png','brand/hivemind-logo.png','image/png'],['/brand/hivemind-bee.png','brand/hivemind-bee.png','image/png']] as const) {
     app.get(route,async (_request,reply) => reply.type(mime.startsWith('image/') ? mime : mime+'; charset=utf-8').send(await readFile(fileURLToPath(new URL(file,staticRoot)))));
   }
-  app.get('/api/capabilities',{preHandler:operator},async () => ({providers:options.repository ? ['mock','codex'] : ['mock'],repository:options.repository ?? null}));
+  app.get('/api/capabilities',{preHandler:operator},async () => ({providers:options.repository ? ['mock','codex','claude'] : ['mock'],repository:options.repository ?? null}));
   app.get('/api/state',{preHandler:operator},async () => store.state());
   app.post<{Body:CreateTask}>('/api/tasks',{
     preHandler:operator,
@@ -63,7 +64,7 @@ export function buildApp(options: AppOptions = {}) {
     preHandler:operator,schema:body({reason:string}),
   },async request => store.cancel(request.params.id,request.body.reason));
   app.post<{Body:{workerId:string;provider:Provider;runtime:Runtime;repositoryId?:string}}>('/api/workers/register',{
-    preHandler:worker,schema:body({workerId:{...string,maxLength:120},provider:{type:'string',enum:['mock','codex']},runtime:{const:'local',type:'string'},repositoryId:{...string,maxLength:120}},['workerId','provider','runtime']),
+    preHandler:worker,schema:body({workerId:{...string,maxLength:120},provider:{type:'string',enum:['mock','codex','claude']},runtime:{const:'local',type:'string'},repositoryId:{...string,maxLength:120}},['workerId','provider','runtime']),
   },async request => store.register(request.body.workerId,request.body.provider,request.body.runtime,request.body.repositoryId));
   app.post<{Body:{workerId:string}}>('/api/workers/claim',{
     preHandler:worker,schema:body({workerId:{...string,maxLength:120}}),

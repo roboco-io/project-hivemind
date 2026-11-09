@@ -16,7 +16,7 @@ export interface WorkerConfig {
 export async function runOnce(config: WorkerConfig, signal?: AbortSignal): Promise<boolean> {
   const provider = config.provider ?? config.adapter?.provider ?? 'mock';
   if (config.adapter && config.adapter.provider !== provider) throw new Error('Configured worker provider does not match its adapter');
-  if (provider === 'codex' && !config.adapter) throw new Error('Codex worker requires a configured adapter');
+  if (provider !== 'mock' && !config.adapter) throw new Error(`${provider} worker requires a configured adapter`);
   const controller = new AbortController();
   const workSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const fetchImpl = config.fetchImpl ?? fetch;
@@ -35,7 +35,7 @@ export async function runOnce(config: WorkerConfig, signal?: AbortSignal): Promi
 
   await post('/api/workers/register', {
     workerId: config.workerId, provider, runtime: 'local',
-    ...(provider === 'codex' ? {repositoryId:config.repositoryId ?? 'local'} : {}),
+    ...(provider !== 'mock' ? {repositoryId:config.repositoryId ?? 'local'} : {}),
   });
   const lease = await post<Lease | null>('/api/workers/claim', { workerId: config.workerId });
   if (!lease) return false;

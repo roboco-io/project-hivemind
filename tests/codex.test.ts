@@ -24,7 +24,7 @@ test('real subprocess adapter captures actual diff, test evidence and usage with
     const result=await createCodexAdapter(f.options).execute(f.task,new AbortController().signal);
     assert.equal(result.actualCostMicros,null);assert.match(result.diff,/\+after/);assert.equal(result.summary,'Changed value.');
     assert.equal(result.execution!.status,'succeeded');assert.equal(result.execution!.tests.status,'passed');assert.equal(result.execution!.tests.exitCode,0);assert.match(result.execution!.tests.stdout,/test passed/);
-    assert.deepEqual(result.execution!.codex.usage,{inputTokens:12,cachedInputTokens:3,outputTokens:4});assert.equal(result.execution!.codex.threadId,'thread-1');
+    assert.deepEqual(result.execution!.codex!.usage,{inputTokens:12,cachedInputTokens:3,outputTokens:4});assert.equal(result.execution!.codex!.threadId,'thread-1');
     assert.equal(readFileSync(join(f.repo,'value.txt'),'utf8'),'before\n');
   } finally {if(old===undefined)delete process.env.HIVEMIND_WORKER_TOKEN;else process.env.HIVEMIND_WORKER_TOKEN=old;rmSync(f.dir,{recursive:true,force:true});}
 });

@@ -27,9 +27,9 @@ test('mock adapter stops on cancellation', async () => {
   await assert.rejects(result, { name: 'AbortError' });
 });
 
-test('unconfigured Codex and unsupported providers fail instead of silently using mock', () => {
+test('unconfigured Codex and Claude fail instead of silently using mock', () => {
   assert.throws(() => getAdapter('codex'), /requires.*configuration/i);
-  assert.throws(() => getAdapter('claude'), /not implemented/i);
+  assert.throws(() => getAdapter('claude'), /requires.*configuration/i);
 });
 
 test('worker registers, claims and submits result using worker credentials', async () => {
@@ -54,16 +54,16 @@ test('idle worker makes no result request', async () => {
   assert.equal(requests, 2);
 });
 
-test('Codex worker advertises repository capability and preserves unknown cost', async () => {
+for (const provider of ['codex','claude'] as const) test(`${provider} worker advertises repository capability and preserves unknown cost`, async () => {
   const calls: Array<Record<string,unknown>> = [];
   const fetchImpl: typeof fetch = async (input,init) => {
     const path = new URL(String(input)).pathname;
     calls.push(JSON.parse(String(init?.body)) as Record<string,unknown>);
-    return Response.json(path.endsWith('/claim') ? {task:{...task,provider:'codex',repositoryId:'local'},leaseToken:'secret'} : {ok:true});
+    return Response.json(path.endsWith('/claim') ? {task:{...task,provider,repositoryId:'local'},leaseToken:'secret'} : {ok:true});
   };
-  const adapter: AgentAdapter = {provider:'codex',execute:async()=>({summary:'actual',diff:'',actualCostMicros:null})};
-  assert.equal(await runOnce({apiUrl:'http://localhost',workerId:'codex-1',workerToken:'t',adapter,fetchImpl,provider:'codex',repositoryId:'local'}),true);
-  assert.equal(calls[0]!.provider,'codex');
+  const adapter: AgentAdapter = {provider,execute:async()=>({summary:'actual',diff:'',actualCostMicros:null})};
+  assert.equal(await runOnce({apiUrl:'http://localhost',workerId:provider+'-1',workerToken:'t',adapter,fetchImpl,provider,repositoryId:'local'}),true);
+  assert.equal(calls[0]!.provider,provider);
   assert.equal(calls[0]!.repositoryId,'local');
   assert.equal(calls.at(-1)!.actualCostMicros,null);
 });

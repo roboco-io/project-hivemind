@@ -190,3 +190,52 @@ test('legacy Codex records without command snapshots require resubmission',()=>{
   reopened.close();
  } finally {rmSync(dir,{recursive:true,force:true});}
 });
+
+const claudeInput={...codexInput,provider:'claude' as const};
+function claudeExecution() {
+ const {codex,...common}=execution();
+ return {...common,claude:{...codex,threadId:'claude-session',model:'claude-fixture'}};
+}
+
+test('Claude tasks remain separate from mock and Codex workers',()=>{
+ const s=new HiveStore(':memory:',Date.now,repository);
+ const task=s.create(claudeInput); assert.equal(task.actualCostMicros,null); assert.deepEqual(task.testCommand,repository.testCommand);
+ s.register('m');s.register('c','codex','local','local');s.register('a','claude','local','local');
+ assert.equal(s.claim('a'),null);s.decision(task.id,'approve','Claude approved');
+ assert.equal(s.claim('m'),null);assert.equal(s.claim('c'),null);
+ const lease=s.claim('a')!;assert.equal(lease.task.id,task.id);
+ s.heartbeat(task.id,'a',lease.leaseToken);assert.equal(s.state().workers.find(w=>w.id==='a')!.provider,'claude');
+ const result=s.result(task.id,'a',lease.leaseToken,{summary:'Claude complete',diff:'',actualCostMicros:null,execution:claudeExecution()});
+ assert.equal(result.status,'awaiting_review');assert.equal(result.actualCostMicros,null);assert.equal(result.execution!.codex,undefined);
+ assert.equal(result.execution!.claude!.threadId,'claude-session');assert.equal(s.decision(task.id,'approve','passed').status,'completed');
+ const codex=s.create(codexInput);s.decision(codex.id,'approve','Codex only');assert.equal(s.claim('a'),null);assert.equal(s.claim('c')!.task.id,codex.id);
+ const mock=s.create(input);s.decision(mock.id,'approve','mock only');assert.equal(s.claim('a'),null);assert.equal(s.claim('m')!.task.id,mock.id);s.close();
+});
+
+test('real result metadata must belong to exactly the assigned provider',()=>{
+ const s=new HiveStore(':memory:',Date.now,repository);
+ s.register('a','claude','local','local');const task=s.create(claudeInput);s.decision(task.id,'approve','run');const lease=s.claim('a')!;
+ const report=(e:unknown)=>s.result(task.id,'a',lease.leaseToken,{summary:'result',diff:'patch',actualCostMicros:null,execution:e as ReturnType<typeof claudeExecution>});
+ assert.throws(()=>report(execution()),/provider|Claude|claude|metadata/i);
+ assert.throws(()=>report({...claudeExecution(),codex:execution().codex}),/provider|metadata/i);
+ assert.throws(()=>report({...claudeExecution(),claude:undefined}),/evidence|provider|metadata/i);
+ assert.throws(()=>report({...claudeExecution(),claude:{...claudeExecution().claude,status:'error',exitCode:null}}),/success|evidence/i);
+ assert.throws(()=>s.result(task.id,'a',lease.leaseToken,{summary:'result',diff:'',actualCostMicros:0,execution:claudeExecution()}),/cost/i);
+ s.result(task.id,'a',lease.leaseToken,{summary:'valid',diff:'patch',actualCostMicros:null,execution:claudeExecution()});
+ const old=s.create(codexInput);s.decision(old.id,'approve','run');s.register('c','codex','local','local');const c=s.claim('c')!;
+ assert.throws(()=>s.result(old.id,'c',c.leaseToken,{summary:'wrong agent',diff:'',actualCostMicros:null,execution:claudeExecution()}),/provider|metadata/i);
+ assert.equal(s.result(old.id,'c',c.leaseToken,{summary:'old Codex format',diff:'',actualCostMicros:null,execution:execution()}).status,'awaiting_review');s.close();
+});
+
+test('failed Claude tests preserve diff and survive restart without dummy Codex metadata',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'hivemind-claude-'));const path=join(dir,'state.sqlite');
+ try {
+  const s=new HiveStore(path,Date.now,repository);const task=s.create(claudeInput);s.decision(task.id,'approve','run');s.register('a','claude','local','local');const lease=s.claim('a')!;
+  const evidence={...claudeExecution(),status:'failed' as const,tests:{...claudeExecution().tests,status:'failed' as const,exitCode:1,stderr:'actual assertion failed'}};
+  const result=s.result(task.id,'a',lease.leaseToken,{summary:'tests failed',diff:'real Claude patch',actualCostMicros:null,execution:evidence});
+  assert.equal(result.status,'failed');assert.equal(result.execution!.tests.exitCode,1);assert.equal(result.diff,'real Claude patch');s.close();
+  const reopened=new HiveStore(path,Date.now,repository);const restored=reopened.state().tasks[0]!;
+  assert.equal(restored.actualCostMicros,null);assert.equal(restored.execution!.claude!.model,'claude-fixture');assert.equal(restored.execution!.codex,undefined);
+  assert.equal(restored.execution!.tests.stderr,'actual assertion failed');assert.throws(()=>reopened.decision(task.id,'approve','ignore failure'),/approval|state/i);reopened.close();
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});

@@ -83,7 +83,7 @@ test('capabilities reveal allowed pinned repository only to operator',async t=>{
  const app=buildApp({repository}); t.after(()=>app.close());
  assert.equal((await app.inject('/api/capabilities')).statusCode,401);
  const response=await app.inject({url:'/api/capabilities',headers:operator});
- assert.equal(response.statusCode,200); assert.deepEqual(response.json(),{providers:['mock','codex'],repository});
+ assert.equal(response.statusCode,200); assert.deepEqual(response.json(),{providers:['mock','codex','claude'],repository});
 });
 
 test('HTTP Codex routing and results preserve real evidence and null cost',async t=>{
@@ -117,4 +117,25 @@ test('failed test evidence is retained and malformed or oversized logs rejected'
  const result=await post(`/api/tasks/${task.id}/result`,{...creds,summary:'failed',diff:'patch',actualCostMicros:null,execution:evidence},worker);
  assert.equal(result.statusCode,200); assert.equal(result.json<Task>().status,'failed'); assert.equal(result.json<Task>().execution!.tests.stderr,'assertion failure');
  assert.equal((await post(`/api/tasks/${task.id}/decision`,{decision:'approve',reason:'ignore'})).statusCode,409);
+});
+
+test('HTTP Claude routing rejects cross-provider reports and stores its own real evidence',async t=>{
+ const app=buildApp({repository});t.after(()=>app.close());
+ const post=(url:string,payload:Record<string,unknown>,headers=operator)=>app.inject({method:'POST',url,headers,payload});
+ const create=await post('/api/tasks',{...codexInput,provider:'claude'});assert.equal(create.statusCode,201);const task=create.json<Task>();
+ assert.equal(task.actualCostMicros,null);assert.deepEqual(task.testCommand,repository.testCommand);
+ await post(`/api/tasks/${task.id}/decision`,{decision:'approve',reason:'Claude run'});
+ for(const [workerId,provider] of [['m','mock'],['c','codex'],['a','claude']] as const){
+  const r=await post('/api/workers/register',{workerId,provider,runtime:'local',...(provider==='mock'?{}:{repositoryId:'local'})},worker);assert.equal(r.statusCode,200);
+ }
+ assert.equal((await post('/api/workers/claim',{workerId:'m'},worker)).json(),null);
+ assert.equal((await post('/api/workers/claim',{workerId:'c'},worker)).json(),null);
+ const lease=(await post('/api/workers/claim',{workerId:'a'},worker)).json<Lease>();assert.equal(lease.task.id,task.id);
+ const creds={workerId:'a',leaseToken:lease.leaseToken};
+ const {codex,...common}=actualEvidence;const evidence={...common,claude:{...codex,threadId:'claude-session'}};
+ assert.equal((await post(`/api/tasks/${task.id}/result`,{...creds,summary:'wrong',diff:'',actualCostMicros:null,execution:actualEvidence},worker)).statusCode,400);
+ assert.equal((await post(`/api/tasks/${task.id}/result`,{...creds,summary:'mixed',diff:'',actualCostMicros:null,execution:{...evidence,codex}},worker)).statusCode,400);
+ const r=await post(`/api/tasks/${task.id}/result`,{...creds,summary:'Claude complete',diff:'',actualCostMicros:null,execution:evidence},worker);
+ assert.equal(r.statusCode,200);const result=r.json<Task>();assert.equal(result.status,'awaiting_review');assert.deepEqual(result.execution,evidence);assert.equal(result.execution!.codex,undefined);
+ assert.equal((await post(`/api/tasks/${task.id}/decision`,{decision:'approve',reason:'reviewed'})).statusCode,200);
 });

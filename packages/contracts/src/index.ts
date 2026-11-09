@@ -52,6 +52,14 @@ export interface ProcessEvidence {
   stderr: string;
   truncated: boolean;
 }
+export interface AgentRunEvidence {
+  status: ProcessEvidence['status'];
+  exitCode: number | null;
+  threadId: string | null;
+  model: string | null;
+  usage: { inputTokens: number; cachedInputTokens: number; outputTokens: number } | null;
+  stderr: string;
+}
 export interface ExecutionEvidence {
   repositoryId: string;
   baseCommit: string;
@@ -61,14 +69,8 @@ export interface ExecutionEvidence {
   status: 'succeeded' | 'failed';
   setup?: ProcessEvidence;
   tests: ProcessEvidence;
-  codex: {
-    status: ProcessEvidence['status'];
-    exitCode: number | null;
-    threadId: string | null;
-    model: string | null;
-    usage: { inputTokens: number; cachedInputTokens: number; outputTokens: number } | null;
-    stderr: string;
-  };
+  codex?: AgentRunEvidence;
+  claude?: AgentRunEvidence;
 }
 export interface RepositoryPolicy {
   id: string;

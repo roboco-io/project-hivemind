@@ -1,22 +1,25 @@
 import { resolve } from 'node:path';
 
+export interface LocalWorkerSettings {
+  repositoryPath: string;
+  worktreeRoot: string;
+  repositoryId: string;
+  codexCommand?: string;
+  claudeCommand?: string;
+  model?: string;
+  testCommand: string[];
+  setupCommand?: string[];
+  timeoutMs: number;
+  testTimeoutMs: number;
+}
 export interface WorkerSettings {
   apiUrl: string;
   workerId: string;
   workerToken: string;
-  provider: 'mock' | 'codex';
+  provider: 'mock' | 'codex' | 'claude';
   repositoryId?: string;
-  codex?: {
-    repositoryPath: string;
-    worktreeRoot: string;
-    repositoryId: string;
-    codexCommand: string;
-    model?: string;
-    testCommand: string[];
-    setupCommand?: string[];
-    timeoutMs: number;
-    testTimeoutMs: number;
-  };
+  codex?: LocalWorkerSettings;
+  claude?: LocalWorkerSettings;
 }
 function command(value: string | undefined, name: string, fallback?: string[]): string[] | undefined {
   if (value === undefined || value === '') return fallback;
@@ -32,25 +35,27 @@ function timeout(value: string | undefined, fallback: number, name: string): num
 }
 export function loadWorkerSettings(env: NodeJS.ProcessEnv): WorkerSettings {
   const provider = env.HIVEMIND_PROVIDER ?? 'mock';
-  if (provider !== 'mock' && provider !== 'codex') throw new Error('HIVEMIND_PROVIDER must be mock or codex');
+  if (provider !== 'mock' && provider !== 'codex' && provider !== 'claude') throw new Error('HIVEMIND_PROVIDER must be mock, codex or claude');
   const config: WorkerSettings = {
     apiUrl: env.HIVEMIND_API_URL ?? 'http://127.0.0.1:4310',
-    workerId: env.HIVEMIND_WORKER_ID ?? (provider === 'codex' ? 'worker-codex-1' : 'worker-local-1'),
+    workerId: env.HIVEMIND_WORKER_ID ?? (provider === 'mock' ? 'worker-local-1' : `worker-${provider}-1`),
     workerToken: env.HIVEMIND_WORKER_TOKEN ?? 'local-worker-only', provider,
   };
   if (provider === 'mock') return config;
-  if (!env.HIVEMIND_REPO_PATH?.trim()) throw new Error('HIVEMIND_REPO_PATH is required for a Codex worker');
+  if (!env.HIVEMIND_REPO_PATH?.trim()) throw new Error(`HIVEMIND_REPO_PATH is required for a ${provider} worker`);
   config.repositoryId = 'local';
-  config.codex = {
+  const prefix = provider === 'codex' ? 'HIVEMIND_CODEX' : 'HIVEMIND_CLAUDE';
+  const local: LocalWorkerSettings = {
     repositoryPath: resolve(env.HIVEMIND_REPO_PATH),
     worktreeRoot: resolve(env.HIVEMIND_WORKTREE_ROOT ?? 'data/worktrees'),
     repositoryId: 'local',
-    codexCommand: env.HIVEMIND_CODEX_BIN ?? 'codex',
-    ...(env.HIVEMIND_CODEX_MODEL ? {model:env.HIVEMIND_CODEX_MODEL} : {}),
+    ...(provider === 'codex' ? {codexCommand:env.HIVEMIND_CODEX_BIN ?? 'codex'} : {claudeCommand:env.HIVEMIND_CLAUDE_BIN ?? 'claude'}),
+    ...(env[`${prefix}_MODEL`] ? {model:env[`${prefix}_MODEL`]} : {}),
     testCommand: command(env.HIVEMIND_TEST_COMMAND,'HIVEMIND_TEST_COMMAND',['npm','run','check'])!,
     ...(env.HIVEMIND_SETUP_COMMAND ? {setupCommand:command(env.HIVEMIND_SETUP_COMMAND,'HIVEMIND_SETUP_COMMAND')} : {}),
-    timeoutMs: timeout(env.HIVEMIND_CODEX_TIMEOUT_MS,600000,'HIVEMIND_CODEX_TIMEOUT_MS'),
+    timeoutMs: timeout(env[`${prefix}_TIMEOUT_MS`],600000,`${prefix}_TIMEOUT_MS`),
     testTimeoutMs: timeout(env.HIVEMIND_TEST_TIMEOUT_MS,120000,'HIVEMIND_TEST_TIMEOUT_MS'),
   };
+  config[provider] = local;
   return config;
 }

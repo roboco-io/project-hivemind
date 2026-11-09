@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { CreateTask, Task, State, Worker, HiveEvent, Lease, RunResult, RepositoryPolicy, Provider, Runtime, ExecutionEvidence, ProcessEvidence } from '../../contracts/src/index.js';
+import type { CreateTask, Task, State, Worker, HiveEvent, Lease, RunResult, RepositoryPolicy, Provider, Runtime, ExecutionEvidence, ProcessEvidence, AgentRunEvidence } from '../../contracts/src/index.js';
 
 export class DomainError extends Error {
   constructor(message: string, public statusCode = 409) { super(message); }
@@ -55,15 +55,21 @@ function validateProcess(value: unknown): ProcessEvidence {
   const code = exitCode(item.exitCode);
   return {command,status:processStatus(item.status,code),exitCode:code,durationMs:integer(item.durationMs,'durationMs',0,86400000),stdout:boundedString(item.stdout,'stdout',16000),stderr:boundedString(item.stderr,'stderr',16000),truncated:bool(item.truncated,'truncated')};
 }
-function validateExecution(value: unknown): ExecutionEvidence {
-  const item = object(value,'execution evidence'), codex = object(item.codex,'Codex evidence');
-  const code = exitCode(codex.exitCode), base = text(item.baseCommit,'baseCommit',40), head = text(item.headCommit,'headCommit',40);
+function validateAgent(value: unknown, label: string): AgentRunEvidence {
+  const agent = object(value,`${label} evidence`), code = exitCode(agent.exitCode);
+  const usage = agent.usage === null ? null : object(agent.usage,'usage');
+  return {status:processStatus(agent.status,code),exitCode:code,threadId:agent.threadId === null ? null : text(agent.threadId,'threadId',200),model:agent.model === null ? null : text(agent.model,'model',200),usage:usage === null ? null : {inputTokens:integer(usage.inputTokens,'inputTokens',0,Number.MAX_SAFE_INTEGER),cachedInputTokens:integer(usage.cachedInputTokens,'cachedInputTokens',0,Number.MAX_SAFE_INTEGER),outputTokens:integer(usage.outputTokens,'outputTokens',0,Number.MAX_SAFE_INTEGER)},stderr:boundedString(agent.stderr,`${label} stderr`,16000)};
+}
+function validateExecution(value: unknown, provider: 'codex' | 'claude'): ExecutionEvidence {
+  const item = object(value,'execution evidence');
+  const other = provider === 'codex' ? 'claude' : 'codex';
+  if (!Object.hasOwn(item,provider) || Object.hasOwn(item,other)) throw new DomainError('Execution provider metadata does not match task',400);
+  const agent = validateAgent(item[provider],provider === 'codex' ? 'Codex' : 'Claude');
+  const base = text(item.baseCommit,'baseCommit',40), head = text(item.headCommit,'headCommit',40);
   if (!/^[a-f0-9]{40}$/i.test(base) || !/^[a-f0-9]{40}$/i.test(head)) throw new DomainError('Invalid execution commit',400);
   if (!['succeeded','failed'].includes(String(item.status))) throw new DomainError('Invalid execution status',400);
-  const usage = codex.usage === null ? null : object(codex.usage,'usage');
   return {repositoryId:text(item.repositoryId,'repositoryId',120),baseCommit:base,headCommit:head,worktreePath:text(item.worktreePath,'worktreePath',4096),diffTruncated:bool(item.diffTruncated,'diffTruncated'),status:item.status as ExecutionEvidence['status'],
-    ...(item.setup === undefined ? {} : {setup:validateProcess(item.setup)}),tests:validateProcess(item.tests),
-    codex:{status:processStatus(codex.status,code),exitCode:code,threadId:codex.threadId === null ? null : text(codex.threadId,'threadId',200),model:codex.model === null ? null : text(codex.model,'model',200),usage:usage === null ? null : {inputTokens:integer(usage.inputTokens,'inputTokens',0,Number.MAX_SAFE_INTEGER),cachedInputTokens:integer(usage.cachedInputTokens,'cachedInputTokens',0,Number.MAX_SAFE_INTEGER),outputTokens:integer(usage.outputTokens,'outputTokens',0,Number.MAX_SAFE_INTEGER)},stderr:boundedString(codex.stderr,'Codex stderr',16000)}};
+    ...(item.setup === undefined ? {} : {setup:validateProcess(item.setup)}),tests:validateProcess(item.tests),[provider]:agent};
 }
 export class HiveStore {
   private db: DatabaseSync;
@@ -113,10 +119,10 @@ export class HiveStore {
   create(input: CreateTask): Task {
     const title = text(input.title,'title',160), instructions = text(input.instructions,'instructions',12000);
     const budget = money(input.budgetMicros,'budget');
-    if (!['mock','codex'].includes(input.provider) || input.runtime !== 'local') throw new DomainError('Only mock/local and configured codex/local are implemented',422);
-    const isCodex = input.provider === 'codex';
-    if (isCodex) {
-      if (!this.repository) throw new DomainError('Codex repository is not configured or supported',422);
+    if (!['mock','codex','claude'].includes(input.provider) || input.runtime !== 'local') throw new DomainError('Only mock/local and configured codex/claude local workers are implemented',422);
+    const isReal = input.provider !== 'mock';
+    if (isReal) {
+      if (!this.repository) throw new DomainError('Agent repository is not configured or supported',422);
       if (input.repositoryId !== this.repository.id) throw new DomainError('Invalid repository selection',422);
       if (input.baseCommit !== this.repository.baseCommit) throw new DomainError('Repository base commit does not match the configured snapshot',422);
       if (input.testProfile !== this.repository.testProfile) throw new DomainError('Invalid test profile',422);
@@ -125,7 +131,7 @@ export class HiveStore {
       if (budget < ESTIMATE_MICROS) throw new DomainError('Task budget is below the mock estimate',422);
     }
     return this.tx(() => {
-      const task: Task = {title,instructions,budgetMicros:budget,provider:input.provider,runtime:'local',...(isCodex ? {repositoryId:input.repositoryId,baseCommit:input.baseCommit,testProfile:input.testProfile,testCommand:[...this.repository!.testCommand]} : {}),id:randomUUID(),status:'awaiting_execution_approval',createdAt:this.timestamp(),updatedAt:this.timestamp(),runId:null,workerId:null,leaseExpiresAt:null,estimatedCostMicros:isCodex ? null : ESTIMATE_MICROS,actualCostMicros:isCodex ? null : 0,diff:null,summary:null,execution:null};
+      const task: Task = {title,instructions,budgetMicros:budget,provider:input.provider,runtime:'local',...(isReal ? {repositoryId:input.repositoryId,baseCommit:input.baseCommit,testProfile:input.testProfile,testCommand:[...this.repository!.testCommand]} : {}),id:randomUUID(),status:'awaiting_execution_approval',createdAt:this.timestamp(),updatedAt:this.timestamp(),runId:null,workerId:null,leaseExpiresAt:null,estimatedCostMicros:isReal ? null : ESTIMATE_MICROS,actualCostMicros:isReal ? null : 0,diff:null,summary:null,execution:null};
       this.db.prepare('INSERT INTO tasks(id,data) VALUES (?,?)').run(task.id,JSON.stringify(task));
       this.event(task,'task.created',{provider:task.provider,runtime:task.runtime,budgetMicros:budget}); return task;
     });
@@ -152,8 +158,8 @@ export class HiveStore {
   }
   register(id: string, provider: Provider = 'mock', runtime: Runtime = 'local', repositoryId?: string): Worker {
     id = text(id,'workerId',120);
-    if (!['mock','codex'].includes(provider) || runtime !== 'local') throw new DomainError('Unsupported worker capability',422);
-    if (provider === 'codex' && (!this.repository || repositoryId !== this.repository.id)) throw new DomainError('Invalid Codex worker repository',422);
+    if (!['mock','codex','claude'].includes(provider) || runtime !== 'local') throw new DomainError('Unsupported worker capability',422);
+    if (provider !== 'mock' && (!this.repository || repositoryId !== this.repository.id)) throw new DomainError('Invalid agent worker repository',422);
     if (provider === 'mock' && repositoryId !== undefined) throw new DomainError('Mock worker cannot select a repository',400);
     const worker: Worker = {id,provider,runtime,lastSeenAt:this.timestamp(),...(repositoryId ? {repositoryId} : {})};
     const previous = this.db.prepare('SELECT data FROM workers WHERE id=?').get(id);
@@ -169,7 +175,7 @@ export class HiveStore {
       const worker = this.getWorker(id);
       this.touchWorker(id);
       if (this.tasks().some(task => task.status === 'running' && task.workerId === id)) return null;
-      const task = this.tasks().reverse().find(task => task.status === 'queued' && task.provider === worker.provider && task.runtime === worker.runtime && (task.provider !== 'codex' || task.repositoryId === worker.repositoryId));
+      const task = this.tasks().reverse().find(task => task.status === 'queued' && task.provider === worker.provider && task.runtime === worker.runtime && (task.provider === 'mock' || task.repositoryId === worker.repositoryId));
       if (!task) return null;
       task.status = 'running'; task.runId = randomUUID(); task.workerId = id; task.leaseExpiresAt = this.now()+30000;
       const leaseToken = randomUUID(); this.db.prepare('UPDATE tasks SET lease_token=? WHERE id=?').run(leaseToken,task.id);
@@ -196,13 +202,14 @@ export class HiveStore {
     return this.tx(() => {
       const task = this.running(id,worker,token);
       let eventType = 'run.result';
-      if (task.provider === 'codex') {
-        if (result.actualCostMicros !== null) throw new DomainError('Codex cost must remain unknown (null)',400);
-        const evidence = validateExecution(result.execution);
+      if (task.provider !== 'mock') {
+        if (result.actualCostMicros !== null) throw new DomainError('Agent cost must remain unknown (null)',400);
+        const evidence = validateExecution(result.execution,task.provider);
         if (evidence.repositoryId !== task.repositoryId || evidence.baseCommit !== task.baseCommit) throw new DomainError('Execution repository or base commit does not match task',400);
         if (!Array.isArray(task.testCommand) || task.testCommand.length === 0) throw new DomainError('Task is missing its approved command snapshot; resubmit this task',400);
         if (JSON.stringify(evidence.tests.command) !== JSON.stringify(task.testCommand)) throw new DomainError('Execution test command does not match approved profile snapshot',400);
-        const successful = evidence.codex.status === 'passed' && evidence.codex.exitCode === 0 && evidence.tests.status === 'passed' && evidence.tests.exitCode === 0 && (!evidence.setup || (evidence.setup.status === 'passed' && evidence.setup.exitCode === 0)) && evidence.headCommit === evidence.baseCommit;
+        const agent = evidence[task.provider]!;
+        const successful = agent.status === 'passed' && agent.exitCode === 0 && evidence.tests.status === 'passed' && evidence.tests.exitCode === 0 && (!evidence.setup || (evidence.setup.status === 'passed' && evidence.setup.exitCode === 0)) && evidence.headCommit === evidence.baseCommit;
         if (evidence.status === 'succeeded' && !successful) throw new DomainError('Execution success conflicts with process evidence',400);
         task.actualCostMicros = null; task.execution = evidence;
         task.status = evidence.status === 'succeeded' ? 'awaiting_review' : 'failed';

@@ -9,7 +9,7 @@ import { getAdapter } from '../packages/adapters/src/index.js';
 import { runOnce } from '../apps/worker/src/worker.js';
 import type { State, Task } from '../packages/contracts/src/index.js';
 
-for (const target of [2,3]) test(`HTTP worker retains real worktree evidence when configured tests ${target === 2 ? 'pass' : 'fail'}`,async t => {
+for (const provider of ['codex','claude'] as const) for (const target of [2,3]) test(`HTTP ${provider} worker retains real worktree evidence when configured tests ${target === 2 ? 'pass' : 'fail'}`,async t => {
   const root = await mkdtemp(join(tmpdir(),'hivemind-http-codex-'));
   const repo = join(root,'repo');
   const git = (...args: string[]) => execFileSync('git',['-C',repo,...args],{encoding:'utf8'}).trim();
@@ -25,24 +25,28 @@ for (const target of [2,3]) test(`HTTP worker retains real worktree evidence whe
   await writeFile(fake,`#!/usr/bin/env node
 import {writeFileSync} from 'node:fs';
 import {join} from 'node:path';
-const cwd=process.argv[process.argv.indexOf('--cd')+1];
+const cwd=process.argv.includes('--cd') ? process.argv[process.argv.indexOf('--cd')+1] : process.cwd();
 writeFileSync(join(cwd,'value.mjs'),'export const value = ${target};\\n');
+if (${JSON.stringify(provider)} === 'claude') {
+console.log(JSON.stringify({type:'result',subtype:'success',is_error:false,result:'Fixture CLI changed value.',session_id:'test-session',permission_denials:[],usage:{input_tokens:10,cache_read_input_tokens:0,cache_creation_input_tokens:0,output_tokens:5}}));
+} else {
 console.log(JSON.stringify({type:'thread.started',thread_id:'test-thread'}));
 console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'Fixture CLI changed value.'}}));
 console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:10,cached_input_tokens:0,output_tokens:5}}));
+}
 `,{mode:0o755});
   const testCommand = [process.execPath,'--test','value.test.mjs'];
   const app = buildApp({repository:{id:'local',name:'fixture',baseCommit,testProfile:'default',testCommand}});
   t.after(async()=>{await app.close();await rm(root,{recursive:true,force:true});});
   const url = await app.listen({host:'127.0.0.1',port:0});
   const operator = {authorization:'Bearer local-development-only'};
-  const created = await app.inject({method:'POST',url:'/api/tasks',headers:operator,payload:{title:'Real Git workflow',instructions:'Fix the fixture.',budgetMicros:10000,provider:'codex',runtime:'local',repositoryId:'local',baseCommit,testProfile:'default'}});
+  const created = await app.inject({method:'POST',url:'/api/tasks',headers:operator,payload:{title:'Real Git workflow',instructions:'Fix the fixture.',budgetMicros:10000,provider,runtime:'local',repositoryId:'local',baseCommit,testProfile:'default'}});
   assert.equal(created.statusCode,201);
   const task = created.json<Task>();
   await app.inject({method:'POST',url:`/api/tasks/${task.id}/decision`,headers:operator,payload:{decision:'approve',reason:'integration test'}});
   assert.equal(await runOnce({apiUrl:url,workerId:'mock-only',workerToken:'local-worker-only'}),false);
-  const adapter = getAdapter('codex',{repositoryPath:repo,worktreeRoot:join(root,'worktrees'),codexCommand:fake,testCommand,timeoutMs:10000,testTimeoutMs:10000});
-  assert.equal(await runOnce({apiUrl:url,workerId:'codex-test',workerToken:'local-worker-only',provider:'codex',repositoryId:'local',adapter}),true);
+  const adapter = getAdapter(provider,{repositoryPath:repo,worktreeRoot:join(root,'worktrees'),codexCommand:fake,claudeCommand:fake,testCommand,timeoutMs:10000,testTimeoutMs:10000});
+  assert.equal(await runOnce({apiUrl:url,workerId:provider+'-test',workerToken:'local-worker-only',provider,repositoryId:'local',adapter}),true);
   const state = (await app.inject({url:'/api/state',headers:operator})).json<State>();
   const result = state.tasks[0]!;
   assert.equal(result.status,target === 2 ? 'awaiting_review' : 'failed');
@@ -51,7 +55,8 @@ console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:10,cached_
   assert.equal(result.execution!.tests.status,target === 2 ? 'passed' : 'failed');
   assert.ok(result.execution!.tests.stdout.length > 0);
   assert.equal(result.execution!.baseCommit,baseCommit);
-  assert.equal(result.execution!.codex.usage!.inputTokens,10);
+  assert.equal(result.execution![provider]!.usage!.inputTokens,10);
+  assert.equal(result.execution![provider === 'claude' ? 'codex' : 'claude'],undefined);
   assert.match(result.diff!,new RegExp(`\\+export const value = ${target};`));
   assert.equal(await readFile(join(repo,'value.mjs'),'utf8'),'export const value = 1;\n');
   assert.equal(await readFile(join(repo,'notes.txt'),'utf8'),'original dirty checkout\n');
