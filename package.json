@@ -2,6 +2,11 @@
   "name": "project-hivemind",
   "version": "0.1.0",
   "private": true,
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/roboco-io/project-hivemind.git"
+  },
   "type": "module",
   "engines": { "node": ">=24.0.0" },
   "scripts": {
