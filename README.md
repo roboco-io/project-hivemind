@@ -1,7 +1,7 @@
 # Project HIVEMIND
 
 <p align="center">
-  <img src="apps/dashboard/public/brand/hivemind-logo.png" alt="Project HIVEMIND — 손을 흔드는 꿀벌 캐릭터 로고" width="720">
+  <img src="apps/dashboard/public/brand/hivemind-logo.png" alt="Project HIVEMIND — 심플한 손그림 꿀벌과 손글씨 로고" width="720">
 </p>
 
 **One Vision. Many Agents.**
