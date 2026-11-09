@@ -1,0 +1,125 @@
+{
+  "platform": "cloudflare-remote",
+  "recordedAt": "2026-11-09T19:31:16+00:00",
+  "url": "https://hivemind-boundary-check.roboco.workers.dev/phase0/claude-layer",
+  "requestRay": "a57f3c626e4d5787-ICN",
+  "diagnostics": {
+    "scope": "cloudflare-no-auth-claude-codex-layer-prototype",
+    "authProvided": false,
+    "modelCalled": false,
+    "uid": 1000,
+    "noNewPrivileges": "1",
+    "capabilities": {
+      "CapInh": "0000000000000000",
+      "CapPrm": "0000000000000000",
+      "CapEff": "0000000000000000",
+      "CapBnd": "0000000000000000",
+      "CapAmb": "0000000000000000"
+    },
+    "outerPid": 2,
+    "outerPidNamespace": "pid:[4026532059]",
+    "parentCwd": "/workspace",
+    "guardHome": "/home/node/.codex-guard",
+    "threadIds": [
+      10,
+      11,
+      12,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "siblingIds": [
+      1,
+      13
+    ],
+    "configuredOuterSettings": {
+      "filesystem": {
+        "denyRead": [
+          "/proc",
+          "/runtime",
+          "/home/node/.hivemind-phase0",
+          "/home/node/.claude",
+          "/home/node/.claude.json"
+        ],
+        "denyWrite": [
+          "/runtime",
+          "/home/node/.hivemind-phase0"
+        ],
+        "allowWrite": [
+          "/workspace",
+          "/home/node/.codex-guard",
+          "/tmp"
+        ]
+      },
+      "network": {
+        "allowedDomains": [],
+        "deniedDomains": []
+      },
+      "enableWeakerNestedSandbox": true,
+      "allowNestedUserNamespaces": true,
+      "credentials": {
+        "envVars": [
+          {
+            "name": "CLAUDE_CODE_OAUTH_TOKEN",
+            "mode": "deny"
+          }
+        ]
+      }
+    },
+    "outsideSentinelUnchanged": true,
+    "guardCacheSentinelUnchanged": true,
+    "guardCacheCredentialsAbsent": true,
+    "observationSource": "none",
+    "receiptBytes": 0,
+    "stdoutBytes": 0,
+    "stderrBytes": 264,
+    "exitCode": 101,
+    "timedOut": false,
+    "captureLimit": false,
+    "stderr": "\nthread 'main' (12) panicked at linux-sandbox/src/linux_run_main.rs:970:17:\nfailed to resolve synthetic mount registry temp directory /tmp/claude: No such file or directory (os error 2)\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n",
+    "limitations": [
+      "No Claude model or mandatory hook integration is exercised.",
+      "Network observation covers one direct TCP endpoint only."
+    ],
+    "assessment": {
+      "passed": false,
+      "checks": [
+        "workspaceWrite",
+        "outsideWriteDenied",
+        "outsideSentinelUnchanged",
+        "guardCacheWriteDenied",
+        "guardCacheSentinelUnchanged",
+        "guardCacheCredentialsAbsent",
+        "claudeAuthReadDenied",
+        "claudeConfigReadDenied",
+        "privateReadDenied",
+        "runtimeInputReadDenied",
+        "procReadDenied",
+        "parentProcessInfoDenied",
+        "parentRootAliasDenied",
+        "parentMemoryDenied",
+        "parentEnvironmentDenied",
+        "parentReadlinksDenied",
+        "threadAliasesDenied",
+        "siblingAliasesDenied",
+        "privateHardlinkDenied",
+        "fixtureCredentialAbsent",
+        "managementCredentialsAbsent",
+        "devNullWritable",
+        "ignoredSpawnWorks",
+        "unshareBlocked",
+        "mountNamespaceBlocked",
+        "bubblewrapBlocked",
+        "namespaceSyscallsBlocked",
+        "networkDenied"
+      ]
+    },
+    "containerStopped": true,
+    "workerVersion": "7e711991-b3d4-4410-ade5-8349e4753d31"
+  }
+}

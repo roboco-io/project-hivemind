@@ -1,0 +1,254 @@
+{
+  "platform": "cloudflare-remote",
+  "recordedAt": "2026-11-09T18:21:33+00:00",
+  "url": "https://hivemind-boundary-check.roboco.workers.dev/phase0/codex-boundary",
+  "requestRay": "a57ed646da55e706-ICN",
+  "diagnostics": {
+    "scope": "cloudflare-no-subscription-codex-workspace-boundary",
+    "uid": 1000,
+    "noNewPrivileges": "1",
+    "capabilities": {
+      "CapInh": "0000000000000000",
+      "CapPrm": "0000000000000000",
+      "CapEff": "0000000000000000",
+      "CapBnd": "0000000000000000",
+      "CapAmb": "0000000000000000"
+    },
+    "authProvided": false,
+    "modelCalled": false,
+    "parentCwd": "/workspace",
+    "parentPid": 2,
+    "parentPidNamespace": "pid:[4026532059]",
+    "requestedCwd": "/workspace",
+    "workspaceRealpath": "/workspace",
+    "homeRealpath": "/home/node",
+    "toolUid": 1000,
+    "childCwd": "/workspace",
+    "childPid": 2,
+    "childParentPid": 1,
+    "childPidNamespace": {
+      "inode": null,
+      "error": "EACCES"
+    },
+    "workspaceWrite": true,
+    "outsideWriteDenied": true,
+    "privateAuthReadDenied": true,
+    "privateMetadataReadDenied": true,
+    "runtimeInputReadDenied": true,
+    "procReadDenied": true,
+    "parentEnvironmentDenied": true,
+    "parentCommandLineDenied": true,
+    "parentStatusDenied": true,
+    "parentRootAuthReadDenied": true,
+    "parentRootMetadataReadDenied": true,
+    "parentRootRuntimeReadDenied": true,
+    "parentMemoryDenied": true,
+    "selectedCredentialsAbsent": true,
+    "managementCredentialsAbsent": true,
+    "outsideWrite": {
+      "denied": true,
+      "error": "EROFS"
+    },
+    "procReads": {
+      "selfStatus": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "parentEnvironment": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "parentCommandLine": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "parentStatus": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "parentRootAuth": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "parentRootMetadata": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "parentRootRuntime": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "parentMemory": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      }
+    },
+    "privateReads": {
+      "auth": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "metadata": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "runtime": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      }
+    },
+    "stdio": {
+      "stdout": {
+        "bytes": 30
+      },
+      "stderr": {
+        "bytes": 30
+      }
+    },
+    "profile": "hivemind",
+    "outsideFixtureChanged": false,
+    "outsideSentinelUnchanged": true,
+    "observationSource": "workspace-receipt",
+    "receiptBytes": 1378,
+    "stdoutBytes": 30,
+    "stderrBytes": 30,
+    "exitCode": 0,
+    "timedOut": false,
+    "captureLimit": false,
+    "stderr": "HIVEMIND_CODEX_STDERR_CONTROL\n",
+    "builtinControl": {
+      "toolUid": 1000,
+      "childCwd": "/workspace",
+      "childPid": 2,
+      "childParentPid": 1,
+      "childPidNamespace": {
+        "inode": "pid:[4026532134]"
+      },
+      "workspaceWrite": true,
+      "outsideWriteDenied": true,
+      "privateAuthReadDenied": false,
+      "privateMetadataReadDenied": false,
+      "runtimeInputReadDenied": false,
+      "procReadDenied": false,
+      "parentEnvironmentDenied": true,
+      "parentCommandLineDenied": false,
+      "parentStatusDenied": false,
+      "parentRootAuthReadDenied": true,
+      "parentRootMetadataReadDenied": true,
+      "parentRootRuntimeReadDenied": true,
+      "parentMemoryDenied": true,
+      "selectedCredentialsAbsent": true,
+      "managementCredentialsAbsent": true,
+      "outsideWrite": {
+        "denied": true,
+        "error": "EROFS"
+      },
+      "procReads": {
+        "selfStatus": {
+          "denied": false,
+          "bytes": 1440
+        },
+        "parentEnvironment": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "parentCommandLine": {
+          "denied": false,
+          "bytes": 76
+        },
+        "parentStatus": {
+          "denied": false,
+          "bytes": 1431
+        },
+        "parentRootAuth": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "parentRootMetadata": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "parentRootRuntime": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "parentMemory": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        }
+      },
+      "privateReads": {
+        "auth": {
+          "denied": false,
+          "bytes": 140
+        },
+        "metadata": {
+          "denied": false,
+          "bytes": 35
+        },
+        "runtime": {
+          "denied": false,
+          "bytes": 16
+        }
+      },
+      "stdio": {
+        "stdout": {
+          "bytes": 30
+        },
+        "stderr": {
+          "bytes": 30
+        }
+      },
+      "profile": ":workspace",
+      "outsideFixtureChanged": false,
+      "outsideSentinelUnchanged": true,
+      "observationSource": "workspace-receipt",
+      "receiptBytes": 1278,
+      "stdoutBytes": 30,
+      "stderrBytes": 30,
+      "exitCode": 31,
+      "timedOut": false,
+      "captureLimit": false,
+      "stderr": "HIVEMIND_CODEX_STDERR_CONTROL\n"
+    },
+    "assessment": {
+      "passed": true,
+      "checks": [
+        "workspaceWrite",
+        "outsideWriteDenied",
+        "outsideSentinelUnchanged",
+        "privateAuthReadDenied",
+        "privateMetadataReadDenied",
+        "runtimeInputReadDenied",
+        "procReadDenied",
+        "parentEnvironmentDenied",
+        "parentCommandLineDenied",
+        "parentStatusDenied",
+        "parentRootAuthReadDenied",
+        "parentRootMetadataReadDenied",
+        "parentRootRuntimeReadDenied",
+        "parentMemoryDenied",
+        "selectedCredentialsAbsent",
+        "managementCredentialsAbsent"
+      ]
+    },
+    "containerStopped": true,
+    "workerVersion": "b62ace6e-9b7c-4bda-9a6c-e3e9f4a3a6d7"
+  }
+}

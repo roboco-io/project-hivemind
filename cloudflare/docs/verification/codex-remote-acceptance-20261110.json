@@ -1,0 +1,485 @@
+{
+  "passed": true,
+  "origin": "https://hivemind-cloudflare-backend.roboco.workers.dev",
+  "providersOverlapMs": null,
+  "evidence": [
+    {
+      "platform": "cloudflare-remote",
+      "recordedAt": "2026-11-09T21:24:05.231Z",
+      "provider": "codex",
+      "jobId": "dfaedc74-54b4-4513-bb31-c8a444f0cc54",
+      "inputSnapshotId": "4f9b3c79585acc1addb89b6f1c2713fc58775cd0bca89486b4423458d9a8d0d3",
+      "outputSnapshotId": "0dca148abac6339d4f31d19b969c02f32f9acb28990c33f1a27f284b9d8b37d2",
+      "checksOverlapMs": 10422,
+      "nativeParallel": {
+        "ids": [
+          "01a1c22f-5550-7732-bfad-be1d0db36656",
+          "01a1c22f-62f7-71d0-b536-4a37479c92ab"
+        ],
+        "start": 1794259248168,
+        "end": 1794259261548,
+        "overlapMs": 13380
+      },
+      "result": {
+        "job": {
+          "id": "dfaedc74-54b4-4513-bb31-c8a444f0cc54",
+          "attempt": "4a67d3b9-c75a-4630-9eb3-f6a4a8fff883",
+          "kind": "agent",
+          "provider": "codex",
+          "credentialId": "codex-remote",
+          "snapshotId": "4f9b3c79585acc1addb89b6f1c2713fc58775cd0bca89486b4423458d9a8d0d3",
+          "status": "SUCCEEDED",
+          "instructions": "Remote acceptance fixture 21048a5b0bc48023f6def3c81235a4ca. Use exactly two official native worker subagents concurrently, assigning alpha.mjs to one and beta.mjs to the other. Each must wait 10 seconds with Node.js before editing. First exports add(a,b) returning a+b; second exports multiply(a,b) returning a*b. Launch both before waiting for either. Do not edit the tests or verify.mjs. After both return, call the phase0_probe MCP tool with nonce 21048a5b0bc48023f6def3c81235a4ca. Verify actual files and report truthfully. Use Bash and Node.js for Claude edits. Do not inspect private paths or auth. Do not commit or push.",
+          "checks": [
+            {
+              "id": "unit-a",
+              "argv": [
+                "node",
+                "verify.mjs"
+              ],
+              "timeoutMs": 60000
+            },
+            {
+              "id": "unit-b",
+              "argv": [
+                "node",
+                "verify.mjs"
+              ],
+              "timeoutMs": 60000
+            }
+          ],
+          "childIds": [
+            "59864471-ce1f-4990-8588-0ebf0f7eb7bf",
+            "5e8e67ee-6ea7-4236-9c13-06880ed5f2de"
+          ],
+          "createdAt": 1794259199419,
+          "deadline": 1794259561794,
+          "timeoutMs": 360000,
+          "containerStopped": true,
+          "authSynced": true,
+          "credentialGeneration": 1,
+          "startedAt": 1794259201794,
+          "outputSnapshotId": "0dca148abac6339d4f31d19b969c02f32f9acb28990c33f1a27f284b9d8b37d2",
+          "resultKey": "results/dfaedc74-54b4-4513-bb31-c8a444f0cc54/4a67d3b9-c75a-4630-9eb3-f6a4a8fff883.json",
+          "finishedAt": 1794259296918
+        },
+        "input": {
+          "version": 1,
+          "digest": "4f9b3c79585acc1addb89b6f1c2713fc58775cd0bca89486b4423458d9a8d0d3",
+          "files": [
+            {
+              "path": "alpha.mjs",
+              "content": "ZXhwb3J0IGNvbnN0IGFkZCA9ICgpID0+IDA7Cg==",
+              "sha256": "38ab21f0e439150e70feed0751ce5c829a4798e2200282f3183f1fed070ccf9d",
+              "executable": false
+            },
+            {
+              "path": "beta.mjs",
+              "content": "ZXhwb3J0IGNvbnN0IG11bHRpcGx5ID0gKCkgPT4gMDsK",
+              "sha256": "4272902e96cbfc9c052f70f06046ebef87c885a99ac41cf541a8af8142718f74",
+              "executable": false
+            },
+            {
+              "path": "math.test.mjs",
+              "content": "aW1wb3J0IHt0ZXN0fSBmcm9tICdub2RlOnRlc3QnO2ltcG9ydCBhc3NlcnQgZnJvbSAnbm9kZTphc3NlcnQvc3RyaWN0JztpbXBvcnQge2FkZH0gZnJvbSAnLi9hbHBoYS5tanMnO2ltcG9ydCB7bXVsdGlwbHl9IGZyb20gJy4vYmV0YS5tanMnO3Rlc3QoJ3N1bScsKCk9PmFzc2VydC5lcXVhbChhZGQoMiwzKSw1KSk7dGVzdCgncHJvZHVjdCcsKCk9PmFzc2VydC5lcXVhbChtdWx0aXBseSgzLDQpLDEyKSk7Cg==",
+              "sha256": "38a99e3970bf53213b6ebd6be750b117f23a6c1f2dbd0f68c6909c8a4422d684",
+              "executable": false
+            },
+            {
+              "path": "verify.mjs",
+              "content": "aW1wb3J0IHtzcGF3blN5bmN9IGZyb20gJ25vZGU6Y2hpbGRfcHJvY2Vzcyc7YXdhaXQgbmV3IFByb21pc2Uocj0+c2V0VGltZW91dChyLDEwMDAwKSk7Y29uc3Qgcj1zcGF3blN5bmMocHJvY2Vzcy5leGVjUGF0aCxbJy0tdGVzdCcsJ21hdGgudGVzdC5tanMnXSx7c3RkaW86J2luaGVyaXQnfSk7cHJvY2Vzcy5leGl0KHIuc3RhdHVzPz8xKTsK",
+              "sha256": "0c8862aa10385ae8f11db09718045b7ac9770ba4451eac223c4d97248a760f58",
+              "executable": false
+            }
+          ]
+        },
+        "output": {
+          "version": 1,
+          "digest": "0dca148abac6339d4f31d19b969c02f32f9acb28990c33f1a27f284b9d8b37d2",
+          "files": [
+            {
+              "path": "alpha.mjs",
+              "content": "ZXhwb3J0IGZ1bmN0aW9uIGFkZChhLCBiKSB7CiAgcmV0dXJuIGEgKyBiOwp9Cg==",
+              "sha256": "5b63136552577a64d788dc3cd4552739d0d60f9e1adb63ec4dfb6932d56fc75d",
+              "executable": false
+            },
+            {
+              "path": "beta.mjs",
+              "content": "ZXhwb3J0IGZ1bmN0aW9uIG11bHRpcGx5KGEsIGIpIHsKICByZXR1cm4gYSAqIGI7Cn0K",
+              "sha256": "07c309808292965c3c3135155bcf1c840eff57cd2ad9c7a806b328d916527442",
+              "executable": false
+            },
+            {
+              "path": "math.test.mjs",
+              "content": "aW1wb3J0IHt0ZXN0fSBmcm9tICdub2RlOnRlc3QnO2ltcG9ydCBhc3NlcnQgZnJvbSAnbm9kZTphc3NlcnQvc3RyaWN0JztpbXBvcnQge2FkZH0gZnJvbSAnLi9hbHBoYS5tanMnO2ltcG9ydCB7bXVsdGlwbHl9IGZyb20gJy4vYmV0YS5tanMnO3Rlc3QoJ3N1bScsKCk9PmFzc2VydC5lcXVhbChhZGQoMiwzKSw1KSk7dGVzdCgncHJvZHVjdCcsKCk9PmFzc2VydC5lcXVhbChtdWx0aXBseSgzLDQpLDEyKSk7Cg==",
+              "sha256": "38a99e3970bf53213b6ebd6be750b117f23a6c1f2dbd0f68c6909c8a4422d684",
+              "executable": false
+            },
+            {
+              "path": "verify.mjs",
+              "content": "aW1wb3J0IHtzcGF3blN5bmN9IGZyb20gJ25vZGU6Y2hpbGRfcHJvY2Vzcyc7YXdhaXQgbmV3IFByb21pc2Uocj0+c2V0VGltZW91dChyLDEwMDAwKSk7Y29uc3Qgcj1zcGF3blN5bmMocHJvY2Vzcy5leGVjUGF0aCxbJy0tdGVzdCcsJ21hdGgudGVzdC5tanMnXSx7c3RkaW86J2luaGVyaXQnfSk7cHJvY2Vzcy5leGl0KHIuc3RhdHVzPz8xKTsK",
+              "sha256": "0c8862aa10385ae8f11db09718045b7ac9770ba4451eac223c4d97248a760f58",
+              "executable": false
+            }
+          ]
+        },
+        "result": {
+          "version": 1,
+          "jobId": "dfaedc74-54b4-4513-bb31-c8a444f0cc54",
+          "attempt": "4a67d3b9-c75a-4630-9eb3-f6a4a8fff883",
+          "inputSnapshotId": "4f9b3c79585acc1addb89b6f1c2713fc58775cd0bca89486b4423458d9a8d0d3",
+          "outputSnapshotId": "0dca148abac6339d4f31d19b969c02f32f9acb28990c33f1a27f284b9d8b37d2",
+          "process": {
+            "status": "passed",
+            "exitCode": 0,
+            "stdout": "Completed with exactly two concurrent native workers, each waiting 10 seconds in Node.js before editing.\n\n- [alpha.mjs](/workspace/alpha.mjs) exports `add(a, b)` returning `a + b`.\n- [beta.mjs](/workspace/beta.mjs) exports `multiply(a, b)` returning `a * b`.\n\nVerified actual file contents and export behavior. The probe returned the matching nonce and marker `hivemind-phase0-mcp-v1`. Tests, `verify.mjs`, and Git metadata were unchanged.",
+            "stderr": "Reading additional input from stdin...\n",
+            "durationMs": 37904,
+            "truncated": false,
+            "startedAt": 1794259236921,
+            "finishedAt": 1794259274825
+          },
+          "summary": "Completed with exactly two concurrent native workers, each waiting 10 seconds in Node.js before editing.\n\n- [alpha.mjs](/workspace/alpha.mjs) exports `add(a, b)` returning `a + b`.\n- [beta.mjs](/workspace/beta.mjs) exports `multiply(a, b)` returning `a * b`.\n\nVerified actual file contents and export behavior. The probe returned the matching nonce and marker `hivemind-phase0-mcp-v1`. Tests, `verify.mjs`, and Git metadata were unchanged.",
+          "sourceUnchanged": false,
+          "provider": "codex",
+          "sessionId": "01a1c22f-3af6-78d2-9fd6-146b94f5d14f",
+          "usage": {
+            "input_tokens": 102144,
+            "cached_input_tokens": 93312,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 703,
+            "reasoning_output_tokens": 0
+          },
+          "subagentReceipts": [
+            {
+              "id": "01a1c22f-3af6-78d2-9fd6-146b94f5d14f",
+              "source": "exec",
+              "forkedFromId": null,
+              "lifecycle": [
+                {
+                  "type": "task_started",
+                  "timestamp": "2026-11-09T21:20:38.856Z",
+                  "turnId": "01a1c22f-3fc5-74f0-8439-f29f54458190"
+                },
+                {
+                  "type": "task_complete",
+                  "timestamp": "2026-11-09T21:21:14.572Z",
+                  "turnId": "01a1c22f-3fc5-74f0-8439-f29f54458190"
+                }
+              ],
+              "calls": [
+                {
+                  "name": "spawn_agent",
+                  "callId": "call_443bb6fdd29d4a85a5b8092e9acd53c2",
+                  "timestamp": "2026-11-09T21:20:44.363Z"
+                },
+                {
+                  "name": "spawn_agent",
+                  "callId": "call_ef588f6c7d2b4c558a2ea02bd4a0beb7",
+                  "timestamp": "2026-11-09T21:20:47.859Z"
+                },
+                {
+                  "name": "exec",
+                  "callId": "call_733b10bd014e4c83acbfb727573557c5",
+                  "timestamp": "2026-11-09T21:20:49.718Z"
+                },
+                {
+                  "name": "wait_agent",
+                  "callId": "call_8bef11f016184ada855520c9739206b8",
+                  "timestamp": "2026-11-09T21:20:51.589Z"
+                },
+                {
+                  "name": "wait_agent",
+                  "callId": "call_d69e3a490119492f96e637e2dffc2be0",
+                  "timestamp": "2026-11-09T21:21:02.875Z"
+                },
+                {
+                  "name": "exec",
+                  "callId": "call_abbb3fa19b2d49b2a045fd6c7ff92aad",
+                  "timestamp": "2026-11-09T21:21:10.619Z"
+                }
+              ],
+              "spawnReturns": [],
+              "malformedRows": 0,
+              "rolloutFile": "rollout-2026-11-09T21-20-38-01a1c22f-3af6-78d2-9fd6-146b94f5d14f.jsonl",
+              "storageThreadId": "01a1c22f-3af6-78d2-9fd6-146b94f5d14f",
+              "storageSource": "exec"
+            },
+            {
+              "id": "01a1c22f-3af6-78d2-9fd6-146b94f5d14f",
+              "source": "exec",
+              "forkedFromId": null,
+              "lifecycle": [
+                {
+                  "type": "task_started",
+                  "timestamp": "2026-11-09T21:20:44.369Z",
+                  "turnId": "01a1c22f-3fc5-74f0-8439-f29f54458190"
+                },
+                {
+                  "type": "turn_aborted",
+                  "timestamp": "2026-11-09T21:20:44.369Z",
+                  "turnId": "01a1c22f-3fc5-74f0-8439-f29f54458190"
+                },
+                {
+                  "type": "task_started",
+                  "timestamp": "2026-11-09T21:20:44.745Z",
+                  "turnId": "01a1c22f-56c7-7d92-958e-ed133c620f32"
+                },
+                {
+                  "type": "task_complete",
+                  "timestamp": "2026-11-09T21:21:01.548Z",
+                  "turnId": "01a1c22f-56c7-7d92-958e-ed133c620f32"
+                }
+              ],
+              "calls": [
+                {
+                  "name": "spawn_agent",
+                  "callId": "call_443bb6fdd29d4a85a5b8092e9acd53c2",
+                  "timestamp": "2026-11-09T21:20:44.369Z"
+                },
+                {
+                  "name": "exec",
+                  "callId": "call_601d45ea52e444c6bfbda928545b0177",
+                  "timestamp": "2026-11-09T21:20:49.103Z"
+                },
+                {
+                  "name": "exec",
+                  "callId": "call_8a1de94bbbea4ca5a8f18a0da9f7c6d9",
+                  "timestamp": "2026-11-09T21:20:52.205Z"
+                },
+                {
+                  "name": "exec",
+                  "callId": "call_f6e918859a624730918149fdea534417",
+                  "timestamp": "2026-11-09T21:20:58.920Z"
+                }
+              ],
+              "spawnReturns": [],
+              "malformedRows": 0,
+              "rolloutFile": "rollout-2026-11-09T21-20-44-01a1c22f-5550-7732-bfad-be1d0db36656.jsonl",
+              "storageThreadId": "01a1c22f-5550-7732-bfad-be1d0db36656",
+              "storageSource": {
+                "subagent": {
+                  "thread_spawn": {
+                    "parent_thread_id": "01a1c22f-3af6-78d2-9fd6-146b94f5d14f",
+                    "depth": 1,
+                    "agent_path": "/root/alpha",
+                    "agent_nickname": "Ampere",
+                    "agent_role": null
+                  }
+                }
+              }
+            },
+            {
+              "id": "01a1c22f-3af6-78d2-9fd6-146b94f5d14f",
+              "source": "exec",
+              "forkedFromId": null,
+              "lifecycle": [
+                {
+                  "type": "task_started",
+                  "timestamp": "2026-11-09T21:20:47.864Z",
+                  "turnId": "01a1c22f-3fc5-74f0-8439-f29f54458190"
+                },
+                {
+                  "type": "turn_aborted",
+                  "timestamp": "2026-11-09T21:20:47.864Z",
+                  "turnId": "01a1c22f-3fc5-74f0-8439-f29f54458190"
+                },
+                {
+                  "type": "task_started",
+                  "timestamp": "2026-11-09T21:20:48.168Z",
+                  "turnId": "01a1c22f-6426-7e41-8486-5ad602171551"
+                },
+                {
+                  "type": "task_complete",
+                  "timestamp": "2026-11-09T21:21:04.726Z",
+                  "turnId": "01a1c22f-6426-7e41-8486-5ad602171551"
+                }
+              ],
+              "calls": [
+                {
+                  "name": "spawn_agent",
+                  "callId": "call_443bb6fdd29d4a85a5b8092e9acd53c2",
+                  "timestamp": "2026-11-09T21:20:47.864Z"
+                },
+                {
+                  "name": "spawn_agent",
+                  "callId": "call_ef588f6c7d2b4c558a2ea02bd4a0beb7",
+                  "timestamp": "2026-11-09T21:20:47.864Z"
+                },
+                {
+                  "name": "exec",
+                  "callId": "call_7406f09bc2f94e14b302ef127d20affe",
+                  "timestamp": "2026-11-09T21:20:52.409Z"
+                },
+                {
+                  "name": "exec",
+                  "callId": "call_5d33b21d3d874ba38725b91ed4a74387",
+                  "timestamp": "2026-11-09T21:20:55.217Z"
+                }
+              ],
+              "spawnReturns": [],
+              "malformedRows": 0,
+              "rolloutFile": "rollout-2026-11-09T21-20-47-01a1c22f-62f7-71d0-b536-4a37479c92ab.jsonl",
+              "storageThreadId": "01a1c22f-62f7-71d0-b536-4a37479c92ab",
+              "storageSource": {
+                "subagent": {
+                  "thread_spawn": {
+                    "parent_thread_id": "01a1c22f-3af6-78d2-9fd6-146b94f5d14f",
+                    "depth": 1,
+                    "agent_path": "/root/beta",
+                    "agent_nickname": "Herschel",
+                    "agent_role": null
+                  }
+                }
+              }
+            }
+          ],
+          "mcpReceipts": [
+            {
+              "callId": "item_3",
+              "nonce": "21048a5b0bc48023f6def3c81235a4ca",
+              "marker": "hivemind-phase0-mcp-v1"
+            }
+          ],
+          "sandboxPolicy": "codex-workspace",
+          "boundary": {
+            "platform": "linux",
+            "checkedAt": "2026-11-09T21:20:36.910Z",
+            "capabilities": {
+              "CapInh": "0000000000000000",
+              "CapPrm": "0000000000000000",
+              "CapEff": "0000000000000000",
+              "CapBnd": "0000000000000000",
+              "CapAmb": "0000000000000000"
+            },
+            "noNewPrivs": 1,
+            "verified": true
+          }
+        },
+        "checks": [
+          {
+            "job": {
+              "id": "59864471-ce1f-4990-8588-0ebf0f7eb7bf",
+              "attempt": "2b83fe32-c38e-452e-bca5-3acfc7ece79f",
+              "kind": "compute",
+              "parentId": "dfaedc74-54b4-4513-bb31-c8a444f0cc54",
+              "checkId": "unit-a",
+              "snapshotId": "0dca148abac6339d4f31d19b969c02f32f9acb28990c33f1a27f284b9d8b37d2",
+              "argv": [
+                "node",
+                "verify.mjs"
+              ],
+              "checks": [],
+              "childIds": [],
+              "status": "SUCCEEDED",
+              "createdAt": 1794259278468,
+              "deadline": 1794259340468,
+              "timeoutMs": 60000,
+              "containerStopped": true,
+              "authSynced": true,
+              "startedAt": 1794259280468,
+              "finishedAt": 1794259296402,
+              "resultKey": "results/59864471-ce1f-4990-8588-0ebf0f7eb7bf/2b83fe32-c38e-452e-bca5-3acfc7ece79f.json"
+            },
+            "result": {
+              "version": 1,
+              "jobId": "59864471-ce1f-4990-8588-0ebf0f7eb7bf",
+              "attempt": "2b83fe32-c38e-452e-bca5-3acfc7ece79f",
+              "inputSnapshotId": "0dca148abac6339d4f31d19b969c02f32f9acb28990c33f1a27f284b9d8b37d2",
+              "process": {
+                "status": "passed",
+                "exitCode": 0,
+                "stdout": "\u2714 sum (0.64305ms)\n\u2714 product (0.23793ms)\n\u2139 tests 2\n\u2139 suites 0\n\u2139 pass 2\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 65.442436\n",
+                "stderr": "",
+                "durationMs": 10671,
+                "truncated": false,
+                "startedAt": 1794259283615,
+                "finishedAt": 1794259294286
+              },
+              "summary": "Configured verification finished.",
+              "sourceUnchanged": true,
+              "credentialsAbsent": true,
+              "sandboxPolicy": "compute-workspace",
+              "boundary": {
+                "platform": "linux",
+                "checkedAt": "2026-11-09T21:21:23.602Z",
+                "capabilities": {
+                  "CapInh": "0000000000000000",
+                  "CapPrm": "0000000000000000",
+                  "CapEff": "0000000000000000",
+                  "CapBnd": "0000000000000000",
+                  "CapAmb": "0000000000000000"
+                },
+                "noNewPrivs": 1,
+                "verified": true
+              }
+            }
+          },
+          {
+            "job": {
+              "id": "5e8e67ee-6ea7-4236-9c13-06880ed5f2de",
+              "attempt": "ca29575a-4fea-435b-a4bc-a9d802e1f190",
+              "kind": "compute",
+              "parentId": "dfaedc74-54b4-4513-bb31-c8a444f0cc54",
+              "checkId": "unit-b",
+              "snapshotId": "0dca148abac6339d4f31d19b969c02f32f9acb28990c33f1a27f284b9d8b37d2",
+              "argv": [
+                "node",
+                "verify.mjs"
+              ],
+              "checks": [],
+              "childIds": [],
+              "status": "SUCCEEDED",
+              "createdAt": 1794259278468,
+              "deadline": 1794259340468,
+              "timeoutMs": 60000,
+              "containerStopped": true,
+              "authSynced": true,
+              "startedAt": 1794259280468,
+              "finishedAt": 1794259296918,
+              "resultKey": "results/5e8e67ee-6ea7-4236-9c13-06880ed5f2de/ca29575a-4fea-435b-a4bc-a9d802e1f190.json"
+            },
+            "result": {
+              "version": 1,
+              "jobId": "5e8e67ee-6ea7-4236-9c13-06880ed5f2de",
+              "attempt": "ca29575a-4fea-435b-a4bc-a9d802e1f190",
+              "inputSnapshotId": "0dca148abac6339d4f31d19b969c02f32f9acb28990c33f1a27f284b9d8b37d2",
+              "process": {
+                "status": "passed",
+                "exitCode": 0,
+                "stdout": "\u2714 sum (0.66605ms)\n\u2714 product (0.158227ms)\n\u2139 tests 2\n\u2139 suites 0\n\u2139 pass 2\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 80.400756\n",
+                "stderr": "",
+                "durationMs": 10729,
+                "truncated": false,
+                "startedAt": 1794259283864,
+                "finishedAt": 1794259294593
+              },
+              "summary": "Configured verification finished.",
+              "sourceUnchanged": true,
+              "credentialsAbsent": true,
+              "sandboxPolicy": "compute-workspace",
+              "boundary": {
+                "platform": "linux",
+                "checkedAt": "2026-11-09T21:21:23.854Z",
+                "capabilities": {
+                  "CapInh": "0000000000000000",
+                  "CapPrm": "0000000000000000",
+                  "CapEff": "0000000000000000",
+                  "CapBnd": "0000000000000000",
+                  "CapAmb": "0000000000000000"
+                },
+                "noNewPrivs": 1,
+                "verified": true
+              }
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "workerVersion": "90d31bcb-fe16-4759-92e3-5fc6d46b4750",
+  "imageDigest": "sha256:9a433d98ec1b4151367030a412017399a4a6b8f14bec5006e424b3827cf3902f",
+  "credentialGenerationBefore": 1,
+  "credentialGenerationAfter": 2,
+  "credentialReadyAfter": true
+}

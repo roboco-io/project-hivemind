@@ -1,0 +1,218 @@
+{
+  "platform": "cloudflare-remote",
+  "recordedAt": "2026-11-09T14:19:38.259Z",
+  "workerVersion": "929e3c0f-f102-453c-9136-03e7a44ddf83",
+  "imageDigest": "sha256:0ae36edd005e30dffbf3fe13a453cda6874cca57efc2b539fb07ae82345d5765",
+  "requestRay": "a57d72f63ac9ea25-ICN",
+  "scope": "one-shot-codex-subscription-fixture",
+  "authRecovered": true,
+  "assessment": {
+    "passed": false,
+    "cliSucceeded": true,
+    "filesVerified": true,
+    "turnCompleted": true,
+    "mcpVerified": true,
+    "parallelSubagentsVerified": false
+  },
+  "httpStatus": 200,
+  "diagnostics": {
+    "scope": "codex-subscription-fixed-fixture",
+    "exitCode": 0,
+    "timedOut": false,
+    "captureLimit": false,
+    "nonce": "ce477c94bc7eadc9442552a16f1e4900",
+    "events": [
+      {
+        "observedAt": "2026-11-09T14:19:04.987Z",
+        "event": {
+          "type": "thread.started",
+          "thread_id": "01a1c0ad-4857-7f72-b5b4-cb4d26872fb9"
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:19:05.023Z",
+        "event": {
+          "type": "turn.started"
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:19:09.397Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_0",
+            "type": "agent_message",
+            "text": "I’ll start both agents in parallel, wait for them to finish, then call the probe and verify the file contents.\n"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:19:15.970Z",
+        "event": {
+          "type": "item.started",
+          "item": {
+            "id": "item_1",
+            "type": "collab_tool_call",
+            "tool": "wait",
+            "sender_thread_id": "01a1c0ad-4857-7f72-b5b4-cb4d26872fb9",
+            "receiver_thread_ids": [],
+            "prompt": null,
+            "agents_states": {},
+            "status": "in_progress"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:19:23.262Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_1",
+            "type": "collab_tool_call",
+            "tool": "wait",
+            "sender_thread_id": "01a1c0ad-4857-7f72-b5b4-cb4d26872fb9",
+            "receiver_thread_ids": [],
+            "prompt": null,
+            "agents_states": {},
+            "status": "completed"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:19:25.295Z",
+        "event": {
+          "type": "item.started",
+          "item": {
+            "id": "item_2",
+            "type": "collab_tool_call",
+            "tool": "wait",
+            "sender_thread_id": "01a1c0ad-4857-7f72-b5b4-cb4d26872fb9",
+            "receiver_thread_ids": [],
+            "prompt": null,
+            "agents_states": {},
+            "status": "in_progress"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:19:26.616Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_2",
+            "type": "collab_tool_call",
+            "tool": "wait",
+            "sender_thread_id": "01a1c0ad-4857-7f72-b5b4-cb4d26872fb9",
+            "receiver_thread_ids": [],
+            "prompt": null,
+            "agents_states": {},
+            "status": "completed"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:19:31.310Z",
+        "event": {
+          "type": "item.started",
+          "item": {
+            "id": "item_3",
+            "type": "mcp_tool_call",
+            "server": "phase0",
+            "tool": "phase0_probe",
+            "arguments": {
+              "nonce": "ce477c94bc7eadc9442552a16f1e4900"
+            },
+            "result": null,
+            "error": null,
+            "status": "in_progress"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:19:31.315Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_3",
+            "type": "mcp_tool_call",
+            "server": "phase0",
+            "tool": "phase0_probe",
+            "arguments": {
+              "nonce": "ce477c94bc7eadc9442552a16f1e4900"
+            },
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"nonce\":\"ce477c94bc7eadc9442552a16f1e4900\",\"marker\":\"hivemind-phase0-mcp-v1\"}"
+                }
+              ],
+              "structured_content": {
+                "nonce": "ce477c94bc7eadc9442552a16f1e4900",
+                "marker": "hivemind-phase0-mcp-v1"
+              }
+            },
+            "error": null,
+            "status": "completed"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:19:35.337Z",
+        "event": {
+          "type": "item.started",
+          "item": {
+            "id": "item_4",
+            "type": "command_execution",
+            "command": "/bin/bash -lc \"node -e 'const fs = require(\\\"node:fs\\\"); const assert = require(\\\"node:assert/strict\\\"); assert.equal(fs.readFileSync(\\\"alpha.txt\\\", \\\"utf8\\\"), \\\"ALPHA_HIVEMIND\\\\n\\\"); assert.equal(fs.readFileSync(\\\"beta.txt\\\", \\\"utf8\\\"), \\\"BETA_HIVEMIND\\\\n\\\"); console.log(\\\"File verification succeeded\\\");'\"",
+            "aggregated_output": "",
+            "exit_code": null,
+            "status": "in_progress"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:19:35.337Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_4",
+            "type": "command_execution",
+            "command": "/bin/bash -lc \"node -e 'const fs = require(\\\"node:fs\\\"); const assert = require(\\\"node:assert/strict\\\"); assert.equal(fs.readFileSync(\\\"alpha.txt\\\", \\\"utf8\\\"), \\\"ALPHA_HIVEMIND\\\\n\\\"); assert.equal(fs.readFileSync(\\\"beta.txt\\\", \\\"utf8\\\"), \\\"BETA_HIVEMIND\\\\n\\\"); console.log(\\\"File verification succeeded\\\");'\"",
+            "aggregated_output": "File verification succeeded\n",
+            "exit_code": 0,
+            "status": "completed"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:19:37.291Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_5",
+            "type": "agent_message",
+            "text": "HIVE_PROBE_COMPLETE"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:19:37.353Z",
+        "event": {
+          "type": "turn.completed",
+          "usage": {
+            "input_tokens": 115268,
+            "cached_input_tokens": 109056,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 444,
+            "reasoning_output_tokens": 0
+          }
+        }
+      }
+    ],
+    "stderr": "Reading additional input from stdin...\n",
+    "alpha": "ALPHA_HIVEMIND\n",
+    "beta": "BETA_HIVEMIND\n",
+    "containerStopped": true
+  }
+}

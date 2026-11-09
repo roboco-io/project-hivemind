@@ -1,0 +1,638 @@
+{
+  "platform": "cloudflare-remote",
+  "recordedAt": "2026-11-09T20:59:14+00:00",
+  "url": "https://hivemind-boundary-check.roboco.workers.dev/phase0/claude-layer",
+  "requestRay": "a57fbd41aa6be987-ICN",
+  "diagnostics": {
+    "namespaceGuardApplied": true,
+    "toolUid": 1000,
+    "workspaceWrite": true,
+    "outsideWriteDenied": true,
+    "guardCacheWriteDenied": true,
+    "claudeAuthReadDenied": true,
+    "claudeConfigReadDenied": true,
+    "privateReadDenied": true,
+    "runtimeInputReadDenied": true,
+    "procReadDenied": true,
+    "parentProcessInfoDenied": true,
+    "parentRootAliasDenied": true,
+    "parentMemoryDenied": true,
+    "parentEnvironmentDenied": true,
+    "parentReadlinksDenied": true,
+    "threadAliasesDenied": true,
+    "siblingAliasesDenied": true,
+    "privateHardlinkDenied": true,
+    "fixtureCredentialAbsent": true,
+    "managementCredentialsAbsent": true,
+    "devNullWritable": true,
+    "ignoredSpawnWorks": true,
+    "unshareBlocked": true,
+    "mountNamespaceBlocked": true,
+    "bubblewrapBlocked": true,
+    "namespaceSyscallsBlocked": true,
+    "networkDenied": true,
+    "network": {
+      "outcome": "error",
+      "error": "ENETUNREACH"
+    },
+    "reads": {
+      "claudeAuth": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "claudeConfig": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "private": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "runtime": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "selfStatus": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "parentStatus": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "parentCommandLine": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "parentEnvironment": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "parentRootPrivate": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "parentRootRuntime": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      },
+      "parentRootClaude": {
+        "denied": true,
+        "bytes": null,
+        "error": "EACCES"
+      }
+    },
+    "parentMemory": {
+      "denied": true,
+      "error": "EACCES"
+    },
+    "parentLinks": [
+      {
+        "name": "cwd",
+        "denied": true,
+        "error": "EACCES"
+      },
+      {
+        "name": "exe",
+        "denied": true,
+        "error": "EACCES"
+      },
+      {
+        "name": "root",
+        "denied": true,
+        "error": "EACCES"
+      }
+    ],
+    "threads": [
+      {
+        "tid": 10,
+        "status": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "cmdline": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "environ": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "memory": {
+          "denied": true,
+          "error": "EACCES"
+        },
+        "rootRuntime": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        }
+      },
+      {
+        "tid": 11,
+        "status": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "cmdline": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "environ": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "memory": {
+          "denied": true,
+          "error": "EACCES"
+        },
+        "rootRuntime": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        }
+      },
+      {
+        "tid": 12,
+        "status": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "cmdline": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "environ": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "memory": {
+          "denied": true,
+          "error": "EACCES"
+        },
+        "rootRuntime": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        }
+      },
+      {
+        "tid": 2,
+        "status": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "cmdline": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "environ": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "memory": {
+          "denied": true,
+          "error": "EACCES"
+        },
+        "rootRuntime": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        }
+      },
+      {
+        "tid": 3,
+        "status": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "cmdline": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "environ": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "memory": {
+          "denied": true,
+          "error": "EACCES"
+        },
+        "rootRuntime": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        }
+      },
+      {
+        "tid": 4,
+        "status": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "cmdline": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "environ": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "memory": {
+          "denied": true,
+          "error": "EACCES"
+        },
+        "rootRuntime": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        }
+      },
+      {
+        "tid": 5,
+        "status": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "cmdline": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "environ": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "memory": {
+          "denied": true,
+          "error": "EACCES"
+        },
+        "rootRuntime": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        }
+      },
+      {
+        "tid": 6,
+        "status": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "cmdline": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "environ": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "memory": {
+          "denied": true,
+          "error": "EACCES"
+        },
+        "rootRuntime": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        }
+      },
+      {
+        "tid": 7,
+        "status": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "cmdline": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "environ": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "memory": {
+          "denied": true,
+          "error": "EACCES"
+        },
+        "rootRuntime": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        }
+      },
+      {
+        "tid": 8,
+        "status": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "cmdline": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "environ": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "memory": {
+          "denied": true,
+          "error": "EACCES"
+        },
+        "rootRuntime": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        }
+      },
+      {
+        "tid": 9,
+        "status": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "cmdline": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "environ": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "memory": {
+          "denied": true,
+          "error": "EACCES"
+        },
+        "rootRuntime": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        }
+      }
+    ],
+    "siblings": [
+      {
+        "pid": 1,
+        "private": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "runtime": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "nestedParent": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        }
+      },
+      {
+        "pid": 13,
+        "private": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "runtime": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        },
+        "nestedParent": {
+          "denied": true,
+          "bytes": null,
+          "error": "EACCES"
+        }
+      }
+    ],
+    "outsideWrite": {
+      "denied": true,
+      "error": "EROFS"
+    },
+    "guardCacheWrite": {
+      "denied": true,
+      "error": "EROFS"
+    },
+    "hardlink": {
+      "denied": true,
+      "error": "EACCES"
+    },
+    "namespaceAttempts": {
+      "unshare": {
+        "denied": true,
+        "status": 1,
+        "signal": null,
+        "error": null,
+        "stderrBytes": 49
+      },
+      "mount": {
+        "denied": true,
+        "status": 1,
+        "signal": null,
+        "error": null,
+        "stderrBytes": 49
+      },
+      "bubblewrap": {
+        "denied": true,
+        "status": 1,
+        "signal": null,
+        "error": null,
+        "stderrBytes": 66
+      }
+    },
+    "nativeNamespace": {
+      "passed": true,
+      "observation": {
+        "passed": true,
+        "capabilitiesZero": true,
+        "noNewPrivileges": true,
+        "unshareDenied": true,
+        "cloneUserDenied": true,
+        "cloneUserMountDenied": true,
+        "clone3Denied": true,
+        "uid": 1000,
+        "unshareErrno": 1,
+        "cloneErrno": 1,
+        "cloneMountErrno": 1,
+        "clone3Errno": 38
+      },
+      "status": 0,
+      "spawnError": false
+    },
+    "childPid": 2,
+    "childParentPid": 1,
+    "childCwd": "/workspace",
+    "innerTmpdir": "/tmp",
+    "childPidNamespace": {
+      "inode": null,
+      "error": "EACCES"
+    },
+    "scope": "cloudflare-no-auth-claude-codex-layer-prototype",
+    "authProvided": false,
+    "modelCalled": false,
+    "uid": 1000,
+    "noNewPrivileges": "1",
+    "capabilities": {
+      "CapInh": "0000000000000000",
+      "CapPrm": "0000000000000000",
+      "CapEff": "0000000000000000",
+      "CapBnd": "0000000000000000",
+      "CapAmb": "0000000000000000"
+    },
+    "outerPid": 2,
+    "outerPidNamespace": "pid:[4026532059]",
+    "parentCwd": "/workspace",
+    "guardHome": "/home/node/.codex-guard",
+    "innerTmpdirBridge": {
+      "entrypoint": "/opt/hivemind/backend/src/runtime/claude-command-guard.ts",
+      "expectedTMPDIR": "/tmp"
+    },
+    "threadIds": [
+      10,
+      11,
+      12,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "siblingIds": [
+      1,
+      13
+    ],
+    "configuredOuterSettings": {
+      "filesystem": {
+        "denyRead": [
+          "/proc",
+          "/runtime",
+          "/home/node/.hivemind-phase0",
+          "/home/node/.claude",
+          "/home/node/.claude.json"
+        ],
+        "denyWrite": [
+          "/runtime",
+          "/home/node/.hivemind-phase0"
+        ],
+        "allowWrite": [
+          "/workspace",
+          "/home/node/.codex-guard",
+          "/tmp"
+        ]
+      },
+      "network": {
+        "allowedDomains": [],
+        "deniedDomains": []
+      },
+      "enableWeakerNestedSandbox": true,
+      "allowNestedUserNamespaces": true,
+      "credentials": {
+        "envVars": [
+          {
+            "name": "CLAUDE_CODE_OAUTH_TOKEN",
+            "mode": "deny"
+          }
+        ]
+      }
+    },
+    "outsideSentinelUnchanged": true,
+    "guardCacheSentinelUnchanged": true,
+    "guardCacheCredentialsAbsent": true,
+    "observationSource": "stdout",
+    "receiptBytes": 5989,
+    "stdoutBytes": 6025,
+    "stderrBytes": 0,
+    "exitCode": 0,
+    "timedOut": false,
+    "captureLimit": false,
+    "stderr": "",
+    "limitations": [
+      "No Claude model or mandatory hook integration is exercised.",
+      "Network observation covers one direct TCP endpoint only."
+    ],
+    "assessment": {
+      "passed": true,
+      "checks": [
+        "workspaceWrite",
+        "outsideWriteDenied",
+        "outsideSentinelUnchanged",
+        "guardCacheWriteDenied",
+        "guardCacheSentinelUnchanged",
+        "guardCacheCredentialsAbsent",
+        "claudeAuthReadDenied",
+        "claudeConfigReadDenied",
+        "privateReadDenied",
+        "runtimeInputReadDenied",
+        "procReadDenied",
+        "parentProcessInfoDenied",
+        "parentRootAliasDenied",
+        "parentMemoryDenied",
+        "parentEnvironmentDenied",
+        "parentReadlinksDenied",
+        "threadAliasesDenied",
+        "siblingAliasesDenied",
+        "privateHardlinkDenied",
+        "fixtureCredentialAbsent",
+        "managementCredentialsAbsent",
+        "devNullWritable",
+        "ignoredSpawnWorks",
+        "unshareBlocked",
+        "mountNamespaceBlocked",
+        "bubblewrapBlocked",
+        "namespaceSyscallsBlocked",
+        "networkDenied",
+        "namespaceGuardApplied"
+      ]
+    },
+    "containerStopped": true,
+    "workerVersion": "a3219e66-70ce-4bf9-895e-bddbfd1be15f"
+  }
+}

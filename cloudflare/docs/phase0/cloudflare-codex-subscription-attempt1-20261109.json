@@ -1,0 +1,146 @@
+{
+  "platform": "cloudflare-remote",
+  "recordedAt": "2026-11-09T14:14:45.121Z",
+  "workerVersion": "1ac1a139-b93f-4ac3-a214-c934f4c194af",
+  "imageDigest": "sha256:498191218547cdb0e08fa0e4f6238eff608d816a201af46225d6f5d9a0df04b3",
+  "requestRay": "a57d6c0cef443f17-ICN",
+  "scope": "one-shot-codex-subscription-fixture",
+  "authRecovered": true,
+  "httpStatus": 200,
+  "diagnostics": {
+    "scope": "codex-subscription-fixed-fixture",
+    "exitCode": 0,
+    "timedOut": false,
+    "captureLimit": false,
+    "nonce": "972b993df7855f15f3d1bfc9c0b0754e",
+    "events": [
+      {
+        "observedAt": "2026-11-09T14:14:23.454Z",
+        "event": {
+          "type": "thread.started",
+          "thread_id": "01a1c0a8-fb44-7dc2-9762-fbfba8cbab83"
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:14:23.471Z",
+        "event": {
+          "type": "turn.started"
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:14:28.303Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_0",
+            "type": "agent_message",
+            "text": "I’ll start both agents in parallel, wait for them to finish, then run the probe and verify both files with Node.js."
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:14:41.007Z",
+        "event": {
+          "type": "item.started",
+          "item": {
+            "id": "item_1",
+            "type": "mcp_tool_call",
+            "server": "phase0",
+            "tool": "phase0_probe",
+            "arguments": {
+              "nonce": "972b993df7855f15f3d1bfc9c0b0754e"
+            },
+            "result": null,
+            "error": null,
+            "status": "in_progress"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:14:41.012Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_1",
+            "type": "mcp_tool_call",
+            "server": "phase0",
+            "tool": "phase0_probe",
+            "arguments": {
+              "nonce": "972b993df7855f15f3d1bfc9c0b0754e"
+            },
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"nonce\":\"972b993df7855f15f3d1bfc9c0b0754e\",\"marker\":\"hivemind-phase0-mcp-v1\"}"
+                }
+              ],
+              "structured_content": {
+                "nonce": "972b993df7855f15f3d1bfc9c0b0754e",
+                "marker": "hivemind-phase0-mcp-v1"
+              }
+            },
+            "error": null,
+            "status": "completed"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:14:41.217Z",
+        "event": {
+          "type": "item.started",
+          "item": {
+            "id": "item_2",
+            "type": "command_execution",
+            "command": "/bin/bash -lc \"node -e 'const fs=require(\\\"node:fs\\\"); for (const [f,s] of [[\\\"alpha.txt\\\",\\\"ALPHA_HIVEMIND\\\\n\\\"],[\\\"beta.txt\\\",\\\"BETA_HIVEMIND\\\\n\\\"]]) { if(fs.readFileSync(f,\\\"utf8\\\")\"'!==s) throw new Error(f+\" content mismatch\"); } console.log(\"FILE_VERIFICATION_SUCCEEDED\");'\"'\"",
+            "aggregated_output": "",
+            "exit_code": null,
+            "status": "in_progress"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:14:41.221Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_2",
+            "type": "command_execution",
+            "command": "/bin/bash -lc \"node -e 'const fs=require(\\\"node:fs\\\"); for (const [f,s] of [[\\\"alpha.txt\\\",\\\"ALPHA_HIVEMIND\\\\n\\\"],[\\\"beta.txt\\\",\\\"BETA_HIVEMIND\\\\n\\\"]]) { if(fs.readFileSync(f,\\\"utf8\\\")\"'!==s) throw new Error(f+\" content mismatch\"); } console.log(\"FILE_VERIFICATION_SUCCEEDED\");'\"'\"",
+            "aggregated_output": "node:fs:440\n    return binding.readFileUtf8(path, stringToFlags(options.flag));\n                   ^\n\nError: ENOENT: no such file or directory, open 'alpha.txt'\n    at Object.readFileSync (node:fs:440:20)\n    at [eval]:1:125\n    at runScriptInThisContext (node:internal/vm:219:10)\n    at node:internal/process/execution:451:12\n    at [eval]-wrapper:6:24\n    at runScriptInContext (node:internal/process/execution:449:60)\n    at evalFunction (node:internal/process/execution:283:30)\n    at evalTypeScript (node:internal/process/execution:295:3)\n    at node:internal/main/eval_string:71:3 {\n  errno: -2,\n  code: 'ENOENT',\n  syscall: 'open',\n  path: 'alpha.txt'\n}\n\nNode.js v24.14.0\n",
+            "exit_code": 1,
+            "status": "failed"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:14:44.547Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_3",
+            "type": "agent_message",
+            "text": "The fixture failed: both subagent spawns returned “no rollout found.” The phase0 probe returned the correct nonce and marker, but Node.js verification failed because alpha.txt was missing. Completion conditions were not met."
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:14:44.578Z",
+        "event": {
+          "type": "turn.completed",
+          "usage": {
+            "input_tokens": 72052,
+            "cached_input_tokens": 66560,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 448,
+            "reasoning_output_tokens": 14
+          }
+        }
+      }
+    ],
+    "stderr": "Reading additional input from stdin...\n2026-11-09T14:14:29.474793Z ERROR codex_core::tools::router: error=collab spawn failed: Fatal error: failed to load model context for thread 01a1c0a8-fb44-7dc2-9762-fbfba8cbab83: invalid thread-store request: no rollout found for thread id 01a1c0a8-fb44-7dc2-9762-fbfba8cbab83\n2026-11-09T14:14:32.889101Z ERROR codex_core::tools::router: error=collab spawn failed: Fatal error: failed to load model context for thread 01a1c0a8-fb44-7dc2-9762-fbfba8cbab83: invalid thread-store request: no rollout found for thread id 01a1c0a8-fb44-7dc2-9762-fbfba8cbab83\n",
+    "alpha": "",
+    "beta": "",
+    "containerStopped": true
+  }
+}

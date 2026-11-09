@@ -1,0 +1,441 @@
+{
+  "platform": "cloudflare-remote",
+  "recordedAt": "2026-11-09T14:46:11.680Z",
+  "workerVersion": "ca5839b9-8f5b-4a45-a4bb-34a5693bd1d6",
+  "imageDigest": "sha256:776d9684ad3271591404a74d4de0dc2e6904ae87ff762397cc604c112817fa96",
+  "requestRay": "a57d99cbfe1b5503-ICN",
+  "scope": "one-shot-codex-subscription-fixture",
+  "authRecovered": true,
+  "assessment": {
+    "passed": true,
+    "cliSucceeded": true,
+    "filesVerified": true,
+    "turnCompleted": true,
+    "mcpVerified": true,
+    "parallelSubagentsVerified": true,
+    "parallelEvidence": {
+      "threadIds": [
+        "01a1c0c5-adc3-7b81-a2e9-943c40f32ae9",
+        "01a1c0c5-bbfd-7391-92f0-c380b320f5e2"
+      ],
+      "start": "2026-11-09T14:45:46.685Z",
+      "end": "2026-11-09T14:45:57.156Z",
+      "overlapMs": 10471
+    }
+  },
+  "httpStatus": 200,
+  "diagnostics": {
+    "scope": "codex-subscription-fixed-fixture",
+    "exitCode": 0,
+    "timedOut": false,
+    "captureLimit": false,
+    "nonce": "91084072626ddab6f4c4016ebf769e74",
+    "events": [
+      {
+        "observedAt": "2026-11-09T14:45:36.377Z",
+        "event": {
+          "type": "thread.started",
+          "thread_id": "01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a"
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:45:36.437Z",
+        "event": {
+          "type": "turn.started"
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:45:41.637Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_0",
+            "type": "agent_message",
+            "text": "I’ll start both agents in parallel, wait for both to finish, then run the probe and verify the files with Node.js."
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:45:49.036Z",
+        "event": {
+          "type": "item.started",
+          "item": {
+            "id": "item_1",
+            "type": "collab_tool_call",
+            "tool": "wait",
+            "sender_thread_id": "01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a",
+            "receiver_thread_ids": [],
+            "prompt": null,
+            "agents_states": {},
+            "status": "in_progress"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:45:57.161Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_1",
+            "type": "collab_tool_call",
+            "tool": "wait",
+            "sender_thread_id": "01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a",
+            "receiver_thread_ids": [],
+            "prompt": null,
+            "agents_states": {},
+            "status": "completed"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:45:58.920Z",
+        "event": {
+          "type": "item.started",
+          "item": {
+            "id": "item_2",
+            "type": "collab_tool_call",
+            "tool": "wait",
+            "sender_thread_id": "01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a",
+            "receiver_thread_ids": [],
+            "prompt": null,
+            "agents_states": {},
+            "status": "in_progress"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:45:59.134Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_2",
+            "type": "collab_tool_call",
+            "tool": "wait",
+            "sender_thread_id": "01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a",
+            "receiver_thread_ids": [],
+            "prompt": null,
+            "agents_states": {},
+            "status": "completed"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:46:04.128Z",
+        "event": {
+          "type": "item.started",
+          "item": {
+            "id": "item_3",
+            "type": "mcp_tool_call",
+            "server": "phase0",
+            "tool": "phase0_probe",
+            "arguments": {
+              "nonce": "91084072626ddab6f4c4016ebf769e74"
+            },
+            "result": null,
+            "error": null,
+            "status": "in_progress"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:46:04.133Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_3",
+            "type": "mcp_tool_call",
+            "server": "phase0",
+            "tool": "phase0_probe",
+            "arguments": {
+              "nonce": "91084072626ddab6f4c4016ebf769e74"
+            },
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"nonce\":\"91084072626ddab6f4c4016ebf769e74\",\"marker\":\"hivemind-phase0-mcp-v1\"}"
+                }
+              ],
+              "structured_content": {
+                "nonce": "91084072626ddab6f4c4016ebf769e74",
+                "marker": "hivemind-phase0-mcp-v1"
+              }
+            },
+            "error": null,
+            "status": "completed"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:46:08.135Z",
+        "event": {
+          "type": "item.started",
+          "item": {
+            "id": "item_4",
+            "type": "command_execution",
+            "command": "/bin/bash -lc \"node -e 'const fs = require(\\\"node:fs\\\"); const assert = require(\\\"node:assert/strict\\\"); assert.equal(fs.readFileSync(\\\"alpha.txt\\\", \\\"utf8\\\"), \\\"ALPHA_HIVEMIND\\\\n\\\"); assert.equal(fs.readFileSync(\\\"beta.txt\\\", \\\"utf8\\\"), \\\"BETA_HIVEMIND\\\\n\\\"); console.log(\\\"Both file contents verified\\\");'\"",
+            "aggregated_output": "",
+            "exit_code": null,
+            "status": "in_progress"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:46:08.137Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_4",
+            "type": "command_execution",
+            "command": "/bin/bash -lc \"node -e 'const fs = require(\\\"node:fs\\\"); const assert = require(\\\"node:assert/strict\\\"); assert.equal(fs.readFileSync(\\\"alpha.txt\\\", \\\"utf8\\\"), \\\"ALPHA_HIVEMIND\\\\n\\\"); assert.equal(fs.readFileSync(\\\"beta.txt\\\", \\\"utf8\\\"), \\\"BETA_HIVEMIND\\\\n\\\"); console.log(\\\"Both file contents verified\\\");'\"",
+            "aggregated_output": "Both file contents verified\n",
+            "exit_code": 0,
+            "status": "completed"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:46:10.555Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_5",
+            "type": "agent_message",
+            "text": "HIVE_PROBE_COMPLETE"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:46:10.871Z",
+        "event": {
+          "type": "turn.completed",
+          "usage": {
+            "input_tokens": 115333,
+            "cached_input_tokens": 111872,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 456,
+            "reasoning_output_tokens": 0
+          }
+        }
+      }
+    ],
+    "rolloutReceipts": [
+      {
+        "id": "01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a",
+        "source": "exec",
+        "forkedFromId": null,
+        "lifecycle": [
+          {
+            "type": "task_started",
+            "timestamp": "2026-11-09T14:45:36.388Z",
+            "turnId": "01a1c0c5-93ff-75b0-baa5-62841aaa679e"
+          },
+          {
+            "type": "task_complete",
+            "timestamp": "2026-11-09T14:46:10.866Z",
+            "turnId": "01a1c0c5-93ff-75b0-baa5-62841aaa679e"
+          }
+        ],
+        "calls": [
+          {
+            "name": "spawn_agent",
+            "callId": "call_770a1ece7f1e44ebb67e5f57b658f9a0",
+            "timestamp": "2026-11-09T14:45:42.974Z"
+          },
+          {
+            "name": "spawn_agent",
+            "callId": "call_769c403594be4c4a948f435200190827",
+            "timestamp": "2026-11-09T14:45:46.617Z"
+          },
+          {
+            "name": "wait_agent",
+            "callId": "call_977d8b3f955b4b85990af1e2cf302c6b",
+            "timestamp": "2026-11-09T14:45:49.033Z"
+          },
+          {
+            "name": "wait_agent",
+            "callId": "call_41cb80f9ceb843dc899edb7267258144",
+            "timestamp": "2026-11-09T14:45:58.917Z"
+          },
+          {
+            "name": "exec",
+            "callId": "call_93ed854f5aa0477999a1bdaf16d60326",
+            "timestamp": "2026-11-09T14:46:01.413Z"
+          },
+          {
+            "name": "exec",
+            "callId": "call_8dbd664be4df4f97928de2f1c7c66810",
+            "timestamp": "2026-11-09T14:46:04.116Z"
+          },
+          {
+            "name": "exec",
+            "callId": "call_530bcefa31c442cfb391a96fdd723b2a",
+            "timestamp": "2026-11-09T14:46:08.040Z"
+          }
+        ],
+        "spawnReturns": [],
+        "malformedRows": 0,
+        "rolloutFile": "rollout-2026-11-09T14-45-35-01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a.jsonl",
+        "fileThreadId": "01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a",
+        "storageThreadId": "01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a",
+        "storageSource": "exec"
+      },
+      {
+        "id": "01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a",
+        "source": "exec",
+        "forkedFromId": null,
+        "lifecycle": [
+          {
+            "type": "task_started",
+            "timestamp": "2026-11-09T14:45:42.979Z",
+            "turnId": "01a1c0c5-93ff-75b0-baa5-62841aaa679e"
+          },
+          {
+            "type": "turn_aborted",
+            "timestamp": "2026-11-09T14:45:42.980Z",
+            "turnId": "01a1c0c5-93ff-75b0-baa5-62841aaa679e"
+          },
+          {
+            "type": "task_started",
+            "timestamp": "2026-11-09T14:45:43.058Z",
+            "turnId": "01a1c0c5-ae0f-7412-88c3-9a39e8ec1d07"
+          },
+          {
+            "type": "task_complete",
+            "timestamp": "2026-11-09T14:45:57.156Z",
+            "turnId": "01a1c0c5-ae0f-7412-88c3-9a39e8ec1d07"
+          }
+        ],
+        "calls": [
+          {
+            "name": "spawn_agent",
+            "callId": "call_770a1ece7f1e44ebb67e5f57b658f9a0",
+            "timestamp": "2026-11-09T14:45:42.980Z"
+          },
+          {
+            "name": "exec",
+            "callId": "call_2f2aa5152d9645e6bcc350262e4db8dc",
+            "timestamp": "2026-11-09T14:45:48.639Z"
+          }
+        ],
+        "spawnReturns": [],
+        "malformedRows": 0,
+        "rolloutFile": "rollout-2026-11-09T14-45-42-01a1c0c5-adc3-7b81-a2e9-943c40f32ae9.jsonl",
+        "fileThreadId": "01a1c0c5-adc3-7b81-a2e9-943c40f32ae9",
+        "storageThreadId": "01a1c0c5-adc3-7b81-a2e9-943c40f32ae9",
+        "storageSource": {
+          "subagent": {
+            "thread_spawn": {
+              "parent_thread_id": "01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a",
+              "depth": 1,
+              "agent_path": "/root/alpha",
+              "agent_nickname": "Beauvoir",
+              "agent_role": null
+            }
+          }
+        }
+      },
+      {
+        "id": "01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a",
+        "source": "exec",
+        "forkedFromId": null,
+        "lifecycle": [
+          {
+            "type": "task_started",
+            "timestamp": "2026-11-09T14:45:46.622Z",
+            "turnId": "01a1c0c5-93ff-75b0-baa5-62841aaa679e"
+          },
+          {
+            "type": "turn_aborted",
+            "timestamp": "2026-11-09T14:45:46.622Z",
+            "turnId": "01a1c0c5-93ff-75b0-baa5-62841aaa679e"
+          },
+          {
+            "type": "task_started",
+            "timestamp": "2026-11-09T14:45:46.685Z",
+            "turnId": "01a1c0c5-bc3c-76a0-85ec-92e4093a207d"
+          },
+          {
+            "type": "task_complete",
+            "timestamp": "2026-11-09T14:45:59.130Z",
+            "turnId": "01a1c0c5-bc3c-76a0-85ec-92e4093a207d"
+          }
+        ],
+        "calls": [
+          {
+            "name": "spawn_agent",
+            "callId": "call_770a1ece7f1e44ebb67e5f57b658f9a0",
+            "timestamp": "2026-11-09T14:45:46.622Z"
+          },
+          {
+            "name": "spawn_agent",
+            "callId": "call_769c403594be4c4a948f435200190827",
+            "timestamp": "2026-11-09T14:45:46.622Z"
+          },
+          {
+            "name": "exec",
+            "callId": "call_16da146efb0f4ecf8eb4323c29fd27ce",
+            "timestamp": "2026-11-09T14:45:51.607Z"
+          }
+        ],
+        "spawnReturns": [],
+        "malformedRows": 0,
+        "rolloutFile": "rollout-2026-11-09T14-45-46-01a1c0c5-bbfd-7391-92f0-c380b320f5e2.jsonl",
+        "fileThreadId": "01a1c0c5-bbfd-7391-92f0-c380b320f5e2",
+        "storageThreadId": "01a1c0c5-bbfd-7391-92f0-c380b320f5e2",
+        "storageSource": {
+          "subagent": {
+            "thread_spawn": {
+              "parent_thread_id": "01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a",
+              "depth": 1,
+              "agent_path": "/root/beta",
+              "agent_nickname": "Euler",
+              "agent_role": null
+            }
+          }
+        }
+      }
+    ],
+    "nativeThreads": [
+      {
+        "threadId": "01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a",
+        "rolloutFile": "rollout-2026-11-09T14-45-35-01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a.jsonl",
+        "source": "exec"
+      },
+      {
+        "threadId": "01a1c0c5-adc3-7b81-a2e9-943c40f32ae9",
+        "rolloutFile": "rollout-2026-11-09T14-45-42-01a1c0c5-adc3-7b81-a2e9-943c40f32ae9.jsonl",
+        "source": {
+          "subagent": {
+            "thread_spawn": {
+              "parent_thread_id": "01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a",
+              "depth": 1,
+              "agent_path": "/root/alpha",
+              "agent_nickname": "Beauvoir",
+              "agent_role": null
+            }
+          }
+        }
+      },
+      {
+        "threadId": "01a1c0c5-bbfd-7391-92f0-c380b320f5e2",
+        "rolloutFile": "rollout-2026-11-09T14-45-46-01a1c0c5-bbfd-7391-92f0-c380b320f5e2.jsonl",
+        "source": {
+          "subagent": {
+            "thread_spawn": {
+              "parent_thread_id": "01a1c0c5-8e45-7721-82ac-e99ee4dbdf6a",
+              "depth": 1,
+              "agent_path": "/root/beta",
+              "agent_nickname": "Euler",
+              "agent_role": null
+            }
+          }
+        }
+      }
+    ],
+    "stderr": "Reading additional input from stdin...\n",
+    "alpha": "ALPHA_HIVEMIND\n",
+    "beta": "BETA_HIVEMIND\n",
+    "containerStopped": true
+  }
+}

@@ -15,7 +15,12 @@ HIVEMIND는 임시 개발 코드명이다. 공개 제품명은 아직 정하지 
 현재는 **단일 운영자용 로컬 개발 실행**을 지원한다.
 모의 워커, 실제 Codex 워커와 Claude Code 워커를 선택할 수 있다.
 두 실제 워커는 지정한 저장소의 고정 커밋으로 Git worktree를 만들고,
-실제 diff와 테스트 결과를 관제실에 보고한다. 클라우드 실행은 후속 범위다.
+실제 diff와 테스트 결과를 관제실에 보고한다.
+
+Cloudflare 실행 백엔드는 [cloudflare/](cloudflare/README.md)의 별도 패키지로 구현한다.
+공식 구독 인증, 작업별 컨테이너, 불변 snapshot과 별도 테스트 컨테이너를 사용한다.
+관제실의 현재 실행 화면은 로컬 실행을 표시한다. 원격 결과는 별도 클라이언트에서 조회·검토한다.
+[Cloudflare 사용법](cloudflare/backend/README.md)과 [원격 검증 기록](cloudflare/docs/verification/2026-11-10-cloudflare.md)을 참조한다.
 
 ## 대시보드와 실제 실행
 
@@ -223,7 +228,7 @@ HIVEMIND_WORKER_ID=worker-local-2 npm run worker
 | 테스트 | 설정된 준비·테스트 명령, 종료 코드·소요 시간·stdout/stderr 저장 |
 | 이력 | SQLite에 작업·승인·실행 근거·이벤트 저장, 재시작 후 유지 |
 | 비용 | mock은 1,000 micros = $0.001. Codex·Claude 금액은 null/미확정, 제공된 토큰 수 저장 |
-| 실행 환경 | `local` 지원. ECS·Cloudflare는 후속 |
+| 실행 환경 | `local` 관제실 지원. 별도 Cloudflare 백엔드 검증 중; ECS 후속 |
 | 연결 도구 | ChatGPT MCP 연결과 자연어 목표 분해는 후속 |
 
 ## 설정

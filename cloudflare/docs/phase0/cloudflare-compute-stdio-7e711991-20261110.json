@@ -1,0 +1,96 @@
+{
+  "platform": "cloudflare-remote",
+  "recordedAt": "2026-11-09T19:31:15+00:00",
+  "url": "https://hivemind-boundary-check.roboco.workers.dev/phase0/compute-stdio",
+  "requestRay": "a57f3c5c1a1f2f83-ICN",
+  "diagnostics": {
+    "scope": "cloudflare-no-auth-compute-stdio",
+    "authProvided": false,
+    "modelCalled": false,
+    "uid": 1000,
+    "noNewPrivileges": "1",
+    "capabilities": {
+      "CapInh": "0000000000000000",
+      "CapPrm": "0000000000000000",
+      "CapEff": "0000000000000000",
+      "CapBnd": "0000000000000000",
+      "CapAmb": "0000000000000000"
+    },
+    "home": "/runtime/stdio-home",
+    "captureDirectory": "/runtime/stdio-files",
+    "argv": [
+      "codex",
+      "sandbox",
+      "-c",
+      "permissions.checks={extends=\":workspace\",network={enabled=true}}",
+      "-P",
+      "checks",
+      "--",
+      "node",
+      "--test",
+      "--test-reporter=tap",
+      "stdio.test.mjs"
+    ],
+    "credentialsAbsent": true,
+    "descriptorObservation": {
+      "stdout": {
+        "regularFile": false,
+        "pipe": false,
+        "socket": true,
+        "character": false
+      },
+      "stderr": {
+        "regularFile": false,
+        "pipe": false,
+        "socket": true,
+        "character": false
+      }
+    },
+    "legacyControl": {
+      "status": "passed",
+      "exitCode": 0,
+      "stdout": "TAP version 13\n# HIVEMIND_STDIO_FD {\"stdout\":{\"regularFile\":false,\"pipe\":false,\"socket\":true,\"character\":false},\"stderr\":{\"regularFile\":false,\"pipe\":false,\"socket\":true,\"character\":false}}\n# HIVEMIND_STDERR_CONTROL\n# Subtest: stdio.test.mjs\nok 1 - stdio.test.mjs\n  ---\n  duration_ms: 62.581164\n  type: 'test'\n  ...\n1..1\n# tests 1\n# suites 0\n# pass 1\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 69.618489\n",
+      "stderr": "",
+      "durationMs": 548,
+      "truncated": false,
+      "startedAt": 1794252674293,
+      "finishedAt": 1794252674841
+    },
+    "negativeControl": {
+      "status": "failed",
+      "exitCode": 1,
+      "stdout": "TAP version 13\n# HIVEMIND_STDIO_FD {\"stdout\":{\"regularFile\":false,\"pipe\":false,\"socket\":true,\"character\":false},\"stderr\":{\"regularFile\":false,\"pipe\":false,\"socket\":true,\"character\":false}}\n# HIVEMIND_STDERR_CONTROL\n# Subtest: fixed arithmetic assertion\nnot ok 1 - fixed arithmetic assertion\n  ---\n  duration_ms: 1.416201\n  type: 'test'\n  location: '/workspace/stdio.test.mjs:8:1'\n  failureType: 'testCodeFailure'\n  error: |-\n    Expected values to be strictly equal:\n    \n    4 !== 5\n    \n  code: 'ERR_ASSERTION'\n  name: 'AssertionError'\n  expected: 5\n  actual: 4\n  operator: 'strictEqual'\n  stack: |-\n    TestContext.<anonymous> (file:///workspace/stdio.test.mjs:8:46)\n    Test.runInAsyncScope (node:async_hooks:228:14)\n    Test.run (node:internal/test_runner/test:1118:25)\n    Test.start (node:internal/test_runner/test:1015:17)\n    startSubtestAfterBootstrap (node:internal/test_runner/harness:358:17)\n  ...\n# Subtest: fixed source assertion\nok 2 - fixed source assertion\n  ---\n  duration_ms: 0.31669\n  type: 'test'\n  ...\n1..2\n# tests 2\n# suites 0\n# pass 1\n# fail 1\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 56.587079\n",
+      "stderr": "",
+      "durationMs": 137,
+      "truncated": false,
+      "startedAt": 1794252674993,
+      "finishedAt": 1794252675130
+    },
+    "failingAssertionObserved": true,
+    "stdoutBytes": 556,
+    "stderrBytes": 0,
+    "process": {
+      "status": "passed",
+      "exitCode": 0,
+      "stdout": "TAP version 13\n# HIVEMIND_STDIO_FD {\"stdout\":{\"regularFile\":false,\"pipe\":false,\"socket\":true,\"character\":false},\"stderr\":{\"regularFile\":false,\"pipe\":false,\"socket\":true,\"character\":false}}\n# HIVEMIND_STDERR_CONTROL\n# Subtest: fixed arithmetic assertion\nok 1 - fixed arithmetic assertion\n  ---\n  duration_ms: 0.740071\n  type: 'test'\n  ...\n# Subtest: fixed source assertion\nok 2 - fixed source assertion\n  ---\n  duration_ms: 0.360541\n  type: 'test'\n  ...\n1..2\n# tests 2\n# suites 0\n# pass 2\n# fail 0\n# cancelled 0\n# skipped 0\n# todo 0\n# duration_ms 55.550047\n",
+      "stderr": "",
+      "durationMs": 144,
+      "truncated": false,
+      "startedAt": 1794252674844,
+      "finishedAt": 1794252674988
+    },
+    "assessment": {
+      "passed": true,
+      "checks": {
+        "exitSucceeded": true,
+        "outputComplete": true,
+        "tapVersion": true,
+        "tests": true,
+        "pass": true,
+        "fail": true
+      }
+    },
+    "containerStopped": true,
+    "workerVersion": "7e711991-b3d4-4410-ade5-8349e4753d31"
+  }
+}

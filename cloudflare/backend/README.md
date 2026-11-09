@@ -1,6 +1,8 @@
 # Cloudflare 백엔드
 
-공식 Codex·Claude Code CLI를 작업별 Cloudflare Container에서 실행한다.
+공식 Codex·Claude Code CLI를 작업별 Cloudflare Container에서 실행하는 초기 백엔드다.
+현재 Codex 원격 수용을 통과했고, Claude 운영 실행은 실제 명령 경로의 수용이 끝날 때까지 차단한다.
+[최신 검증 상태](../docs/verification/2026-11-10-cloudflare.md)를 확인한다.
 로컬 클라이언트는 소스를 올리고 결과를 검토한다. 모델 호출은 사용자 구독 인증을 사용한다.
 
 ## 구성

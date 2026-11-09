@@ -1,0 +1,359 @@
+{
+  "platform": "cloudflare-remote",
+  "recordedAt": "2026-11-09T14:32:57.112Z",
+  "workerVersion": "e07db997-029c-42c5-aff3-dbd270551125",
+  "imageDigest": "sha256:7add1145b1082cd30067e7029699f99a0fcb15c6ea3c96b4ce4c7fe834e9cd6e",
+  "requestRay": "a57d867be801a76e-ICN",
+  "scope": "one-shot-codex-subscription-fixture",
+  "authRecovered": true,
+  "assessment": {
+    "passed": false,
+    "cliSucceeded": true,
+    "filesVerified": true,
+    "turnCompleted": true,
+    "mcpVerified": true,
+    "parallelSubagentsVerified": false,
+    "parallelEvidence": null
+  },
+  "httpStatus": 200,
+  "diagnostics": {
+    "scope": "codex-subscription-fixed-fixture",
+    "exitCode": 0,
+    "timedOut": false,
+    "captureLimit": false,
+    "nonce": "53f5f420325c3682ab95e5fe59192430",
+    "events": [
+      {
+        "observedAt": "2026-11-09T14:32:24.616Z",
+        "event": {
+          "type": "thread.started",
+          "thread_id": "01a1c0b9-790f-71d3-8e86-efe0b16fe963"
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:32:24.657Z",
+        "event": {
+          "type": "turn.started"
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:32:29.915Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_0",
+            "type": "agent_message",
+            "text": "I’ll start both subagents, wait for them to finish, then call the probe and verify both files with Node.js."
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:32:41.827Z",
+        "event": {
+          "type": "item.started",
+          "item": {
+            "id": "item_1",
+            "type": "collab_tool_call",
+            "tool": "wait",
+            "sender_thread_id": "01a1c0b9-790f-71d3-8e86-efe0b16fe963",
+            "receiver_thread_ids": [],
+            "prompt": null,
+            "agents_states": {},
+            "status": "in_progress"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:32:45.854Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_1",
+            "type": "collab_tool_call",
+            "tool": "wait",
+            "sender_thread_id": "01a1c0b9-790f-71d3-8e86-efe0b16fe963",
+            "receiver_thread_ids": [],
+            "prompt": null,
+            "agents_states": {},
+            "status": "completed"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:32:47.424Z",
+        "event": {
+          "type": "item.started",
+          "item": {
+            "id": "item_2",
+            "type": "collab_tool_call",
+            "tool": "wait",
+            "sender_thread_id": "01a1c0b9-790f-71d3-8e86-efe0b16fe963",
+            "receiver_thread_ids": [],
+            "prompt": null,
+            "agents_states": {},
+            "status": "in_progress"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:32:47.741Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_2",
+            "type": "collab_tool_call",
+            "tool": "wait",
+            "sender_thread_id": "01a1c0b9-790f-71d3-8e86-efe0b16fe963",
+            "receiver_thread_ids": [],
+            "prompt": null,
+            "agents_states": {},
+            "status": "completed"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:32:53.789Z",
+        "event": {
+          "type": "item.started",
+          "item": {
+            "id": "item_3",
+            "type": "mcp_tool_call",
+            "server": "phase0",
+            "tool": "phase0_probe",
+            "arguments": {
+              "nonce": "53f5f420325c3682ab95e5fe59192430"
+            },
+            "result": null,
+            "error": null,
+            "status": "in_progress"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:32:53.794Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_3",
+            "type": "mcp_tool_call",
+            "server": "phase0",
+            "tool": "phase0_probe",
+            "arguments": {
+              "nonce": "53f5f420325c3682ab95e5fe59192430"
+            },
+            "result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "{\"nonce\":\"53f5f420325c3682ab95e5fe59192430\",\"marker\":\"hivemind-phase0-mcp-v1\"}"
+                }
+              ],
+              "structured_content": {
+                "nonce": "53f5f420325c3682ab95e5fe59192430",
+                "marker": "hivemind-phase0-mcp-v1"
+              }
+            },
+            "error": null,
+            "status": "completed"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:32:53.879Z",
+        "event": {
+          "type": "item.started",
+          "item": {
+            "id": "item_4",
+            "type": "command_execution",
+            "command": "/bin/bash -lc \"node -e 'const fs = require(\\\"node:fs\\\"); for (const [file, expected] of [[\\\"alpha.txt\\\", \\\"ALPHA_HIVEMIND\\\\n\\\"], [\\\"beta.txt\\\", \\\"BETA_HIVEMIND\\\\n\\\"]]) { if (\"'!fs.readFileSync(file).equals(Buffer.from(expected))) throw new Error(file + \" content mismatch\"); } console.log(\"FILES_VERIFIED\");'\"' \"",
+            "aggregated_output": "",
+            "exit_code": null,
+            "status": "in_progress"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:32:53.879Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_4",
+            "type": "command_execution",
+            "command": "/bin/bash -lc \"node -e 'const fs = require(\\\"node:fs\\\"); for (const [file, expected] of [[\\\"alpha.txt\\\", \\\"ALPHA_HIVEMIND\\\\n\\\"], [\\\"beta.txt\\\", \\\"BETA_HIVEMIND\\\\n\\\"]]) { if (\"'!fs.readFileSync(file).equals(Buffer.from(expected))) throw new Error(file + \" content mismatch\"); } console.log(\"FILES_VERIFIED\");'\"' \"",
+            "aggregated_output": "FILES_VERIFIED\n",
+            "exit_code": 0,
+            "status": "completed"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:32:56.235Z",
+        "event": {
+          "type": "item.completed",
+          "item": {
+            "id": "item_5",
+            "type": "agent_message",
+            "text": "HIVE_PROBE_COMPLETE"
+          }
+        }
+      },
+      {
+        "observedAt": "2026-11-09T14:32:56.495Z",
+        "event": {
+          "type": "turn.completed",
+          "usage": {
+            "input_tokens": 100651,
+            "cached_input_tokens": 94592,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 519,
+            "reasoning_output_tokens": 0
+          }
+        }
+      }
+    ],
+    "rolloutReceipts": [
+      {
+        "id": "01a1c0b9-790f-71d3-8e86-efe0b16fe963",
+        "source": "exec",
+        "forkedFromId": null,
+        "lifecycle": [
+          {
+            "type": "task_started",
+            "timestamp": "2026-11-09T14:32:24.631Z",
+            "turnId": "01a1c0b9-7f31-7d40-8b72-5b19b982ce5c"
+          },
+          {
+            "type": "task_complete",
+            "timestamp": "2026-11-09T14:32:56.491Z",
+            "turnId": "01a1c0b9-7f31-7d40-8b72-5b19b982ce5c"
+          }
+        ],
+        "calls": [
+          {
+            "name": "spawn_agent",
+            "callId": "call_6fa1894cab8b49ad86847d2cb096919b",
+            "timestamp": "2026-11-09T14:32:30.980Z"
+          },
+          {
+            "name": "spawn_agent",
+            "callId": "call_35a0d67e84574e54974025caeee45265",
+            "timestamp": "2026-11-09T14:32:35.118Z"
+          },
+          {
+            "name": "exec",
+            "callId": "call_f2d4630157f544e8b576c3727d61f3b3",
+            "timestamp": "2026-11-09T14:32:39.686Z"
+          },
+          {
+            "name": "wait_agent",
+            "callId": "call_851eb3886a3944dbbd06c0e822317701",
+            "timestamp": "2026-11-09T14:32:41.825Z"
+          },
+          {
+            "name": "wait_agent",
+            "callId": "call_52d49aebdf314b47836542ac32c8a22a",
+            "timestamp": "2026-11-09T14:32:47.421Z"
+          },
+          {
+            "name": "exec",
+            "callId": "call_8af6fb9db82b4654b6faf13fd631ade3",
+            "timestamp": "2026-11-09T14:32:53.776Z"
+          }
+        ],
+        "spawnReturns": [],
+        "malformedRows": 0
+      },
+      {
+        "id": "01a1c0b9-790f-71d3-8e86-efe0b16fe963",
+        "source": "exec",
+        "forkedFromId": null,
+        "lifecycle": [
+          {
+            "type": "task_started",
+            "timestamp": "2026-11-09T14:32:31.000Z",
+            "turnId": "01a1c0b9-7f31-7d40-8b72-5b19b982ce5c"
+          },
+          {
+            "type": "turn_aborted",
+            "timestamp": "2026-11-09T14:32:31.001Z",
+            "turnId": "01a1c0b9-7f31-7d40-8b72-5b19b982ce5c"
+          },
+          {
+            "type": "task_started",
+            "timestamp": "2026-11-09T14:32:31.072Z",
+            "turnId": "01a1c0b9-985e-7131-8500-73d98571984d"
+          },
+          {
+            "type": "task_complete",
+            "timestamp": "2026-11-09T14:32:45.849Z",
+            "turnId": "01a1c0b9-985e-7131-8500-73d98571984d"
+          }
+        ],
+        "calls": [
+          {
+            "name": "spawn_agent",
+            "callId": "call_6fa1894cab8b49ad86847d2cb096919b",
+            "timestamp": "2026-11-09T14:32:31.001Z"
+          },
+          {
+            "name": "exec",
+            "callId": "call_830d846b14114e57a83ebd335b52cb56",
+            "timestamp": "2026-11-09T14:32:36.919Z"
+          }
+        ],
+        "spawnReturns": [],
+        "malformedRows": 0
+      },
+      {
+        "id": "01a1c0b9-790f-71d3-8e86-efe0b16fe963",
+        "source": "exec",
+        "forkedFromId": null,
+        "lifecycle": [
+          {
+            "type": "task_started",
+            "timestamp": "2026-11-09T14:32:35.123Z",
+            "turnId": "01a1c0b9-7f31-7d40-8b72-5b19b982ce5c"
+          },
+          {
+            "type": "turn_aborted",
+            "timestamp": "2026-11-09T14:32:35.124Z",
+            "turnId": "01a1c0b9-7f31-7d40-8b72-5b19b982ce5c"
+          },
+          {
+            "type": "task_started",
+            "timestamp": "2026-11-09T14:32:35.184Z",
+            "turnId": "01a1c0b9-a86f-7822-a508-9509e08fa606"
+          },
+          {
+            "type": "task_complete",
+            "timestamp": "2026-11-09T14:32:47.737Z",
+            "turnId": "01a1c0b9-a86f-7822-a508-9509e08fa606"
+          }
+        ],
+        "calls": [
+          {
+            "name": "spawn_agent",
+            "callId": "call_6fa1894cab8b49ad86847d2cb096919b",
+            "timestamp": "2026-11-09T14:32:35.124Z"
+          },
+          {
+            "name": "spawn_agent",
+            "callId": "call_35a0d67e84574e54974025caeee45265",
+            "timestamp": "2026-11-09T14:32:35.124Z"
+          },
+          {
+            "name": "exec",
+            "callId": "call_af90ac3b1eba4690a3ec0b8e180f4a54",
+            "timestamp": "2026-11-09T14:32:40.545Z"
+          }
+        ],
+        "spawnReturns": [],
+        "malformedRows": 0
+      }
+    ],
+    "stderr": "Reading additional input from stdin...\n",
+    "alpha": "ALPHA_HIVEMIND\n",
+    "beta": "BETA_HIVEMIND\n",
+    "containerStopped": true
+  }
+}

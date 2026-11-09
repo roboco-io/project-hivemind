@@ -1,0 +1,12 @@
+{
+  "platform": "cloudflare-remote",
+  "workerVersion": "7fa6ba8f-2391-4432-965a-e35a04a362f6",
+  "httpStatus": 200,
+  "diagnostics": {
+    "scope": "cloudflare-codex-sandbox-startup-only",
+    "exitCode": 1,
+    "stdout": "Uid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nCapInh:\t00000000abac35fb\nCapPrm:\t00000000abac35fb\nCapEff:\t00000000abac35fb\nCapBnd:\t00000000abac35fb\nCapAmb:\t00000000abac35fb\nNoNewPrivs:\t0\nSeccomp:\t0\n/usr/bin/setpriv\n",
+    "stderr": "bwrap: Unexpected capabilities but not setuid, old file caps config?\n",
+    "containerStopped": true
+  }
+}

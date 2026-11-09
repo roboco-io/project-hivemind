@@ -1,0 +1,15 @@
+{
+  "platform": "local-result-application",
+  "remoteJobId": "d965aef3-3341-4937-b03d-418aa9693032",
+  "isolatedGitWorktree": true,
+  "inputTests": {
+    "passed": 0,
+    "failed": 2
+  },
+  "outputTests": {
+    "passed": 2,
+    "failed": 0
+  },
+  "patchFile": "codex-actual-worktree.diff",
+  "temporaryWorktreeCleaned": true
+}

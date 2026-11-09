@@ -1,0 +1,33 @@
+{
+  "platform": "cloudflare-remote",
+  "workerVersion": "0511e3ba-a7ce-47a1-8226-bd3bd143c77f",
+  "imageDigest": "sha256:81315adf731b0dfa36daccab51686486e704bc639c4303e4344eb4a2b25af7c5",
+  "probes": [
+    {
+      "kind": "runtime",
+      "recordedAt": "2026-11-09T22:46:17.425649+09:00",
+      "httpStatus": 200,
+      "requestRay": "a57d4334dc82de66-ICN",
+      "diagnostics": {
+        "scope": "cloudflare-container-prerequisites-only",
+        "exitCode": 0,
+        "stdout": "1000\nv24.14.0\ncodex-cli 0.166.0\n2.1.319 (Claude Code)\n✔ real stdio MCP server offers a bounded probe tool and echoes the challenge (370.484176ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 769.764827\n",
+        "stderr": "",
+        "containerStopped": true
+      }
+    },
+    {
+      "kind": "sandbox",
+      "recordedAt": "2026-11-09T22:46:19.069196+09:00",
+      "httpStatus": 200,
+      "requestRay": "a57d43435e1eea0d-ICN",
+      "diagnostics": {
+        "scope": "cloudflare-codex-sandbox-startup-only",
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "bwrap: Unexpected capabilities but not setuid, old file caps config?\n",
+        "containerStopped": true
+      }
+    }
+  ]
+}

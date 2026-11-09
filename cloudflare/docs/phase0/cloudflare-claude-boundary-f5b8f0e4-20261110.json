@@ -1,0 +1,81 @@
+{
+  "platform": "cloudflare-remote",
+  "recordedAt": "2026-11-09T17:13:08+00:00",
+  "url": "https://hivemind-boundary-check.roboco.workers.dev/phase0/claude-boundary",
+  "requestRay": "a57e720a6b60ea10-ICN",
+  "diagnostics": {
+    "scope": "cloudflare-no-subscription-claude-nested-boundary",
+    "outerPid": 2,
+    "outerPidNamespace": "pid:[4026532059]",
+    "outerCmdlineHash": "dab531f4097622da71804db11f43560bb005ce8aded421bceca03f37c32903d8",
+    "configuredFilesystem": {
+      "denyRead": [
+        "/proc",
+        "/runtime",
+        "/home/node/.hivemind-phase0"
+      ],
+      "denyWrite": [
+        "/runtime",
+        "/home/node/.hivemind-phase0"
+      ]
+    },
+    "configuredCredentials": {
+      "envVars": [
+        {
+          "name": "CLAUDE_CODE_OAUTH_TOKEN",
+          "mode": "deny"
+        }
+      ]
+    },
+    "uid": 1000,
+    "noNewPrivileges": "1",
+    "capabilities": {
+      "CapInh": "0000000000000000",
+      "CapPrm": "0000000000000000",
+      "CapEff": "0000000000000000",
+      "CapBnd": "0000000000000000",
+      "CapAmb": "0000000000000000"
+    },
+    "childPid": 2,
+    "childPidNamespace": "pid:[4026532133]",
+    "targetCmdlineMatchesSelf": false,
+    "targetCmdlineMatchesOuter": true,
+    "toolUid": 1000,
+    "workspaceWrite": true,
+    "outsideWriteDenied": true,
+    "privateReadDenied": true,
+    "runtimeInputReadDenied": true,
+    "procReadDenied": false,
+    "procSelfStatusBytes": 1449,
+    "parentEnvironmentDenied": true,
+    "parentProcessInfoDenied": false,
+    "parentMemoryDenied": true,
+    "parentRootAliasDenied": true,
+    "fixtureCredentialAbsent": true,
+    "managementCredentialsAbsent": true,
+    "networkDenied": true,
+    "exitCode": 0,
+    "timedOut": false,
+    "captureLimit": false,
+    "stderr": "",
+    "stdout": "HIVEMIND_BOUNDARY_RESULT {\"childPid\":2,\"childPidNamespace\":\"pid:[4026532133]\",\"targetCmdlineMatchesSelf\":false,\"targetCmdlineMatchesOuter\":true,\"toolUid\":1000,\"workspaceWrite\":true,\"outsideWriteDenied\":true,\"privateReadDenied\":true,\"runtimeInputReadDenied\":true,\"procReadDenied\":false,\"procSelfStatusBytes\":1449,\"parentEnvironmentDenied\":true,\"parentProcessInfoDenied\":false,\"parentMemoryDenied\":true,\"parentRootAliasDenied\":true,\"fixtureCredentialAbsent\":true,\"managementCredentialsAbsent\":true,\"networkDenied\":true}\n",
+    "assessment": {
+      "passed": false,
+      "checks": [
+        "workspaceWrite",
+        "outsideWriteDenied",
+        "privateReadDenied",
+        "runtimeInputReadDenied",
+        "parentProcessInfoDenied",
+        "parentRootAliasDenied",
+        "parentMemoryDenied",
+        "parentEnvironmentDenied",
+        "fixtureCredentialAbsent",
+        "managementCredentialsAbsent",
+        "networkDenied"
+      ]
+    },
+    "containerStopped": true,
+    "workerVersion": "f5b8f0e4-2ffa-4f49-95b1-ddffcd44b422"
+  }
+}

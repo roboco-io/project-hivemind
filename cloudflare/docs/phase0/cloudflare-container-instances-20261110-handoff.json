@@ -1,0 +1,42 @@
+[
+  {
+    "id": "a0705b967e06bdedffafcd802d8701d71f804c5700a3590c76dc99300cc46a1d",
+    "name": "phase0-claude-v1",
+    "state": "inactive",
+    "location": null,
+    "version": null,
+    "created": "2026-11-09T15:16:54.292Z"
+  },
+  {
+    "id": "8c46acf662855ff3822dca6f669547d8bdf29f8f0120f0d5e496004be354496c",
+    "name": "phase0-codex-v1",
+    "state": "inactive",
+    "location": null,
+    "version": null,
+    "created": "2026-11-09T14:45:26.182Z"
+  },
+  {
+    "id": "57b7e190edf343979818abded1cf84d37ad4ca36a096335301721219925e6d4f",
+    "name": "phase0-sandbox-v1",
+    "state": "inactive",
+    "location": null,
+    "version": null,
+    "created": "2026-11-09T13:52:03.27Z"
+  },
+  {
+    "id": "6d462a4f67f58eaa4865b9abe3cbfd64222f720d971ba31de043787c01025f4a",
+    "name": "phase0-runtime-v1",
+    "state": "inactive",
+    "location": null,
+    "version": null,
+    "created": "2026-11-09T13:46:15.659Z"
+  },
+  {
+    "id": "aef2340df725dc213a942ea9caa3f9850f3a4e004f2c53f02b90778cce983141",
+    "name": "phase0-fixed-v1",
+    "state": "inactive",
+    "location": null,
+    "version": null,
+    "created": "2026-11-09T13:42:57.248Z"
+  }
+]

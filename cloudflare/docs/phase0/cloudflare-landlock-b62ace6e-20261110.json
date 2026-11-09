@@ -1,0 +1,25 @@
+{
+  "platform": "cloudflare-remote",
+  "recordedAt": "2026-11-09T18:21:33+00:00",
+  "url": "https://hivemind-boundary-check.roboco.workers.dev/phase0/landlock",
+  "requestRay": "a57ed64e0f79a47c-ICN",
+  "diagnostics": {
+    "scope": "cloudflare-no-subscription-landlock-guard",
+    "exitCode": 125,
+    "timedOut": false,
+    "stderr": "Hivemind filesystem guard failed: stage=kernel-abi errno=38\n",
+    "assessment": {
+      "passed": false,
+      "checks": [
+        "inheritedPrivateFdAbsent",
+        "workspaceWrite",
+        "privateReadDenied",
+        "procReadDenied",
+        "devNullWritable",
+        "ignoredSpawnWorks"
+      ]
+    },
+    "containerStopped": true,
+    "workerVersion": "b62ace6e-9b7c-4bda-9a6c-e3e9f4a3a6d7"
+  }
+}
