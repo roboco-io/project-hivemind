@@ -14,11 +14,11 @@
     <div class="identity"><span class="hive-mark" aria-hidden="true">⬡</span><div><strong>Project HIVEMIND</strong><span>One Vision. Many Agents.</span></div></div>
     <div class="connection"><span id="connection-status" role="status">연결 대기</span><span id="last-sync">아직 동기화하지 않음</span></div>
   </header>
-  <div class="demo-notice"><strong>로컬 검증 모드</strong><span>모의 AI 워커, 모의 비용과 합성 Git diff를 사용합니다. 실제 모델 호출·저장소 변경·클라우드 실행은 하지 않습니다.</span></div>
+  <div class="demo-notice"><strong>로컬 실행</strong><span>Codex 작업은 지정한 저장소의 Git worktree에서 실행합니다. mock 작업은 합성 diff와 모의 비용을 사용합니다.</span></div>
   <main>
     <section class="overview" aria-labelledby="page-title">
       <div><p class="context">사람이 방향을 정하고, 워커가 실행합니다.</p><h1 id="page-title">개발 관제실</h1></div>
-      <div class="summary-strip" aria-label="프로젝트 현황"><div><strong id="task-count">0</strong><span>전체 작업</span></div><div><strong id="approval-count">0</strong><span>승인 대기</span></div><div><strong id="cost-total">$0.000000</strong><span>누적 모의 비용</span></div></div>
+      <div class="summary-strip" aria-label="프로젝트 현황"><div><strong id="task-count">0</strong><span>전체 작업</span></div><div><strong id="approval-count">0</strong><span>승인 대기</span></div><div><strong id="cost-total">$0.000000</strong><span id="cost-total-label">확인된 보고 비용</span></div></div>
     </section>
     <details class="access"><summary>관제 연결 설정</summary><form id="connection-form"><label for="operator-token">운영자 토큰</label><div class="input-action"><input id="operator-token" type="password" value="local-development-only" autocomplete="off" spellcheck="false" required><button type="submit" class="secondary">연결 확인</button></div><p class="help">서버의 HIVEMIND_OPERATOR_TOKEN과 같은 값을 입력하세요. 이 탭의 메모리에만 보관합니다.</p></form></details>
     <p id="error-banner" class="error-banner" role="alert" hidden></p>
@@ -30,21 +30,28 @@
       </aside>
       <div class="main-panel">
         <section id="create-panel" class="panel" aria-labelledby="create-title">
-          <div class="panel-heading"><div><p class="context">새로운 지시</p><h2 id="create-title">작업을 등록하세요</h2></div><span class="pill">mock / local</span></div>
+          <div class="panel-heading"><div><p class="context">새로운 지시</p><h2 id="create-title">작업을 등록하세요</h2></div><span id="create-route" class="pill">mock / local</span></div>
           <p class="intro">목표와 완료 조건을 적어 주세요. 등록한 작업은 실행 승인을 받을 때까지 대기합니다.</p>
-          <form id="create-form" class="create-form"><label for="task-title">작업 제목<input id="task-title" name="title" required maxlength="160" placeholder="예: 로그인 폼의 입력 검증 추가"></label><label for="task-instructions">목표와 완료 조건<textarea id="task-instructions" name="instructions" rows="5" required maxlength="10000" placeholder="무엇을 바꾸고, 어떤 조건에서 완료로 판단할지 적어 주세요."></textarea></label><label class="budget-field" for="task-budget">작업 예산 (USD)<input id="task-budget" name="budget" type="number" min="0.001" max="1000" step="0.000001" value="0.01" required></label><p class="help">모의 워커 예상 비용은 $0.001000입니다. 예산은 실행 허용 여부를 판단하는 데 사용합니다.</p><button type="submit" id="create-submit">작업 등록</button></form>
+          <form id="create-form" class="create-form"><label for="task-provider">실행 워커<select id="task-provider" name="provider"><option value="mock">모의 워커 (mock)</option></select></label><div class="repository-context"><p id="provider-help" class="help">실행 가능한 워커 설정을 확인하고 있습니다.</p><dl id="create-repository" class="repository-facts" hidden><div><dt>저장소</dt><dd id="create-repository-name"></dd></div><div><dt>고정 시작 커밋</dt><dd id="create-base-commit"></dd></div><div><dt>테스트 프로필</dt><dd id="create-test-profile"></dd></div><div><dt>테스트 명령</dt><dd id="create-test-command"></dd></div></dl></div><label for="task-title">작업 제목<input id="task-title" name="title" required maxlength="160" placeholder="예: 로그인 폼의 입력 검증 추가"></label><label for="task-instructions">목표와 완료 조건<textarea id="task-instructions" name="instructions" rows="5" required maxlength="10000" placeholder="무엇을 바꾸고, 어떤 조건에서 완료로 판단할지 적어 주세요."></textarea></label><label class="budget-field" for="task-budget">작업 예산 (USD)<input id="task-budget" name="budget" type="number" min="0.001" max="1000" step="0.000001" value="0.01" required></label><p id="budget-help" class="help">모의 워커 예상 비용은 $0.001000입니다.</p><button type="submit" id="create-submit">작업 등록</button></form>
         </section>
         <section id="task-panel" class="panel" aria-labelledby="selected-title" hidden>
           <div class="panel-heading"><div><p id="task-id" class="context"></p><h2 id="selected-title"></h2></div><span id="selected-status" class="pill"></span></div>
           <p id="task-instructions-view" class="instructions"></p>
           <dl class="task-facts"><div><dt>실행 경로</dt><dd id="task-route"></dd></div><div><dt>할당 워커</dt><dd id="task-worker"></dd></div><div><dt>예산</dt><dd id="task-budget-view"></dd></div><div><dt>예상 비용</dt><dd id="task-estimate"></dd></div><div><dt>보고 비용</dt><dd id="task-actual"></dd></div><div><dt>최근 변경</dt><dd id="task-updated"></dd></div></dl>
           <section id="decision-panel" class="decision-panel" aria-labelledby="decision-title"><h3 id="decision-title">사람의 결정이 필요합니다</h3><p id="decision-description"></p><form id="decision-form"><label for="decision-reason">결정 사유<textarea id="decision-reason" rows="2" maxlength="2000" required placeholder="승인·반려·중단 이유를 기록하세요."></textarea></label><div class="actions"><button id="approve-button" type="submit" name="decision" value="approve">실행 승인</button><button id="reject-button" type="submit" name="decision" value="reject" class="secondary">반려</button><button id="cancel-button" type="submit" name="decision" value="cancel" class="danger">작업 중단</button></div></form></section>
-          <section class="result-section" aria-labelledby="result-title"><h3 id="result-title">실행 결과</h3><p id="task-summary" class="empty">아직 보고된 결과가 없습니다.</p><h4>Git diff <span class="quiet">합성 예시 · 자동 적용하지 않음</span></h4><pre id="task-diff" tabindex="0">워커 실행 후 변경 제안이 표시됩니다.</pre></section>
+          <section class="result-section" aria-labelledby="result-title"><h3 id="result-title">실행 결과</h3><p id="task-summary" class="empty">아직 보고된 결과가 없습니다.</p><h4>Git diff <span id="diff-kind" class="quiet">합성 예시 · 자동 적용하지 않음</span></h4><p id="diff-truncated" class="evidence-warning" hidden>diff가 표시 한도를 넘어 일부만 저장되었습니다. worktree에서 전체 변경을 확인하세요.</p><pre id="task-diff" tabindex="0">워커 실행 후 변경 제안이 표시됩니다.</pre></section>
+          <section id="execution-section" class="execution-section" aria-labelledby="execution-title" hidden>
+            <div class="section-title"><h3 id="execution-title">실제 실행 근거</h3><span id="execution-status" class="pill">아직 보고되지 않음</span></div>
+            <dl class="repository-facts"><div><dt>저장소</dt><dd id="execution-repository"></dd></div><div><dt>고정 시작 커밋</dt><dd id="execution-base"></dd></div><div><dt>실행 후 HEAD</dt><dd id="execution-head"></dd></div><div><dt>테스트 프로필</dt><dd id="execution-profile"></dd></div><div class="wide"><dt>작업 worktree</dt><dd id="execution-worktree"></dd></div><div><dt>Codex 실행</dt><dd id="codex-status"></dd></div><div><dt>Codex 세션</dt><dd id="codex-thread"></dd></div><div><dt>모델</dt><dd id="codex-model"></dd></div><div><dt>토큰 사용량</dt><dd id="codex-usage"></dd></div></dl>
+            <div id="codex-error-block" hidden><h4>Codex 오류 출력</h4><pre id="codex-stderr" tabindex="0"></pre></div>
+            <section id="setup-section" class="process-evidence" aria-labelledby="setup-title" hidden><div class="section-title"><h4 id="setup-title">실행 준비</h4><span id="setup-status" class="pill"></span></div><p id="setup-metadata" class="process-metadata"></p><details><summary>준비 명령 출력</summary><h4>표준 출력 (stdout)</h4><pre id="setup-stdout" tabindex="0"></pre><h4>오류 출력 (stderr)</h4><pre id="setup-stderr" tabindex="0"></pre></details><p id="setup-truncated" class="evidence-warning" hidden>준비 명령 출력이 한도를 넘어 일부만 저장되었습니다.</p></section>
+            <section class="process-evidence" aria-labelledby="tests-title"><div class="section-title"><h4 id="tests-title">테스트 결과</h4><span id="tests-status" class="pill">아직 실행하지 않음</span></div><p id="tests-metadata" class="process-metadata"></p><h4>표준 출력 (stdout)</h4><pre id="tests-stdout" tabindex="0">아직 보고된 테스트 출력이 없습니다.</pre><h4>오류 출력 (stderr)</h4><pre id="tests-stderr" tabindex="0">아직 보고된 테스트 출력이 없습니다.</pre><p id="tests-truncated" class="evidence-warning" hidden>테스트 출력이 한도를 넘어 일부만 저장되었습니다.</p></section>
+          </section>
           <section class="events-section" aria-labelledby="events-title"><div class="section-title"><h3 id="events-title">작업 이벤트</h3><span class="quiet">최신 순</span></div><ol id="event-list" class="event-list"></ol></section>
         </section>
       </div>
     </div>
   </main>
-  <footer><span>Project HIVEMIND · 내부 개발 코드명</span><span>승인은 결과 수락을 기록하며 Git 병합이나 배포를 실행하지 않습니다.</span></footer>
+  <footer><span>Project HIVEMIND · 개발 코드명</span><span>승인은 결과 수락을 기록하며 Git 병합이나 배포를 실행하지 않습니다.</span></footer>
 </body>
 </html>

@@ -1,5 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import type { AgentAdapter, Provider } from '../../contracts/src/index.js';
+import { createCodexAdapter, type CodexOptions } from './codex.js';
 
 const mock: AgentAdapter = {
   provider: 'mock',
@@ -13,7 +14,11 @@ const mock: AgentAdapter = {
   },
 };
 
-export function getAdapter(provider: Provider): AgentAdapter {
+export function getAdapter(provider: Provider, options?: CodexOptions): AgentAdapter {
   if (provider === 'mock') return mock;
+  if (provider === 'codex') {
+    if (!options) throw new Error('Codex adapter requires repository and test configuration');
+    return createCodexAdapter(options);
+  }
   throw new Error(`${provider} adapter is not implemented. Use mock for the local demonstration.`);
 }

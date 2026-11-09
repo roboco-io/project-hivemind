@@ -27,8 +27,8 @@ test('mock adapter stops on cancellation', async () => {
   await assert.rejects(result, { name: 'AbortError' });
 });
 
-test('real providers fail explicitly instead of silently using mock', () => {
-  assert.throws(() => getAdapter('codex'), /not implemented/i);
+test('unconfigured Codex and unsupported providers fail instead of silently using mock', () => {
+  assert.throws(() => getAdapter('codex'), /requires.*configuration/i);
   assert.throws(() => getAdapter('claude'), /not implemented/i);
 });
 
@@ -52,6 +52,20 @@ test('idle worker makes no result request', async () => {
   const fetchImpl: typeof fetch = async (_input, _init) => Response.json(++requests === 1 ? { ok: true } : null);
   assert.equal(await runOnce({ apiUrl: 'http://localhost', workerId: 'w', workerToken: 't', fetchImpl }), false);
   assert.equal(requests, 2);
+});
+
+test('Codex worker advertises repository capability and preserves unknown cost', async () => {
+  const calls: Array<Record<string,unknown>> = [];
+  const fetchImpl: typeof fetch = async (input,init) => {
+    const path = new URL(String(input)).pathname;
+    calls.push(JSON.parse(String(init?.body)) as Record<string,unknown>);
+    return Response.json(path.endsWith('/claim') ? {task:{...task,provider:'codex',repositoryId:'local'},leaseToken:'secret'} : {ok:true});
+  };
+  const adapter: AgentAdapter = {provider:'codex',execute:async()=>({summary:'actual',diff:'',actualCostMicros:null})};
+  assert.equal(await runOnce({apiUrl:'http://localhost',workerId:'codex-1',workerToken:'t',adapter,fetchImpl,provider:'codex',repositoryId:'local'}),true);
+  assert.equal(calls[0]!.provider,'codex');
+  assert.equal(calls[0]!.repositoryId,'local');
+  assert.equal(calls.at(-1)!.actualCostMicros,null);
 });
 
 test('a rejected heartbeat aborts execution and prevents result submission', async () => {

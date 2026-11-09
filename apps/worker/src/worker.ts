@@ -1,5 +1,5 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import type { AgentAdapter, Lease } from '../../../packages/contracts/src/index.js';
+import type { AgentAdapter, Lease, Provider } from '../../../packages/contracts/src/index.js';
 import { getAdapter } from '../../../packages/adapters/src/index.js';
 
 export interface WorkerConfig {
@@ -9,9 +9,14 @@ export interface WorkerConfig {
   fetchImpl?: typeof fetch;
   heartbeatMs?: number;
   adapter?: AgentAdapter;
+  provider?: Provider;
+  repositoryId?: string;
 }
 
 export async function runOnce(config: WorkerConfig, signal?: AbortSignal): Promise<boolean> {
+  const provider = config.provider ?? config.adapter?.provider ?? 'mock';
+  if (config.adapter && config.adapter.provider !== provider) throw new Error('Configured worker provider does not match its adapter');
+  if (provider === 'codex' && !config.adapter) throw new Error('Codex worker requires a configured adapter');
   const controller = new AbortController();
   const workSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   const fetchImpl = config.fetchImpl ?? fetch;
@@ -28,7 +33,10 @@ export async function runOnce(config: WorkerConfig, signal?: AbortSignal): Promi
     return await response.json() as T;
   };
 
-  await post('/api/workers/register', { workerId: config.workerId, provider: 'mock', runtime: 'local' });
+  await post('/api/workers/register', {
+    workerId: config.workerId, provider, runtime: 'local',
+    ...(provider === 'codex' ? {repositoryId:config.repositoryId ?? 'local'} : {}),
+  });
   const lease = await post<Lease | null>('/api/workers/claim', { workerId: config.workerId });
   if (!lease) return false;
   const credentials = { workerId: config.workerId, leaseToken: lease.leaseToken };

@@ -1,21 +1,20 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { runOnce } from './worker.js';
+import { loadWorkerSettings } from './config.js';
+import { getAdapter } from '../../../packages/adapters/src/index.js';
 
 const controller = new AbortController();
 process.once('SIGINT', () => controller.abort());
 process.once('SIGTERM', () => controller.abort());
 
-const config = {
-  apiUrl: process.env.HIVEMIND_API_URL ?? 'http://127.0.0.1:4310',
-  workerId: process.env.HIVEMIND_WORKER_ID ?? 'worker-local-1',
-  workerToken: process.env.HIVEMIND_WORKER_TOKEN ?? 'local-worker-only',
-};
+const settings = loadWorkerSettings(process.env);
+const config = {...settings,adapter:getAdapter(settings.provider,settings.codex)};
 const once = process.argv.includes('--once');
 
 do {
   try {
     const processed = await runOnce(config, controller.signal);
-    console.log(processed ? 'Mock task submitted for human review.' : 'No approved task available.');
+    console.log(processed ? `${settings.provider} task result submitted to control plane.` : 'No approved task available.');
   } catch (error) {
     if (controller.signal.aborted) break;
     console.error(error instanceof Error ? error.message : 'Worker execution failed.');

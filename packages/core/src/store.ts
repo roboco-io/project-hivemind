@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { CreateTask, Task, State, Worker, HiveEvent, Lease, RunResult } from '../../contracts/src/index.js';
+import type { CreateTask, Task, State, Worker, HiveEvent, Lease, RunResult, RepositoryPolicy, Provider, Runtime, ExecutionEvidence, ProcessEvidence } from '../../contracts/src/index.js';
 
 export class DomainError extends Error {
   constructor(message: string, public statusCode = 409) { super(message); }
@@ -20,9 +20,54 @@ export function equalSecret(a: string, b: string): boolean {
   const x = Buffer.from(a), y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x,y);
 }
+function object(value: unknown, name: string): Record<string,unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new DomainError(`Invalid ${name}`,400);
+  return value as Record<string,unknown>;
+}
+function boundedString(value: unknown, name: string, max: number): string {
+  if (typeof value !== 'string' || value.length > max) throw new DomainError(`Invalid ${name}`,400);
+  return value;
+}
+function integer(value: unknown, name: string, min: number, max: number): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < min || value > max) throw new DomainError(`Invalid ${name}`,400);
+  return value;
+}
+function bool(value: unknown, name: string): boolean {
+  if (typeof value !== 'boolean') throw new DomainError(`Invalid ${name}`,400);
+  return value;
+}
+function exitCode(value: unknown): number | null {
+  return value === null ? null : integer(value,'exitCode',-2147483648,2147483647);
+}
+function processStatus(value: unknown, code: number | null): ProcessEvidence['status'] {
+  if (!['passed','failed','timed_out','error','not_run'].includes(String(value))) throw new DomainError('Invalid process status',400);
+  if ((value === 'passed' && code !== 0) || (value === 'failed' && (code === null || code === 0)) || (value === 'not_run' && code !== null)) throw new DomainError('Process status conflicts with exitCode',400);
+  return value as ProcessEvidence['status'];
+}
+function validateProcess(value: unknown): ProcessEvidence {
+  const item = object(value,'process evidence');
+  if (!Array.isArray(item.command) || item.command.length < 1 || item.command.length > 32) throw new DomainError('Invalid test command',400);
+  const command = item.command.map(arg=>{
+    const value = boundedString(arg,'command argument',1000);
+    if (!value.trim() || value.includes('\0')) throw new DomainError('Invalid command argument',400);
+    return value;
+  });
+  const code = exitCode(item.exitCode);
+  return {command,status:processStatus(item.status,code),exitCode:code,durationMs:integer(item.durationMs,'durationMs',0,86400000),stdout:boundedString(item.stdout,'stdout',16000),stderr:boundedString(item.stderr,'stderr',16000),truncated:bool(item.truncated,'truncated')};
+}
+function validateExecution(value: unknown): ExecutionEvidence {
+  const item = object(value,'execution evidence'), codex = object(item.codex,'Codex evidence');
+  const code = exitCode(codex.exitCode), base = text(item.baseCommit,'baseCommit',40), head = text(item.headCommit,'headCommit',40);
+  if (!/^[a-f0-9]{40}$/i.test(base) || !/^[a-f0-9]{40}$/i.test(head)) throw new DomainError('Invalid execution commit',400);
+  if (!['succeeded','failed'].includes(String(item.status))) throw new DomainError('Invalid execution status',400);
+  const usage = codex.usage === null ? null : object(codex.usage,'usage');
+  return {repositoryId:text(item.repositoryId,'repositoryId',120),baseCommit:base,headCommit:head,worktreePath:text(item.worktreePath,'worktreePath',4096),diffTruncated:bool(item.diffTruncated,'diffTruncated'),status:item.status as ExecutionEvidence['status'],
+    ...(item.setup === undefined ? {} : {setup:validateProcess(item.setup)}),tests:validateProcess(item.tests),
+    codex:{status:processStatus(codex.status,code),exitCode:code,threadId:codex.threadId === null ? null : text(codex.threadId,'threadId',200),model:codex.model === null ? null : text(codex.model,'model',200),usage:usage === null ? null : {inputTokens:integer(usage.inputTokens,'inputTokens',0,Number.MAX_SAFE_INTEGER),cachedInputTokens:integer(usage.cachedInputTokens,'cachedInputTokens',0,Number.MAX_SAFE_INTEGER),outputTokens:integer(usage.outputTokens,'outputTokens',0,Number.MAX_SAFE_INTEGER)},stderr:boundedString(codex.stderr,'Codex stderr',16000)}};
+}
 export class HiveStore {
   private db: DatabaseSync;
-  constructor(path = ':memory:', private now: () => number = Date.now) {
+  constructor(path = ':memory:', private now: () => number = Date.now, private repository?: RepositoryPolicy) {
     if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
@@ -68,10 +113,19 @@ export class HiveStore {
   create(input: CreateTask): Task {
     const title = text(input.title,'title',160), instructions = text(input.instructions,'instructions',12000);
     const budget = money(input.budgetMicros,'budget');
-    if (input.provider !== 'mock' || input.runtime !== 'local') throw new DomainError('Only mock/local is implemented',422);
-    if (budget < ESTIMATE_MICROS) throw new DomainError('Task budget is below the mock estimate',422);
+    if (!['mock','codex'].includes(input.provider) || input.runtime !== 'local') throw new DomainError('Only mock/local and configured codex/local are implemented',422);
+    const isCodex = input.provider === 'codex';
+    if (isCodex) {
+      if (!this.repository) throw new DomainError('Codex repository is not configured or supported',422);
+      if (input.repositoryId !== this.repository.id) throw new DomainError('Invalid repository selection',422);
+      if (input.baseCommit !== this.repository.baseCommit) throw new DomainError('Repository base commit does not match the configured snapshot',422);
+      if (input.testProfile !== this.repository.testProfile) throw new DomainError('Invalid test profile',422);
+    } else {
+      if (input.repositoryId !== undefined || input.baseCommit !== undefined || input.testProfile !== undefined) throw new DomainError('Mock tasks cannot select a repository',400);
+      if (budget < ESTIMATE_MICROS) throw new DomainError('Task budget is below the mock estimate',422);
+    }
     return this.tx(() => {
-      const task: Task = {title,instructions,budgetMicros:budget,provider:'mock',runtime:'local',id:randomUUID(),status:'awaiting_execution_approval',createdAt:this.timestamp(),updatedAt:this.timestamp(),runId:null,workerId:null,leaseExpiresAt:null,estimatedCostMicros:ESTIMATE_MICROS,actualCostMicros:0,diff:null,summary:null};
+      const task: Task = {title,instructions,budgetMicros:budget,provider:input.provider,runtime:'local',...(isCodex ? {repositoryId:input.repositoryId,baseCommit:input.baseCommit,testProfile:input.testProfile,testCommand:[...this.repository!.testCommand]} : {}),id:randomUUID(),status:'awaiting_execution_approval',createdAt:this.timestamp(),updatedAt:this.timestamp(),runId:null,workerId:null,leaseExpiresAt:null,estimatedCostMicros:isCodex ? null : ESTIMATE_MICROS,actualCostMicros:isCodex ? null : 0,diff:null,summary:null,execution:null};
       this.db.prepare('INSERT INTO tasks(id,data) VALUES (?,?)').run(task.id,JSON.stringify(task));
       this.event(task,'task.created',{provider:task.provider,runtime:task.runtime,budgetMicros:budget}); return task;
     });
@@ -86,18 +140,36 @@ export class HiveStore {
       this.save(task); this.event(task,'approval.decided',{stage,decision,reason,actor:'operator'}); return task;
     });
   }
-  register(id: string): Worker {
+  private getWorker(id: string): Worker {
+    const row = this.db.prepare('SELECT data FROM workers WHERE id=?').get(id);
+    if (!row) throw new DomainError('Worker not registered',400);
+    return JSON.parse(row.data as string) as Worker;
+  }
+  private touchWorker(id: string): Worker {
+    const worker = this.getWorker(id); worker.lastSeenAt = this.timestamp();
+    this.db.prepare('UPDATE workers SET data=? WHERE id=?').run(JSON.stringify(worker),id);
+    return worker;
+  }
+  register(id: string, provider: Provider = 'mock', runtime: Runtime = 'local', repositoryId?: string): Worker {
     id = text(id,'workerId',120);
-    const worker: Worker = {id,provider:'mock',runtime:'local',lastSeenAt:this.timestamp()};
+    if (!['mock','codex'].includes(provider) || runtime !== 'local') throw new DomainError('Unsupported worker capability',422);
+    if (provider === 'codex' && (!this.repository || repositoryId !== this.repository.id)) throw new DomainError('Invalid Codex worker repository',422);
+    if (provider === 'mock' && repositoryId !== undefined) throw new DomainError('Mock worker cannot select a repository',400);
+    const worker: Worker = {id,provider,runtime,lastSeenAt:this.timestamp(),...(repositoryId ? {repositoryId} : {})};
+    const previous = this.db.prepare('SELECT data FROM workers WHERE id=?').get(id);
+    if (previous) {
+      const old = JSON.parse(previous.data as string) as Worker;
+      if ((old.provider !== provider || old.runtime !== runtime || old.repositoryId !== repositoryId) && this.tasks().some(task=>task.status === 'running' && task.workerId === id)) throw new DomainError('Cannot change capability of a busy worker');
+    }
     this.db.prepare('INSERT INTO workers(id,data) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data').run(id,JSON.stringify(worker)); return worker;
   }
   claim(id: string): Lease | null {
     this.expire();
     return this.tx(() => {
-      if (!this.db.prepare('SELECT id FROM workers WHERE id=?').get(id)) throw new DomainError('Worker not registered',400);
-      this.register(id);
+      const worker = this.getWorker(id);
+      this.touchWorker(id);
       if (this.tasks().some(task => task.status === 'running' && task.workerId === id)) return null;
-      const task = this.tasks().reverse().find(task => task.status === 'queued');
+      const task = this.tasks().reverse().find(task => task.status === 'queued' && task.provider === worker.provider && task.runtime === worker.runtime && (task.provider !== 'codex' || task.repositoryId === worker.repositoryId));
       if (!task) return null;
       task.status = 'running'; task.runId = randomUUID(); task.workerId = id; task.leaseExpiresAt = this.now()+30000;
       const leaseToken = randomUUID(); this.db.prepare('UPDATE tasks SET lease_token=? WHERE id=?').run(leaseToken,task.id);
@@ -114,17 +186,39 @@ export class HiveStore {
     this.expire();
     return this.tx(() => {
       const task = this.running(id,worker,token); task.leaseExpiresAt = this.now()+30000;
-      this.register(worker); return this.save(task);
+      this.touchWorker(worker); return this.save(task);
     });
   }
   result(id: string, worker: string, token: string, result: RunResult): Task {
-    const cost = money(result.actualCostMicros,'actualCostMicros'), summary = text(result.summary,'summary',12000), diff = text(result.diff,'diff',200000);
+    const summary = text(result.summary,'summary',12000);
+    if (typeof result.diff !== 'string' || result.diff.length > 200000) throw new DomainError('Invalid diff',400);
     this.expire();
     return this.tx(() => {
-      const task = this.running(id,worker,token); task.actualCostMicros = cost; task.diff = diff; task.summary = summary;
-      task.status = cost > task.budgetMicros ? 'failed' : 'awaiting_review';
+      const task = this.running(id,worker,token);
+      let eventType = 'run.result';
+      if (task.provider === 'codex') {
+        if (result.actualCostMicros !== null) throw new DomainError('Codex cost must remain unknown (null)',400);
+        const evidence = validateExecution(result.execution);
+        if (evidence.repositoryId !== task.repositoryId || evidence.baseCommit !== task.baseCommit) throw new DomainError('Execution repository or base commit does not match task',400);
+        if (!Array.isArray(task.testCommand) || task.testCommand.length === 0) throw new DomainError('Task is missing its approved command snapshot; resubmit this task',400);
+        if (JSON.stringify(evidence.tests.command) !== JSON.stringify(task.testCommand)) throw new DomainError('Execution test command does not match approved profile snapshot',400);
+        const successful = evidence.codex.status === 'passed' && evidence.codex.exitCode === 0 && evidence.tests.status === 'passed' && evidence.tests.exitCode === 0 && (!evidence.setup || (evidence.setup.status === 'passed' && evidence.setup.exitCode === 0)) && evidence.headCommit === evidence.baseCommit;
+        if (evidence.status === 'succeeded' && !successful) throw new DomainError('Execution success conflicts with process evidence',400);
+        task.actualCostMicros = null; task.execution = evidence;
+        task.status = evidence.status === 'succeeded' ? 'awaiting_review' : 'failed';
+        if (task.status === 'failed') eventType = 'run.failed';
+      } else {
+        const cost = money(result.actualCostMicros,'actualCostMicros');
+        if (!result.diff.trim()) throw new DomainError('Invalid diff',400);
+        if (result.execution != null) throw new DomainError('Mock result cannot contain real execution evidence',400);
+        task.actualCostMicros = cost; task.execution = null;
+        task.status = cost > task.budgetMicros ? 'failed' : 'awaiting_review';
+        if (cost > task.budgetMicros) eventType = 'budget.exceeded';
+      }
+      task.diff = result.diff; task.summary = summary;
       this.finishLease(task); this.save(task);
-      this.event(task,cost > task.budgetMicros ? 'budget.exceeded' : 'run.result',{actualCostMicros:cost,synthetic:true}); return task;
+      this.event(task,eventType,{actualCostMicros:task.actualCostMicros,synthetic:task.provider === 'mock',...(task.execution ? {testStatus:task.execution.tests.status,baseCommit:task.execution.baseCommit} : {})});
+      return task;
     });
   }
   fail(id: string, worker: string, token: string, message: string): Task {
