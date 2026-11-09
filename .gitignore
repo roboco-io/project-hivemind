@@ -5,3 +5,6 @@ data/
 *.sqlite*
 coverage/
 *.log
+
+.hivemind
+.playwright-mcp/

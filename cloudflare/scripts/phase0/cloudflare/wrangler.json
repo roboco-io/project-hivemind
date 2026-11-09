@@ -1,0 +1,46 @@
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "hivemind-phase0",
+  "account_id": "f7f7c7474ced58ec160ab9a775bf2bfe",
+  "main": "worker.ts",
+  "compatibility_date": "2026-11-09",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "secrets": {
+    "required": [
+      "PROBE_TOKEN"
+    ]
+  },
+  "containers": [
+    {
+      "class_name": "Phase0Container",
+      "name": "hivemind-phase0-probe-v1",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "probe": {
+          "dockerfile": "../Dockerfile",
+          "build_context": "../../.."
+        }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "class_name": "Phase0Container",
+        "name": "PHASE0"
+      }
+    ]
+  },
+  "exports": {
+    "Phase0Container": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
+  },
+  "preview_urls": false
+}

@@ -1,0 +1,74 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "hivemind-cloudflare-backend",
+  "account_id": "f7f7c7474ced58ec160ab9a775bf2bfe",
+  "main": "src/cloudflare/worker.ts",
+  "compatibility_date": "2026-11-09",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "secrets": {
+    "required": [
+      "CONTROL_TOKEN",
+      "AUTH_STORAGE_KEY",
+      "AUTH_RETURN_PRIVATE_KEY",
+      "AUTH_RETURN_PUBLIC_KEY"
+    ]
+  },
+  "vars": {
+    "CLAUDE_NESTED_APPROVED": "false",
+    "CODEX_SANDBOX_APPROVED": "true"
+  },
+  "r2_buckets": [
+    {
+      "binding": "ARTIFACTS",
+      "bucket_name": "hivemind-cloudflare-artifacts"
+    },
+    {
+      "binding": "CREDENTIALS",
+      "bucket_name": "hivemind-cloudflare-credentials"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SCHEDULER",
+        "class_name": "SchedulerDO"
+      },
+      {
+        "name": "RUNNER",
+        "class_name": "RunnerDO"
+      }
+    ]
+  },
+  "exports": {
+    "SchedulerDO": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    },
+    "RunnerDO": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    },
+    "default": {
+      "type": "worker"
+    }
+  },
+  "containers": [
+    {
+      "class_name": "RunnerDO",
+      "name": "hivemind-cloudflare-runtime",
+      "scheduling_policy": "durable_object",
+      "images": {
+        "runtime": {
+          "dockerfile": "Dockerfile",
+          "build_context": ".."
+        }
+      }
+    }
+  ],
+  "version_metadata": {
+    "binding": "CF_VERSION_METADATA"
+  },
+  "preview_urls": false
+}

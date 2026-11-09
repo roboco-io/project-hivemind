@@ -1,0 +1,11 @@
+{
+ "sandbox":{"enabled":true,"failIfUnavailable":true,"allowUnsandboxedCommands":false,"allowNestedUserNamespaces":true,"network":{"allowedDomains":[]}},
+ "allowManagedHooksOnly":true,
+ "disableAllHooks":false,
+ "env":{"NODE_OPTIONS":"","LD_PRELOAD":"","LD_LIBRARY_PATH":"","BASH_ENV":"","ENV":""},
+ "hooks":{
+  "PreToolUse":[{"matcher":"^Bash$","hooks":[{"type":"command","command":"/usr/local/bin/node /opt/hivemind/backend/src/runtime/claude-bash-hook.ts","timeout":5,"onFailure":"block"}]}],
+  "SubagentStart":[{"matcher":"^worker$","hooks":[{"type":"command","command":"/usr/local/bin/node /opt/hivemind/scripts/phase0/claude-agent-hook.ts","timeout":5}]}],
+  "SubagentStop":[{"matcher":"^worker$","hooks":[{"type":"command","command":"/usr/local/bin/node /opt/hivemind/scripts/phase0/claude-agent-hook.ts","timeout":5}]}]
+ }
+}

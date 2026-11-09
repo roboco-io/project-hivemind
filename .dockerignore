@@ -9,3 +9,6 @@ work
 outputs
 *.sqlite*
 *.log
+
+.hivemind
+cloudflare/

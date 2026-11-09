@@ -1,0 +1,17 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.hivemind/
+reports/
+auth.json
+.credentials.json
+*.pem
+.wrangler/
+.dev.vars
+.dev.vars.*
+.playwright-mcp/
+work/
+outputs/
+backend/worker-env.d.ts
+docs/phase0/*safe-handoff.md
