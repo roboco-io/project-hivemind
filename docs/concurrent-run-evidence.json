@@ -1,0 +1,70 @@
+{
+  "verifiedOn": "2026-11-09",
+  "timezone": "Asia/Seoul",
+  "baseCommit": "284d513a01a03b66a6543bee093321852f8d0eb7",
+  "runningIntervalsOverlapSeconds": 46.247,
+  "overlapFromKST": "2026-11-09T15:56:32.459000+09:00",
+  "overlapUntilKST": "2026-11-09T15:57:18.706000+09:00",
+  "bothRunningSamples": 178,
+  "originalTrackedFilesAndIndexPreservedBeforeReview": true,
+  "runs": [
+    {
+      "provider": "claude",
+      "taskId": "dec2b753-b449-4738-8dd9-ddd11e80d544",
+      "runId": "0f0ba455-9f3c-44c6-b718-68e8463a7ca2",
+      "workerId": "worker-claude-ready",
+      "baseCommit": "284d513a01a03b66a6543bee093321852f8d0eb7",
+      "headCommit": "284d513a01a03b66a6543bee093321852f8d0eb7",
+      "worktree": "data/worktrees/0f0ba455-9f3c-44c6-b718-68e8463a7ca2",
+      "startedAt": "2026-11-09T06:56:30.453Z",
+      "resultAt": "2026-11-09T06:57:26.070Z",
+      "startedAtKST": "2026-11-09T15:56:30.453000+09:00",
+      "resultAtKST": "2026-11-09T15:57:26.070000+09:00",
+      "changedFiles": [
+        "docs/concurrent-execution.md"
+      ],
+      "testsPassed": 65,
+      "testCommand": [
+        "npm",
+        "run",
+        "check"
+      ],
+      "testExitCode": 0,
+      "testDurationMs": 17240,
+      "diffSha256": "1c9e23a8e5ae91a609ee7544b9d88ce2809af87bda040665a154b556163bbde8",
+      "actualCostMicros": null,
+      "finalStatus": "completed",
+      "reviewAcceptedAt": "2026-11-09T07:01:52.377Z"
+    },
+    {
+      "provider": "codex",
+      "taskId": "30a68abb-1d6c-42e7-b01a-8257792ed8f5",
+      "runId": "f13f6102-3ad2-4f90-a46e-0dd32791c459",
+      "workerId": "worker-codex-ready",
+      "baseCommit": "284d513a01a03b66a6543bee093321852f8d0eb7",
+      "headCommit": "284d513a01a03b66a6543bee093321852f8d0eb7",
+      "worktree": "data/worktrees/f13f6102-3ad2-4f90-a46e-0dd32791c459",
+      "startedAt": "2026-11-09T06:56:32.459Z",
+      "resultAt": "2026-11-09T06:57:18.706Z",
+      "startedAtKST": "2026-11-09T15:56:32.459000+09:00",
+      "resultAtKST": "2026-11-09T15:57:18.706000+09:00",
+      "changedFiles": [
+        "README.md"
+      ],
+      "testsPassed": 65,
+      "testCommand": [
+        "npm",
+        "run",
+        "check"
+      ],
+      "testExitCode": 0,
+      "testDurationMs": 20925,
+      "diffSha256": "fd8678840c6b8af9957757ad12f68a56823be0cb1052b970ce4d74793eedc747",
+      "actualCostMicros": null,
+      "finalStatus": "completed",
+      "reviewAcceptedAt": "2026-11-09T07:01:54.281Z"
+    }
+  ],
+  "pollingDelaySeconds": 0.25,
+  "diffHashScope": "SHA-256 of the original worker-reported diff before editorial review; published documentation may include reviewer clarifications."
+}

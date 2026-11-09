@@ -48,6 +48,31 @@ HIVEMIND는 임시 개발 코드명이다. 공개 제품명은 아직 정하지 
 
 </details>
 
+### 병렬 실행 시연
+
+Codex와 Claude Code 작업을 각각 등록하고 실행을 승인한다.
+두 워커는 서로 다른 worktree에서 병렬로 작업한다.
+사람은 각 작업의 실제 diff와 테스트 결과를 검토한 뒤 결과를 수락한다.
+절차와 검토 항목은 [병렬 실행 안내](docs/concurrent-execution.md)를 참고한다.
+
+2026-11-09 실측에서 두 작업의 `running` 구간은 **46.247초** 겹쳤다.
+같은 시작 커밋에서 서로 다른 worktree를 사용했고 원본은 검토 전까지 보존됐다.
+
+| 워커 | 실행 구간 (한국 시간) | 변경 파일 | 테스트 |
+|---|---|---|---|
+| Codex | 15:56:32.459–15:57:18.706 | README.md | 65개 통과·실패 0·종료 코드 0 |
+| Claude Code | 15:56:30.453–15:57:26.070 | docs/concurrent-execution.md | 65개 통과·실패 0·종료 코드 0 |
+
+이 시간은 모델 추론만이 아닌 worktree 준비·CLI·준비 명령·테스트를 포함한 작업 실행 구간이다.
+이벤트 시각과 원본 diff 해시는 [실행 근거 JSON](docs/concurrent-run-evidence.json)에 기록했다.
+검토 후 두 결과를 수락했다. 공개 결과 캡처에서는 개인 로컬 경로만 숨겼다.
+
+![Codex와 Claude Code의 병렬 실행 화면](docs/screenshots/concurrent-running.png)
+
+![병렬 실행의 Codex diff와 테스트 결과 검토](docs/screenshots/concurrent-codex.png)
+
+![병렬 실행의 Claude Code diff와 테스트 결과 검토](docs/screenshots/concurrent-claude.png)
+
 ## 빠른 시작: 모의 실행
 
 Node.js 24 이상과 npm이 필요하다. 프로젝트 루트에서 실행한다.
