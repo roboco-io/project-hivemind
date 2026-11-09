@@ -152,7 +152,8 @@ static void trace_filter_loaded(void) {
     struct stat info;
     if (fstat(file, &info) != 0 || !S_ISREG(info.st_mode) || (info.st_mode & 077) ||
         info.st_nlink != 1 || info.st_size < 0 || info.st_size + length > 8192) goto cleanup;
-    (void)write(file, line, (size_t)length);
+    ssize_t written = write(file, line, (size_t)length);
+    if (written != (ssize_t)length) goto cleanup;
 cleanup:
     if (file >= 0) (void)close(file);
     (void)close(lock);
