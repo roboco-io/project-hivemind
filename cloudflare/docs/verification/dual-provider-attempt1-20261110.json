@@ -1,0 +1,677 @@
+{
+  "platform": "cloudflare-remote",
+  "recordedAt": "2026-11-09T22:17:54.497363+00:00",
+  "workerVersion": "e1121d55-8dd4-481c-a2d0-1e226b978c4e",
+  "passed": false,
+  "limitation": "Claude terminal result was rejected by the strict parser; safe predicate diagnostics will be added before repeating. No job was resubmitted during metadata retries.",
+  "results": [
+    {
+      "job": {
+        "id": "ea9b2ea5-91ec-455c-883f-6586d087fae6",
+        "attempt": "a760d789-6dba-481c-ba3c-4d09502eb889",
+        "kind": "agent",
+        "provider": "codex",
+        "credentialId": "codex-remote",
+        "snapshotId": "4f9b3c79585acc1addb89b6f1c2713fc58775cd0bca89486b4423458d9a8d0d3",
+        "status": "SUCCEEDED",
+        "instructions": "Remote acceptance fixture ff465c2561784f6e436fffc8ad765192. Use exactly two official native worker subagents concurrently, assigning alpha.mjs to one and beta.mjs to the other. Each must wait 10 seconds with Node.js before editing. First exports add(a,b) returning a+b; second exports multiply(a,b) returning a*b. Launch both before waiting for either. Do not edit the tests or verify.mjs. After both return, call the phase0_probe MCP tool with nonce ff465c2561784f6e436fffc8ad765192. Verify actual files and report truthfully. Use Bash and Node.js for Claude edits. Do not inspect private paths or auth. Do not commit or push.",
+        "checks": [
+          {
+            "id": "unit-a",
+            "argv": [
+              "node",
+              "verify.mjs"
+            ],
+            "timeoutMs": 60000
+          },
+          {
+            "id": "unit-b",
+            "argv": [
+              "node",
+              "verify.mjs"
+            ],
+            "timeoutMs": 60000
+          }
+        ],
+        "childIds": [
+          "090cec43-2e74-472d-9e67-efa59ae3375f",
+          "3fcbd31e-39c3-4e72-9a86-0eaa1bb71d07"
+        ],
+        "createdAt": 1794262381783,
+        "deadline": 1794262744642,
+        "timeoutMs": 360000,
+        "containerStopped": true,
+        "authSynced": true,
+        "credentialGeneration": 2,
+        "startedAt": 1794262384642,
+        "outputSnapshotId": "0dca148abac6339d4f31d19b969c02f32f9acb28990c33f1a27f284b9d8b37d2",
+        "resultKey": "results/ea9b2ea5-91ec-455c-883f-6586d087fae6/a760d789-6dba-481c-ba3c-4d09502eb889.json",
+        "finishedAt": 1794262482772
+      },
+      "input": {
+        "version": 1,
+        "digest": "4f9b3c79585acc1addb89b6f1c2713fc58775cd0bca89486b4423458d9a8d0d3",
+        "files": [
+          {
+            "path": "alpha.mjs",
+            "content": "ZXhwb3J0IGNvbnN0IGFkZCA9ICgpID0+IDA7Cg==",
+            "sha256": "38ab21f0e439150e70feed0751ce5c829a4798e2200282f3183f1fed070ccf9d",
+            "executable": false
+          },
+          {
+            "path": "beta.mjs",
+            "content": "ZXhwb3J0IGNvbnN0IG11bHRpcGx5ID0gKCkgPT4gMDsK",
+            "sha256": "4272902e96cbfc9c052f70f06046ebef87c885a99ac41cf541a8af8142718f74",
+            "executable": false
+          },
+          {
+            "path": "math.test.mjs",
+            "content": "aW1wb3J0IHt0ZXN0fSBmcm9tICdub2RlOnRlc3QnO2ltcG9ydCBhc3NlcnQgZnJvbSAnbm9kZTphc3NlcnQvc3RyaWN0JztpbXBvcnQge2FkZH0gZnJvbSAnLi9hbHBoYS5tanMnO2ltcG9ydCB7bXVsdGlwbHl9IGZyb20gJy4vYmV0YS5tanMnO3Rlc3QoJ3N1bScsKCk9PmFzc2VydC5lcXVhbChhZGQoMiwzKSw1KSk7dGVzdCgncHJvZHVjdCcsKCk9PmFzc2VydC5lcXVhbChtdWx0aXBseSgzLDQpLDEyKSk7Cg==",
+            "sha256": "38a99e3970bf53213b6ebd6be750b117f23a6c1f2dbd0f68c6909c8a4422d684",
+            "executable": false
+          },
+          {
+            "path": "verify.mjs",
+            "content": "aW1wb3J0IHtzcGF3blN5bmN9IGZyb20gJ25vZGU6Y2hpbGRfcHJvY2Vzcyc7YXdhaXQgbmV3IFByb21pc2Uocj0+c2V0VGltZW91dChyLDEwMDAwKSk7Y29uc3Qgcj1zcGF3blN5bmMocHJvY2Vzcy5leGVjUGF0aCxbJy0tdGVzdCcsJ21hdGgudGVzdC5tanMnXSx7c3RkaW86J2luaGVyaXQnfSk7cHJvY2Vzcy5leGl0KHIuc3RhdHVzPz8xKTsK",
+            "sha256": "0c8862aa10385ae8f11db09718045b7ac9770ba4451eac223c4d97248a760f58",
+            "executable": false
+          }
+        ]
+      },
+      "output": {
+        "version": 1,
+        "digest": "0dca148abac6339d4f31d19b969c02f32f9acb28990c33f1a27f284b9d8b37d2",
+        "files": [
+          {
+            "path": "alpha.mjs",
+            "content": "ZXhwb3J0IGZ1bmN0aW9uIGFkZChhLCBiKSB7CiAgcmV0dXJuIGEgKyBiOwp9Cg==",
+            "sha256": "5b63136552577a64d788dc3cd4552739d0d60f9e1adb63ec4dfb6932d56fc75d",
+            "executable": false
+          },
+          {
+            "path": "beta.mjs",
+            "content": "ZXhwb3J0IGZ1bmN0aW9uIG11bHRpcGx5KGEsIGIpIHsKICByZXR1cm4gYSAqIGI7Cn0K",
+            "sha256": "07c309808292965c3c3135155bcf1c840eff57cd2ad9c7a806b328d916527442",
+            "executable": false
+          },
+          {
+            "path": "math.test.mjs",
+            "content": "aW1wb3J0IHt0ZXN0fSBmcm9tICdub2RlOnRlc3QnO2ltcG9ydCBhc3NlcnQgZnJvbSAnbm9kZTphc3NlcnQvc3RyaWN0JztpbXBvcnQge2FkZH0gZnJvbSAnLi9hbHBoYS5tanMnO2ltcG9ydCB7bXVsdGlwbHl9IGZyb20gJy4vYmV0YS5tanMnO3Rlc3QoJ3N1bScsKCk9PmFzc2VydC5lcXVhbChhZGQoMiwzKSw1KSk7dGVzdCgncHJvZHVjdCcsKCk9PmFzc2VydC5lcXVhbChtdWx0aXBseSgzLDQpLDEyKSk7Cg==",
+            "sha256": "38a99e3970bf53213b6ebd6be750b117f23a6c1f2dbd0f68c6909c8a4422d684",
+            "executable": false
+          },
+          {
+            "path": "verify.mjs",
+            "content": "aW1wb3J0IHtzcGF3blN5bmN9IGZyb20gJ25vZGU6Y2hpbGRfcHJvY2Vzcyc7YXdhaXQgbmV3IFByb21pc2Uocj0+c2V0VGltZW91dChyLDEwMDAwKSk7Y29uc3Qgcj1zcGF3blN5bmMocHJvY2Vzcy5leGVjUGF0aCxbJy0tdGVzdCcsJ21hdGgudGVzdC5tanMnXSx7c3RkaW86J2luaGVyaXQnfSk7cHJvY2Vzcy5leGl0KHIuc3RhdHVzPz8xKTsK",
+            "sha256": "0c8862aa10385ae8f11db09718045b7ac9770ba4451eac223c4d97248a760f58",
+            "executable": false
+          }
+        ]
+      },
+      "result": {
+        "version": 1,
+        "jobId": "ea9b2ea5-91ec-455c-883f-6586d087fae6",
+        "attempt": "a760d789-6dba-481c-ba3c-4d09502eb889",
+        "inputSnapshotId": "4f9b3c79585acc1addb89b6f1c2713fc58775cd0bca89486b4423458d9a8d0d3",
+        "outputSnapshotId": "0dca148abac6339d4f31d19b969c02f32f9acb28990c33f1a27f284b9d8b37d2",
+        "process": {
+          "status": "passed",
+          "exitCode": 0,
+          "stdout": "Created and verified [alpha.mjs](/workspace/alpha.mjs) and [beta.mjs](/workspace/beta.mjs) using exactly two concurrent workers, each waiting 10 seconds in Node.js before editing.\n\nBoth exports returned the expected results. The probe echoed nonce `ff465c2561784f6e436fffc8ad765192` successfully. Tests and `verify.mjs` were untouched; no commits or pushes were made.",
+          "stderr": "Reading additional input from stdin...\n",
+          "durationMs": 36137,
+          "truncated": false,
+          "startedAt": 1794262419957,
+          "finishedAt": 1794262456094
+        },
+        "summary": "Created and verified [alpha.mjs](/workspace/alpha.mjs) and [beta.mjs](/workspace/beta.mjs) using exactly two concurrent workers, each waiting 10 seconds in Node.js before editing.\n\nBoth exports returned the expected results. The probe echoed nonce `ff465c2561784f6e436fffc8ad765192` successfully. Tests and `verify.mjs` were untouched; no commits or pushes were made.",
+        "sourceUnchanged": false,
+        "provider": "codex",
+        "sessionId": "01a1c25f-cbc2-7810-9061-cc11a2e9665a",
+        "usage": {
+          "input_tokens": 101897,
+          "cached_input_tokens": 96000,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 619,
+          "reasoning_output_tokens": 0
+        },
+        "subagentReceipts": [
+          {
+            "id": "01a1c25f-cbc2-7810-9061-cc11a2e9665a",
+            "source": "exec",
+            "forkedFromId": null,
+            "lifecycle": [
+              {
+                "type": "task_started",
+                "timestamp": "2026-11-09T22:13:41.420Z",
+                "turnId": "01a1c25f-cfa8-7d72-93c9-688d9801cff5"
+              },
+              {
+                "type": "task_complete",
+                "timestamp": "2026-11-09T22:14:15.833Z",
+                "turnId": "01a1c25f-cfa8-7d72-93c9-688d9801cff5"
+              }
+            ],
+            "calls": [
+              {
+                "name": "spawn_agent",
+                "callId": "call_98cc2d7f95cb434ea5226c8917dad3b2",
+                "timestamp": "2026-11-09T22:13:46.767Z"
+              },
+              {
+                "name": "spawn_agent",
+                "callId": "call_7ec08f16e23f4ec3be9e34f97c9a7fe8",
+                "timestamp": "2026-11-09T22:13:49.973Z"
+              },
+              {
+                "name": "exec",
+                "callId": "call_26cd0013533d463ea72f3827ad72cb1a",
+                "timestamp": "2026-11-09T22:13:51.755Z"
+              },
+              {
+                "name": "wait_agent",
+                "callId": "call_f429f1367f3a420e8613562b87962072",
+                "timestamp": "2026-11-09T22:13:52.999Z"
+              },
+              {
+                "name": "wait_agent",
+                "callId": "call_639026ed9dc84ffdbcb46445d824e1f5",
+                "timestamp": "2026-11-09T22:14:04.687Z"
+              },
+              {
+                "name": "exec",
+                "callId": "call_bec5052928144573a43d8b6bdc0f50a1",
+                "timestamp": "2026-11-09T22:14:12.598Z"
+              }
+            ],
+            "spawnReturns": [],
+            "malformedRows": 0,
+            "rolloutFile": "rollout-2026-11-09T22-13-40-01a1c25f-cbc2-7810-9061-cc11a2e9665a.jsonl",
+            "storageThreadId": "01a1c25f-cbc2-7810-9061-cc11a2e9665a",
+            "storageSource": "exec"
+          },
+          {
+            "id": "01a1c25f-cbc2-7810-9061-cc11a2e9665a",
+            "source": "exec",
+            "forkedFromId": null,
+            "lifecycle": [
+              {
+                "type": "task_started",
+                "timestamp": "2026-11-09T22:13:46.771Z",
+                "turnId": "01a1c25f-cfa8-7d72-93c9-688d9801cff5"
+              },
+              {
+                "type": "turn_aborted",
+                "timestamp": "2026-11-09T22:13:46.772Z",
+                "turnId": "01a1c25f-cfa8-7d72-93c9-688d9801cff5"
+              },
+              {
+                "type": "task_started",
+                "timestamp": "2026-11-09T22:13:46.946Z",
+                "turnId": "01a1c25f-e541-7e43-97b8-f4b63efd8d61"
+              },
+              {
+                "type": "task_complete",
+                "timestamp": "2026-11-09T22:14:02.769Z",
+                "turnId": "01a1c25f-e541-7e43-97b8-f4b63efd8d61"
+              }
+            ],
+            "calls": [
+              {
+                "name": "spawn_agent",
+                "callId": "call_98cc2d7f95cb434ea5226c8917dad3b2",
+                "timestamp": "2026-11-09T22:13:46.772Z"
+              },
+              {
+                "name": "exec",
+                "callId": "call_883641a7ccaf4c04a05ae92f77d95e2d",
+                "timestamp": "2026-11-09T22:13:50.628Z"
+              },
+              {
+                "name": "exec",
+                "callId": "call_c6d3dd5aed4743809ecefd1071a5020c",
+                "timestamp": "2026-11-09T22:13:53.598Z"
+              }
+            ],
+            "spawnReturns": [],
+            "malformedRows": 0,
+            "rolloutFile": "rollout-2026-11-09T22-13-46-01a1c25f-e492-7291-af08-76b82077ccda.jsonl",
+            "storageThreadId": "01a1c25f-e492-7291-af08-76b82077ccda",
+            "storageSource": {
+              "subagent": {
+                "thread_spawn": {
+                  "parent_thread_id": "01a1c25f-cbc2-7810-9061-cc11a2e9665a",
+                  "depth": 1,
+                  "agent_path": "/root/alpha",
+                  "agent_nickname": "Chandrasekhar",
+                  "agent_role": null
+                }
+              }
+            }
+          },
+          {
+            "id": "01a1c25f-cbc2-7810-9061-cc11a2e9665a",
+            "source": "exec",
+            "forkedFromId": null,
+            "lifecycle": [
+              {
+                "type": "task_started",
+                "timestamp": "2026-11-09T22:13:49.977Z",
+                "turnId": "01a1c25f-cfa8-7d72-93c9-688d9801cff5"
+              },
+              {
+                "type": "turn_aborted",
+                "timestamp": "2026-11-09T22:13:49.977Z",
+                "turnId": "01a1c25f-cfa8-7d72-93c9-688d9801cff5"
+              },
+              {
+                "type": "task_started",
+                "timestamp": "2026-11-09T22:13:50.150Z",
+                "turnId": "01a1c25f-f1c4-7e83-a2a9-732924301e86"
+              },
+              {
+                "type": "task_complete",
+                "timestamp": "2026-11-09T22:14:07.089Z",
+                "turnId": "01a1c25f-f1c4-7e83-a2a9-732924301e86"
+              }
+            ],
+            "calls": [
+              {
+                "name": "spawn_agent",
+                "callId": "call_98cc2d7f95cb434ea5226c8917dad3b2",
+                "timestamp": "2026-11-09T22:13:49.977Z"
+              },
+              {
+                "name": "spawn_agent",
+                "callId": "call_7ec08f16e23f4ec3be9e34f97c9a7fe8",
+                "timestamp": "2026-11-09T22:13:49.977Z"
+              },
+              {
+                "name": "exec",
+                "callId": "call_0066285b2e6c4e808dc3dced7d0dc685",
+                "timestamp": "2026-11-09T22:13:54.769Z"
+              },
+              {
+                "name": "exec",
+                "callId": "call_8678dfa6d3404bc8bff4a1548a94ef38",
+                "timestamp": "2026-11-09T22:13:57.796Z"
+              }
+            ],
+            "spawnReturns": [],
+            "malformedRows": 0,
+            "rolloutFile": "rollout-2026-11-09T22-13-49-01a1c25f-f119-7440-8cdf-4a456bd44139.jsonl",
+            "storageThreadId": "01a1c25f-f119-7440-8cdf-4a456bd44139",
+            "storageSource": {
+              "subagent": {
+                "thread_spawn": {
+                  "parent_thread_id": "01a1c25f-cbc2-7810-9061-cc11a2e9665a",
+                  "depth": 1,
+                  "agent_path": "/root/beta",
+                  "agent_nickname": "Copernicus",
+                  "agent_role": null
+                }
+              }
+            }
+          }
+        ],
+        "mcpReceipts": [
+          {
+            "callId": "item_3",
+            "nonce": "ff465c2561784f6e436fffc8ad765192",
+            "marker": "hivemind-phase0-mcp-v1"
+          }
+        ],
+        "sandboxPolicy": "codex-workspace",
+        "boundary": {
+          "platform": "linux",
+          "checkedAt": "2026-11-09T22:13:39.948Z",
+          "capabilities": {
+            "CapInh": "0000000000000000",
+            "CapPrm": "0000000000000000",
+            "CapEff": "0000000000000000",
+            "CapBnd": "0000000000000000",
+            "CapAmb": "0000000000000000"
+          },
+          "noNewPrivs": 1,
+          "verified": true
+        }
+      },
+      "checks": [
+        {
+          "job": {
+            "id": "090cec43-2e74-472d-9e67-efa59ae3375f",
+            "attempt": "43699773-26e0-41bd-9f5f-050bf2675f00",
+            "kind": "compute",
+            "parentId": "ea9b2ea5-91ec-455c-883f-6586d087fae6",
+            "checkId": "unit-a",
+            "snapshotId": "0dca148abac6339d4f31d19b969c02f32f9acb28990c33f1a27f284b9d8b37d2",
+            "argv": [
+              "node",
+              "verify.mjs"
+            ],
+            "checks": [],
+            "childIds": [],
+            "status": "SUCCEEDED",
+            "createdAt": 1794262458424,
+            "deadline": 1794262520469,
+            "timeoutMs": 60000,
+            "containerStopped": true,
+            "authSynced": true,
+            "startedAt": 1794262460469,
+            "finishedAt": 1794262482772,
+            "resultKey": "results/090cec43-2e74-472d-9e67-efa59ae3375f/43699773-26e0-41bd-9f5f-050bf2675f00.json"
+          },
+          "result": {
+            "version": 1,
+            "jobId": "090cec43-2e74-472d-9e67-efa59ae3375f",
+            "attempt": "43699773-26e0-41bd-9f5f-050bf2675f00",
+            "inputSnapshotId": "0dca148abac6339d4f31d19b969c02f32f9acb28990c33f1a27f284b9d8b37d2",
+            "process": {
+              "status": "passed",
+              "exitCode": 0,
+              "stdout": "\u2714 sum (0.593401ms)\n\u2714 product (0.143691ms)\n\u2139 tests 2\n\u2139 suites 0\n\u2139 pass 2\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 64.032938\n",
+              "stderr": "",
+              "durationMs": 10520,
+              "truncated": false,
+              "startedAt": 1794262469261,
+              "finishedAt": 1794262479781
+            },
+            "summary": "Configured verification finished.",
+            "sourceUnchanged": true,
+            "credentialsAbsent": true,
+            "sandboxPolicy": "compute-workspace",
+            "boundary": {
+              "platform": "linux",
+              "checkedAt": "2026-11-09T22:14:29.253Z",
+              "capabilities": {
+                "CapInh": "0000000000000000",
+                "CapPrm": "0000000000000000",
+                "CapEff": "0000000000000000",
+                "CapBnd": "0000000000000000",
+                "CapAmb": "0000000000000000"
+              },
+              "noNewPrivs": 1,
+              "verified": true
+            }
+          }
+        },
+        {
+          "job": {
+            "id": "3fcbd31e-39c3-4e72-9a86-0eaa1bb71d07",
+            "attempt": "31110455-bb4b-4869-b33f-fdec4603944f",
+            "kind": "compute",
+            "parentId": "ea9b2ea5-91ec-455c-883f-6586d087fae6",
+            "checkId": "unit-b",
+            "snapshotId": "0dca148abac6339d4f31d19b969c02f32f9acb28990c33f1a27f284b9d8b37d2",
+            "argv": [
+              "node",
+              "verify.mjs"
+            ],
+            "checks": [],
+            "childIds": [],
+            "status": "SUCCEEDED",
+            "createdAt": 1794262458424,
+            "deadline": 1794262520469,
+            "timeoutMs": 60000,
+            "containerStopped": true,
+            "authSynced": true,
+            "startedAt": 1794262460469,
+            "finishedAt": 1794262481578,
+            "resultKey": "results/3fcbd31e-39c3-4e72-9a86-0eaa1bb71d07/31110455-bb4b-4869-b33f-fdec4603944f.json"
+          },
+          "result": {
+            "version": 1,
+            "jobId": "3fcbd31e-39c3-4e72-9a86-0eaa1bb71d07",
+            "attempt": "31110455-bb4b-4869-b33f-fdec4603944f",
+            "inputSnapshotId": "0dca148abac6339d4f31d19b969c02f32f9acb28990c33f1a27f284b9d8b37d2",
+            "process": {
+              "status": "passed",
+              "exitCode": 0,
+              "stdout": "\u2714 sum (0.60701ms)\n\u2714 product (0.14135ms)\n\u2139 tests 2\n\u2139 suites 0\n\u2139 pass 2\n\u2139 fail 0\n\u2139 cancelled 0\n\u2139 skipped 0\n\u2139 todo 0\n\u2139 duration_ms 66.903057\n",
+              "stderr": "",
+              "durationMs": 10637,
+              "truncated": false,
+              "startedAt": 1794262468986,
+              "finishedAt": 1794262479623
+            },
+            "summary": "Configured verification finished.",
+            "sourceUnchanged": true,
+            "credentialsAbsent": true,
+            "sandboxPolicy": "compute-workspace",
+            "boundary": {
+              "platform": "linux",
+              "checkedAt": "2026-11-09T22:14:28.975Z",
+              "capabilities": {
+                "CapInh": "0000000000000000",
+                "CapPrm": "0000000000000000",
+                "CapEff": "0000000000000000",
+                "CapBnd": "0000000000000000",
+                "CapAmb": "0000000000000000"
+              },
+              "noNewPrivs": 1,
+              "verified": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "job": {
+        "id": "44e20fb0-b04c-4d22-bc64-b12c8bf59538",
+        "attempt": "cf4fdbfd-8679-4a25-816c-55d795bfa866",
+        "kind": "agent",
+        "provider": "claude",
+        "credentialId": "claude-remote",
+        "snapshotId": "4f9b3c79585acc1addb89b6f1c2713fc58775cd0bca89486b4423458d9a8d0d3",
+        "status": "FAILED",
+        "instructions": "Remote acceptance fixture ff465c2561784f6e436fffc8ad765192. Use exactly two official native worker subagents concurrently, assigning alpha.mjs to one and beta.mjs to the other. Each must wait 10 seconds with Node.js before editing. First exports add(a,b) returning a+b; second exports multiply(a,b) returning a*b. Launch both before waiting for either. Do not edit the tests or verify.mjs. After both return, call the phase0_probe MCP tool with nonce ff465c2561784f6e436fffc8ad765192. Verify actual files and report truthfully. Use Bash and Node.js for Claude edits. Do not inspect private paths or auth. Do not commit or push.",
+        "checks": [
+          {
+            "id": "unit-a",
+            "argv": [
+              "node",
+              "verify.mjs"
+            ],
+            "timeoutMs": 60000
+          },
+          {
+            "id": "unit-b",
+            "argv": [
+              "node",
+              "verify.mjs"
+            ],
+            "timeoutMs": 60000
+          }
+        ],
+        "childIds": [],
+        "createdAt": 1794262382315,
+        "deadline": 1794262744642,
+        "timeoutMs": 360000,
+        "containerStopped": true,
+        "authSynced": true,
+        "credentialGeneration": 0,
+        "startedAt": 1794262384642,
+        "outputSnapshotId": "541182c666d58c20cfe1bee78542936d1182852828018047abef5df4f610f127",
+        "resultKey": "results/44e20fb0-b04c-4d22-bc64-b12c8bf59538/cf4fdbfd-8679-4a25-816c-55d795bfa866.json",
+        "errorCode": "AGENT_FAILED",
+        "finishedAt": 1794262466216
+      },
+      "input": {
+        "version": 1,
+        "digest": "4f9b3c79585acc1addb89b6f1c2713fc58775cd0bca89486b4423458d9a8d0d3",
+        "files": [
+          {
+            "path": "alpha.mjs",
+            "content": "ZXhwb3J0IGNvbnN0IGFkZCA9ICgpID0+IDA7Cg==",
+            "sha256": "38ab21f0e439150e70feed0751ce5c829a4798e2200282f3183f1fed070ccf9d",
+            "executable": false
+          },
+          {
+            "path": "beta.mjs",
+            "content": "ZXhwb3J0IGNvbnN0IG11bHRpcGx5ID0gKCkgPT4gMDsK",
+            "sha256": "4272902e96cbfc9c052f70f06046ebef87c885a99ac41cf541a8af8142718f74",
+            "executable": false
+          },
+          {
+            "path": "math.test.mjs",
+            "content": "aW1wb3J0IHt0ZXN0fSBmcm9tICdub2RlOnRlc3QnO2ltcG9ydCBhc3NlcnQgZnJvbSAnbm9kZTphc3NlcnQvc3RyaWN0JztpbXBvcnQge2FkZH0gZnJvbSAnLi9hbHBoYS5tanMnO2ltcG9ydCB7bXVsdGlwbHl9IGZyb20gJy4vYmV0YS5tanMnO3Rlc3QoJ3N1bScsKCk9PmFzc2VydC5lcXVhbChhZGQoMiwzKSw1KSk7dGVzdCgncHJvZHVjdCcsKCk9PmFzc2VydC5lcXVhbChtdWx0aXBseSgzLDQpLDEyKSk7Cg==",
+            "sha256": "38a99e3970bf53213b6ebd6be750b117f23a6c1f2dbd0f68c6909c8a4422d684",
+            "executable": false
+          },
+          {
+            "path": "verify.mjs",
+            "content": "aW1wb3J0IHtzcGF3blN5bmN9IGZyb20gJ25vZGU6Y2hpbGRfcHJvY2Vzcyc7YXdhaXQgbmV3IFByb21pc2Uocj0+c2V0VGltZW91dChyLDEwMDAwKSk7Y29uc3Qgcj1zcGF3blN5bmMocHJvY2Vzcy5leGVjUGF0aCxbJy0tdGVzdCcsJ21hdGgudGVzdC5tanMnXSx7c3RkaW86J2luaGVyaXQnfSk7cHJvY2Vzcy5leGl0KHIuc3RhdHVzPz8xKTsK",
+            "sha256": "0c8862aa10385ae8f11db09718045b7ac9770ba4451eac223c4d97248a760f58",
+            "executable": false
+          }
+        ]
+      },
+      "output": {
+        "version": 1,
+        "digest": "541182c666d58c20cfe1bee78542936d1182852828018047abef5df4f610f127",
+        "files": [
+          {
+            "path": "alpha.mjs",
+            "content": "ZXhwb3J0IGZ1bmN0aW9uIGFkZChhLCBiKSB7IHJldHVybiBhICsgYjsgfQo=",
+            "sha256": "76f26bd292166033d02e77bdb8fe6aec01e915ccb8cb3f93b8971f9dcd78250e",
+            "executable": false
+          },
+          {
+            "path": "beta.mjs",
+            "content": "ZXhwb3J0IGZ1bmN0aW9uIG11bHRpcGx5KGEsIGIpIHsgcmV0dXJuIGEgKiBiOyB9Cg==",
+            "sha256": "46332e76741c5aef3480e0efbcb469fc6d51bc7d6065ba8a5e18cb16dd258853",
+            "executable": false
+          },
+          {
+            "path": "math.test.mjs",
+            "content": "aW1wb3J0IHt0ZXN0fSBmcm9tICdub2RlOnRlc3QnO2ltcG9ydCBhc3NlcnQgZnJvbSAnbm9kZTphc3NlcnQvc3RyaWN0JztpbXBvcnQge2FkZH0gZnJvbSAnLi9hbHBoYS5tanMnO2ltcG9ydCB7bXVsdGlwbHl9IGZyb20gJy4vYmV0YS5tanMnO3Rlc3QoJ3N1bScsKCk9PmFzc2VydC5lcXVhbChhZGQoMiwzKSw1KSk7dGVzdCgncHJvZHVjdCcsKCk9PmFzc2VydC5lcXVhbChtdWx0aXBseSgzLDQpLDEyKSk7Cg==",
+            "sha256": "38a99e3970bf53213b6ebd6be750b117f23a6c1f2dbd0f68c6909c8a4422d684",
+            "executable": false
+          },
+          {
+            "path": "verify.mjs",
+            "content": "aW1wb3J0IHtzcGF3blN5bmN9IGZyb20gJ25vZGU6Y2hpbGRfcHJvY2Vzcyc7YXdhaXQgbmV3IFByb21pc2Uocj0+c2V0VGltZW91dChyLDEwMDAwKSk7Y29uc3Qgcj1zcGF3blN5bmMocHJvY2Vzcy5leGVjUGF0aCxbJy0tdGVzdCcsJ21hdGgudGVzdC5tanMnXSx7c3RkaW86J2luaGVyaXQnfSk7cHJvY2Vzcy5leGl0KHIuc3RhdHVzPz8xKTsK",
+            "sha256": "0c8862aa10385ae8f11db09718045b7ac9770ba4451eac223c4d97248a760f58",
+            "executable": false
+          }
+        ]
+      },
+      "result": {
+        "version": 1,
+        "jobId": "44e20fb0-b04c-4d22-bc64-b12c8bf59538",
+        "attempt": "cf4fdbfd-8679-4a25-816c-55d795bfa866",
+        "inputSnapshotId": "4f9b3c79585acc1addb89b6f1c2713fc58775cd0bca89486b4423458d9a8d0d3",
+        "outputSnapshotId": "541182c666d58c20cfe1bee78542936d1182852828018047abef5df4f610f127",
+        "process": {
+          "status": "error",
+          "exitCode": 0,
+          "stdout": "Both files are written and work. Two worker subagents ran concurrently, one per file, and each waited 10 seconds with Node.js before editing.\n\n- **`alpha.mjs`:** exports `add(a, b)` returning `a + b`.\n- **`beta.mjs`:** exports `multiply(a, b) `returning `a * b`.\n- **Check:** I read both files back and imported them. `add(2,3)` gave 5 and `multiply(2,3)` gave 6.\n- **Probe:** `phase0_probe` returned the same nonce, `ff465c2561784f6e436fffc8ad765192`, with marker `hivemind-phase0-mcp-v1`.\n\nI didn't run `verify.mjs` or the tests, and I didn't edit them. I made no Git changes.",
+          "stderr": "",
+          "durationMs": 42396,
+          "truncated": false,
+          "startedAt": 1794262420645,
+          "finishedAt": 1794262463041
+        },
+        "summary": "Both files are written and work. Two worker subagents ran concurrently, one per file, and each waited 10 seconds with Node.js before editing.\n\n- **`alpha.mjs`:** exports `add(a, b)` returning `a + b`.\n- **`beta.mjs`:** exports `multiply(a, b) `returning `a * b`.\n- **Check:** I read both files back and imported them. `add(2,3)` gave 5 and `multiply(2,3)` gave 6.\n- **Probe:** `phase0_probe` returned the same nonce, `ff465c2561784f6e436fffc8ad765192`, with marker `hivemind-phase0-mcp-v1`.\n\nI didn't run `verify.mjs` or the tests, and I didn't edit them. I made no Git changes.",
+        "sourceUnchanged": false,
+        "provider": "claude",
+        "sessionId": "0af139d8-a136-4bfa-99ea-da2a9135cb80",
+        "usage": {
+          "input_tokens": 6,
+          "cache_creation_input_tokens": 930,
+          "cache_read_input_tokens": 20548,
+          "output_tokens": 464
+        },
+        "subagentReceipts": [
+          {
+            "event": "SubagentStart",
+            "sessionId": "0af139d8-a136-4bfa-99ea-da2a9135cb80",
+            "agentId": "a5f7ee0f380e0eb45",
+            "agentType": "worker",
+            "timestamp": "2026-11-09T22:13:47.609Z"
+          },
+          {
+            "event": "SubagentStart",
+            "sessionId": "0af139d8-a136-4bfa-99ea-da2a9135cb80",
+            "agentId": "a8368be8e0bf47c6a",
+            "agentType": "worker",
+            "timestamp": "2026-11-09T22:13:48.736Z"
+          },
+          {
+            "event": "SubagentStop",
+            "sessionId": "0af139d8-a136-4bfa-99ea-da2a9135cb80",
+            "agentId": "a5f7ee0f380e0eb45",
+            "agentType": "worker",
+            "timestamp": "2026-11-09T22:14:06.971Z"
+          },
+          {
+            "event": "SubagentStop",
+            "sessionId": "0af139d8-a136-4bfa-99ea-da2a9135cb80",
+            "agentId": "a8368be8e0bf47c6a",
+            "agentType": "worker",
+            "timestamp": "2026-11-09T22:14:09.081Z"
+          }
+        ],
+        "mcpReceipts": [
+          {
+            "callId": "toolu_01LzRkrAXhRi5wyWn8N3XVTY",
+            "nonce": "ff465c2561784f6e436fffc8ad765192",
+            "marker": "hivemind-phase0-mcp-v1"
+          }
+        ],
+        "sandboxReceipts": [
+          {
+            "sessionId": "0af139d8-a136-4bfa-99ea-da2a9135cb80",
+            "agentId": "a5f7ee0f380e0eb45",
+            "toolUseId": "toolu_01V8ZkdpNH977VgLwNWSJqvQ",
+            "commandHash": "da36da2651868a9b7b311d6d34b540aa384dbcf53603a634043d51cc339d91ed",
+            "timestamp": "2026-11-09T22:13:49.573Z"
+          },
+          {
+            "sessionId": "0af139d8-a136-4bfa-99ea-da2a9135cb80",
+            "agentId": "a8368be8e0bf47c6a",
+            "toolUseId": "toolu_01NDS898B5dPkaXrkHTrUtx8",
+            "commandHash": "da36da2651868a9b7b311d6d34b540aa384dbcf53603a634043d51cc339d91ed",
+            "timestamp": "2026-11-09T22:13:51.975Z"
+          },
+          {
+            "sessionId": "0af139d8-a136-4bfa-99ea-da2a9135cb80",
+            "agentId": "a5f7ee0f380e0eb45",
+            "toolUseId": "toolu_01N9rsat5jCMfTZ5rqgFoHeN",
+            "commandHash": "7ac4663c51e284fa0fc272e2a68a4d0205b5cf44d8a9ae42f6e20babcdd87a37",
+            "timestamp": "2026-11-09T22:14:05.260Z"
+          },
+          {
+            "sessionId": "0af139d8-a136-4bfa-99ea-da2a9135cb80",
+            "agentId": "a8368be8e0bf47c6a",
+            "toolUseId": "toolu_01CGA63CvkjHB1PhaywZgywL",
+            "commandHash": "df3e05ce7340cd14a88a5b88e6e240851ae292598d96af9de768035f85dbd5e7",
+            "timestamp": "2026-11-09T22:14:06.392Z"
+          },
+          {
+            "sessionId": "0af139d8-a136-4bfa-99ea-da2a9135cb80",
+            "agentId": null,
+            "toolUseId": "toolu_012ngF9pQGY8Bb4NbyePAXiv",
+            "commandHash": "f81d1ee98ab950828077f47327d50ffb4f87465e6ccc9d37a60b65c5a0edcb5d",
+            "timestamp": "2026-11-09T22:14:12.544Z"
+          }
+        ],
+        "sandboxPolicy": "claude-nested-compatible",
+        "boundary": {
+          "platform": "linux",
+          "checkedAt": "2026-11-09T22:13:40.630Z",
+          "capabilities": {
+            "CapInh": "0000000000000000",
+            "CapPrm": "0000000000000000",
+            "CapEff": "0000000000000000",
+            "CapBnd": "0000000000000000",
+            "CapAmb": "0000000000000000"
+          },
+          "noNewPrivs": 1,
+          "verified": true
+        }
+      },
+      "checks": []
+    }
+  ]
+}

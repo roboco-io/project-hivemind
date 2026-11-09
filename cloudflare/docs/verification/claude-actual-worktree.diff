@@ -1,0 +1,14 @@
+diff --git a/verification-fixture/alpha.mjs b/verification-fixture/alpha.mjs
+index 929acac..d0f87bf 100644
+--- a/verification-fixture/alpha.mjs
++++ b/verification-fixture/alpha.mjs
+@@ -1 +1 @@
+-export const add = () => 0;
++export const add = (a, b) => a + b;
+diff --git a/verification-fixture/beta.mjs b/verification-fixture/beta.mjs
+index 15129f3..857b943 100644
+--- a/verification-fixture/beta.mjs
++++ b/verification-fixture/beta.mjs
+@@ -1 +1 @@
+-export const multiply = () => 0;
++export const multiply = (a, b) => a * b;

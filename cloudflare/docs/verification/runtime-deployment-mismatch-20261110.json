@@ -1,0 +1,19 @@
+{
+  "platform": "cloudflare-remote",
+  "observedAt": "2026-11-09T22:39:06Z",
+  "controlPlane": {
+    "activeVersion": "44410716-0e23-4294-bb78-dc0c01d56a3e",
+    "percentage": 100,
+    "imageDigest": "sha256:4d6ffa675e762ffd69686e694f08c97b74ef78b74afb937058325dcded1867fc",
+    "sameWorkerScriptEtagAsPrevious": true
+  },
+  "runtimeObservation": {
+    "healthReportedVersion": "6dc95be6-d48f-48c7-b08f-2fb52c352d8e",
+    "cacheControl": "no-store",
+    "cacheBusted": true,
+    "jobId": "fa683d01-4585-4d9a-9bdb-444e666a6f02",
+    "parserEvidence": "CLAUDE_RESULT_COUNT only with three results; new code would require scope or receipt diagnostics for this rejection"
+  },
+  "cause": "Identical Worker script reuse is a hypothesis; platform internals not established.",
+  "decision": "Share a deterministic source/build-input revision between Worker and runtime; verify it before authentication delivery and pin it per attempt."
+}

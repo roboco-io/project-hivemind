@@ -11,14 +11,16 @@
 사람은 작업 과정, 승인, 비용과 Git 변경 제안을 한곳에서 확인한다.
 HIVEMIND는 임시 개발 코드명이다. 공개 제품명은 아직 정하지 않았다.
 소스와 문서는 [Apache License 2.0](LICENSE)으로 제공한다.
+별도 라이선스가 표시된 서드파티 코드는 해당 [고지](cloudflare/backend/native/BUBBLEWRAP-NOTICE.md)를 따른다.
 
 현재는 **단일 운영자용 로컬 개발 실행**을 지원한다.
 모의 워커, 실제 Codex 워커와 Claude Code 워커를 선택할 수 있다.
 두 실제 워커는 지정한 저장소의 고정 커밋으로 Git worktree를 만들고,
 실제 diff와 테스트 결과를 관제실에 보고한다.
 
-Cloudflare 실행 백엔드는 [cloudflare/](cloudflare/README.md)의 별도 패키지로 구현한다.
+Cloudflare 실행 백엔드는 [cloudflare/](cloudflare/README.md)의 별도 패키지로 배포했다.
 공식 구독 인증, 작업별 컨테이너, 불변 snapshot과 별도 테스트 컨테이너를 사용한다.
+실제 Codex·Claude 동시 실행, 제공자별 두 검증 컨테이너와 결과의 Git worktree 적용을 확인했다.
 관제실의 현재 실행 화면은 로컬 실행을 표시한다. 원격 결과는 별도 클라이언트에서 조회·검토한다.
 [Cloudflare 사용법](cloudflare/backend/README.md)과 [원격 검증 기록](cloudflare/docs/verification/2026-11-10-cloudflare.md)을 참조한다.
 

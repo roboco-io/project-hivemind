@@ -1,0 +1,1377 @@
+{
+  "platform": "cloudflare-remote",
+  "recordedAt": "2026-11-09T22:07:47+00:00",
+  "url": "https://hivemind-boundary-check.roboco.workers.dev/phase0/claude-concurrency",
+  "requestRay": "a58021848dfa3e86-ICN",
+  "diagnostics": {
+    "scope": "cloudflare-no-auth-claude-managed-bash-concurrency",
+    "authProvided": false,
+    "modelCalled": false,
+    "uid": 1000,
+    "noNewPrivileges": "1",
+    "capabilities": {
+      "CapInh": "0000000000000000",
+      "CapPrm": "0000000000000000",
+      "CapEff": "0000000000000000",
+      "CapBnd": "0000000000000000",
+      "CapAmb": "0000000000000000"
+    },
+    "guardPath": "/opt/hivemind/backend/src/runtime/claude-command-guard.ts",
+    "guardHome": "/home/node/.codex-guard",
+    "phaseOrder": [
+      "parallel",
+      "serial"
+    ],
+    "stdioMode": "stdin-ignore/stdout-pipe/stderr-pipe",
+    "parentCwd": "/workspace",
+    "guardTraceEnabled": true,
+    "initialGuardCacheEntries": 0,
+    "configuredOuterSettings": {
+      "filesystem": {
+        "denyRead": [
+          "/proc",
+          "/runtime",
+          "/home/node/.hivemind-phase0",
+          "/home/node/.claude",
+          "/home/node/.claude.json"
+        ],
+        "denyWrite": [
+          "/runtime",
+          "/home/node/.hivemind-phase0"
+        ],
+        "allowWrite": [
+          "/workspace",
+          "/home/node/.codex-guard",
+          "/tmp"
+        ]
+      },
+      "network": {
+        "allowedDomains": [],
+        "deniedDomains": []
+      },
+      "enableWeakerNestedSandbox": true,
+      "allowNestedUserNamespaces": true,
+      "credentials": {
+        "envVars": [
+          {
+            "name": "CLAUDE_CODE_OAUTH_TOKEN",
+            "mode": "deny"
+          }
+        ]
+      }
+    },
+    "proxyEnvironmentPresent": {
+      "HTTP_PROXY": false,
+      "HTTPS_PROXY": false,
+      "ALL_PROXY": false,
+      "NO_PROXY": false
+    },
+    "parallel": [
+      {
+        "label": "alpha",
+        "commandHash": "0937395ed266dfe6f5f00819a23d97a6dae326f15e5d970259f7508945141c0a",
+        "startedAt": 1794262060535,
+        "finishedAt": 1794262062663,
+        "durationMs": 2128,
+        "exitCode": 0,
+        "timedOut": false,
+        "captureLimit": false,
+        "stdoutBytes": 61,
+        "stderrBytes": 18,
+        "stdout": "BASH_ENTER alpha\nNODE_ENTER alpha\nNODE_DONE alpha\nALPHA_DONE\n",
+        "stderr": "NODE_STDERR alpha\n",
+        "receipt": {
+          "label": "alpha",
+          "stage": "complete",
+          "startedAt": 1794262061628,
+          "uid": 1000,
+          "cwd": "/workspace",
+          "namespaceGuardApplied": true,
+          "environmentClean": true,
+          "stdio": {
+            "stdin": {
+              "regularFile": false,
+              "pipe": false,
+              "socket": false,
+              "character": true
+            },
+            "stdout": {
+              "regularFile": false,
+              "pipe": false,
+              "socket": true,
+              "character": false
+            },
+            "stderr": {
+              "regularFile": false,
+              "pipe": false,
+              "socket": true,
+              "character": false
+            }
+          },
+          "stdinIsTTY": false,
+          "finishedAt": 1794262062634
+        },
+        "outputMatches": true,
+        "timeline": [
+          {
+            "observedAt": "2026-11-09T22:07:41.595Z",
+            "line": "BASH_ENTER alpha"
+          },
+          {
+            "observedAt": "2026-11-09T22:07:41.634Z",
+            "line": "NODE_ENTER alpha"
+          },
+          {
+            "observedAt": "2026-11-09T22:07:42.636Z",
+            "line": "NODE_DONE alpha"
+          },
+          {
+            "observedAt": "2026-11-09T22:07:42.640Z",
+            "line": "ALPHA_DONE"
+          }
+        ]
+      },
+      {
+        "label": "beta",
+        "commandHash": "1b531c6c4d7249be1643fe91c12160d02c34ce00ad9ed284219aaba468ee5dcd",
+        "startedAt": 1794262060541,
+        "finishedAt": 1794262062662,
+        "durationMs": 2121,
+        "exitCode": 0,
+        "timedOut": false,
+        "captureLimit": false,
+        "stdoutBytes": 57,
+        "stderrBytes": 17,
+        "stdout": "BASH_ENTER beta\nNODE_ENTER beta\nNODE_DONE beta\nBETA_DONE\n",
+        "stderr": "NODE_STDERR beta\n",
+        "receipt": {
+          "label": "beta",
+          "stage": "complete",
+          "startedAt": 1794262061624,
+          "uid": 1000,
+          "cwd": "/workspace",
+          "namespaceGuardApplied": true,
+          "environmentClean": true,
+          "stdio": {
+            "stdin": {
+              "regularFile": false,
+              "pipe": false,
+              "socket": false,
+              "character": true
+            },
+            "stdout": {
+              "regularFile": false,
+              "pipe": false,
+              "socket": true,
+              "character": false
+            },
+            "stderr": {
+              "regularFile": false,
+              "pipe": false,
+              "socket": true,
+              "character": false
+            }
+          },
+          "stdinIsTTY": false,
+          "finishedAt": 1794262062636
+        },
+        "outputMatches": true,
+        "timeline": [
+          {
+            "observedAt": "2026-11-09T22:07:41.593Z",
+            "line": "BASH_ENTER beta"
+          },
+          {
+            "observedAt": "2026-11-09T22:07:41.634Z",
+            "line": "NODE_ENTER beta"
+          },
+          {
+            "observedAt": "2026-11-09T22:07:42.637Z",
+            "line": "NODE_DONE beta"
+          },
+          {
+            "observedAt": "2026-11-09T22:07:42.642Z",
+            "line": "BETA_DONE"
+          }
+        ]
+      }
+    ],
+    "serial": {
+      "label": "serial",
+      "commandHash": "89bb0548076a315fc8de5a63cd99cfe46baf84869d9b427caa5cff7ffd981a09",
+      "startedAt": 1794262062665,
+      "finishedAt": 1794262064078,
+      "durationMs": 1413,
+      "exitCode": 0,
+      "timedOut": false,
+      "captureLimit": false,
+      "stdoutBytes": 65,
+      "stderrBytes": 19,
+      "stdout": "BASH_ENTER serial\nNODE_ENTER serial\nNODE_DONE serial\nSERIAL_DONE\n",
+      "stderr": "NODE_STDERR serial\n",
+      "receipt": {
+        "label": "serial",
+        "stage": "complete",
+        "startedAt": 1794262063062,
+        "uid": 1000,
+        "cwd": "/workspace",
+        "namespaceGuardApplied": true,
+        "environmentClean": true,
+        "stdio": {
+          "stdin": {
+            "regularFile": false,
+            "pipe": false,
+            "socket": false,
+            "character": true
+          },
+          "stdout": {
+            "regularFile": false,
+            "pipe": false,
+            "socket": true,
+            "character": false
+          },
+          "stderr": {
+            "regularFile": false,
+            "pipe": false,
+            "socket": true,
+            "character": false
+          }
+        },
+        "stdinIsTTY": false,
+        "finishedAt": 1794262064066
+      },
+      "outputMatches": true,
+      "timeline": [
+        {
+          "observedAt": "2026-11-09T22:07:43.049Z",
+          "line": "BASH_ENTER serial"
+        },
+        {
+          "observedAt": "2026-11-09T22:07:43.064Z",
+          "line": "NODE_ENTER serial"
+        },
+        {
+          "observedAt": "2026-11-09T22:07:44.067Z",
+          "line": "NODE_DONE serial"
+        },
+        {
+          "observedAt": "2026-11-09T22:07:44.070Z",
+          "line": "SERIAL_DONE"
+        }
+      ]
+    },
+    "serialInFlight": {
+      "sampled": false,
+      "reason": "serial-finished-before-2000ms"
+    },
+    "nestedBwrapCause": {
+      "startedAt": 1794262064397,
+      "warmup": {
+        "attempts": 64,
+        "lastWarmupPid": 72,
+        "predictedBwrapPid": 73,
+        "predictedChildPid": 74,
+        "selectedMissingTarget": true,
+        "durationMs": 38
+      },
+      "runnerPid": 2,
+      "bwrapPid": 73,
+      "parentPidPredictionMatched": true,
+      "parentExitCode": 1,
+      "parentExitSignal": null,
+      "parentExitedAt": 1794262064400,
+      "parentExitedBeforeGuard": true,
+      "orphanGroupAliveBeforeKill": true,
+      "groupKillSent": true,
+      "stderrBytes": 61,
+      "stderr": "bwrap: open /proc/74/ns/ns failed: No such file or directory\n",
+      "finishedAt": 1794262067455,
+      "assessment": {
+        "hypothesisMatched": false
+      },
+      "inFlight": {
+        "sampledAt": "2026-11-09T22:07:46.084Z",
+        "finishedAt": "2026-11-09T22:07:46.101Z",
+        "processes": [
+          {
+            "pid": 1,
+            "comm": "sleep",
+            "ppid": 0,
+            "state": "S",
+            "namespacePids": [
+              1
+            ],
+            "wchan": "0",
+            "syscallNumber": null,
+            "syscallRunning": false,
+            "errors": {
+              "syscall": "EPERM"
+            }
+          },
+          {
+            "pid": 2,
+            "comm": "MainThread",
+            "ppid": 0,
+            "state": "R",
+            "namespacePids": [
+              2
+            ],
+            "wchan": "0",
+            "syscallNumber": null,
+            "syscallRunning": true,
+            "errors": {}
+          },
+          {
+            "pid": 45,
+            "comm": "socat",
+            "ppid": 1,
+            "state": "Z",
+            "namespacePids": [
+              45
+            ],
+            "wchan": "0",
+            "syscallNumber": null,
+            "syscallRunning": false,
+            "errors": {
+              "syscall": "EACCES"
+            }
+          },
+          {
+            "pid": 46,
+            "comm": "socat",
+            "ppid": 1,
+            "state": "Z",
+            "namespacePids": [
+              46
+            ],
+            "wchan": "0",
+            "syscallNumber": null,
+            "syscallRunning": false,
+            "errors": {
+              "syscall": "EACCES"
+            }
+          },
+          {
+            "pid": 53,
+            "comm": "bwrap",
+            "ppid": 1,
+            "state": "Z",
+            "namespacePids": [
+              53,
+              1
+            ],
+            "wchan": "0",
+            "syscallNumber": null,
+            "syscallRunning": false,
+            "errors": {
+              "syscall": "EACCES"
+            }
+          },
+          {
+            "pid": 56,
+            "comm": "bwrap",
+            "ppid": 1,
+            "state": "Z",
+            "namespacePids": [
+              56,
+              1
+            ],
+            "wchan": "0",
+            "syscallNumber": null,
+            "syscallRunning": false,
+            "errors": {
+              "syscall": "EACCES"
+            }
+          },
+          {
+            "pid": 151,
+            "comm": "socat",
+            "ppid": 1,
+            "state": "Z",
+            "namespacePids": [
+              151
+            ],
+            "wchan": "0",
+            "syscallNumber": null,
+            "syscallRunning": false,
+            "errors": {
+              "syscall": "EACCES"
+            }
+          },
+          {
+            "pid": 156,
+            "comm": "bwrap",
+            "ppid": 1,
+            "state": "Z",
+            "namespacePids": [
+              156,
+              1
+            ],
+            "wchan": "0",
+            "syscallNumber": null,
+            "syscallRunning": false,
+            "errors": {
+              "syscall": "EACCES"
+            }
+          },
+          {
+            "pid": 199,
+            "comm": "MainThread",
+            "ppid": 2,
+            "state": "S",
+            "namespacePids": [
+              199
+            ],
+            "wchan": "ep_poll",
+            "syscallNumber": 281,
+            "syscallRunning": false,
+            "errors": {}
+          },
+          {
+            "pid": 215,
+            "comm": "socat",
+            "ppid": 199,
+            "state": "S",
+            "namespacePids": [
+              215
+            ],
+            "wchan": "do_select",
+            "syscallNumber": 270,
+            "syscallRunning": false,
+            "errors": {}
+          },
+          {
+            "pid": 218,
+            "comm": "sh",
+            "ppid": 199,
+            "state": "S",
+            "namespacePids": [
+              218
+            ],
+            "wchan": "do_wait",
+            "syscallNumber": 61,
+            "syscallRunning": false,
+            "errors": {}
+          },
+          {
+            "pid": 219,
+            "comm": "bwrap",
+            "ppid": 218,
+            "state": "S",
+            "namespacePids": [
+              219
+            ],
+            "wchan": "do_poll.constprop.0",
+            "syscallNumber": 7,
+            "syscallRunning": false,
+            "errors": {}
+          },
+          {
+            "pid": 220,
+            "comm": "bwrap",
+            "ppid": 219,
+            "state": "S",
+            "namespacePids": [
+              220,
+              1
+            ],
+            "wchan": "do_wait",
+            "syscallNumber": 61,
+            "syscallRunning": false,
+            "errors": {}
+          },
+          {
+            "pid": 221,
+            "comm": "bash",
+            "ppid": 220,
+            "state": "S",
+            "namespacePids": [
+              221,
+              2
+            ],
+            "wchan": "do_wait",
+            "syscallNumber": 61,
+            "syscallRunning": false,
+            "errors": {}
+          },
+          {
+            "pid": 222,
+            "comm": "bash",
+            "ppid": 221,
+            "state": "S",
+            "namespacePids": [
+              222,
+              3
+            ],
+            "wchan": "do_wait",
+            "syscallNumber": 61,
+            "syscallRunning": false,
+            "errors": {}
+          },
+          {
+            "pid": 223,
+            "comm": "bash",
+            "ppid": 221,
+            "state": "S",
+            "namespacePids": [
+              223,
+              4
+            ],
+            "wchan": "do_wait",
+            "syscallNumber": 61,
+            "syscallRunning": false,
+            "errors": {}
+          },
+          {
+            "pid": 224,
+            "comm": "socat",
+            "ppid": 222,
+            "state": "S",
+            "namespacePids": [
+              224,
+              5
+            ],
+            "wchan": "do_select",
+            "syscallNumber": 270,
+            "syscallRunning": false,
+            "errors": {}
+          },
+          {
+            "pid": 225,
+            "comm": "socat",
+            "ppid": 223,
+            "state": "S",
+            "namespacePids": [
+              225,
+              6
+            ],
+            "wchan": "do_select",
+            "syscallNumber": 270,
+            "syscallRunning": false,
+            "errors": {}
+          },
+          {
+            "pid": 226,
+            "comm": "apply-seccomp",
+            "ppid": 221,
+            "state": "S",
+            "namespacePids": [
+              226,
+              7
+            ],
+            "wchan": "do_wait",
+            "syscallNumber": null,
+            "syscallRunning": false,
+            "errors": {
+              "syscall": "EACCES"
+            }
+          },
+          {
+            "pid": 227,
+            "comm": "apply-seccomp",
+            "ppid": 226,
+            "state": "S",
+            "namespacePids": [
+              227,
+              8,
+              1
+            ],
+            "wchan": "do_wait",
+            "syscallNumber": null,
+            "syscallRunning": false,
+            "errors": {
+              "syscall": "EACCES"
+            }
+          },
+          {
+            "pid": 228,
+            "comm": "MainThread",
+            "ppid": 227,
+            "state": "S",
+            "namespacePids": [
+              228,
+              9,
+              2
+            ],
+            "wchan": "ep_poll",
+            "syscallNumber": 281,
+            "syscallRunning": false,
+            "errors": {}
+          },
+          {
+            "pid": 300,
+            "comm": "bwrap",
+            "ppid": 227,
+            "state": "S",
+            "namespacePids": [
+              300,
+              81,
+              74,
+              1
+            ],
+            "wchan": "do_wait_intr_irq",
+            "syscallNumber": 0,
+            "syscallRunning": false,
+            "errors": {}
+          }
+        ],
+        "processesTruncated": false,
+        "procError": null,
+        "registries": {
+          "entries": [
+            {
+              "name": "codex-bwrap-synthetic-mount-targets-1000",
+              "type": "directory",
+              "size": 8
+            },
+            {
+              "name": "codex-bwrap-synthetic-mount-targets-1000/lock",
+              "type": "file",
+              "size": 0
+            }
+          ],
+          "truncated": false,
+          "errors": []
+        }
+      },
+      "outerExitCode": 0,
+      "outerTimedOut": false,
+      "outerCaptureLimit": false,
+      "outerStderr": ""
+    },
+    "diagnosticsBefore": {
+      "cache": {
+        "entries": [],
+        "truncated": false,
+        "errors": [],
+        "authEntriesOmitted": 0
+      },
+      "trace": {
+        "records": [],
+        "bytesRead": 0,
+        "truncated": false,
+        "malformedLines": 0,
+        "error": "ENOENT"
+      }
+    },
+    "diagnosticsAfterParallel": {
+      "cache": {
+        "entries": [
+          {
+            "name": "tmp",
+            "type": "directory",
+            "size": 20
+          },
+          {
+            "name": "tmp/arg0-linux",
+            "type": "directory",
+            "size": 64
+          },
+          {
+            "name": "tmp/arg0-linux/codex-arg0q8gKSb",
+            "type": "directory",
+            "size": 90
+          },
+          {
+            "name": "tmp/arg0-linux/codex-arg0q8gKSb/.lock",
+            "type": "file",
+            "size": 0
+          },
+          {
+            "name": "tmp/arg0-linux/codex-arg0q8gKSb/apply_patch",
+            "type": "symlink",
+            "size": 121
+          },
+          {
+            "name": "tmp/arg0-linux/codex-arg0q8gKSb/applypatch",
+            "type": "symlink",
+            "size": 121
+          },
+          {
+            "name": "tmp/arg0-linux/codex-arg0q8gKSb/codex-linux-sandbox",
+            "type": "symlink",
+            "size": 121
+          },
+          {
+            "name": "tmp/arg0-linux/codex-arg0rb90Ps",
+            "type": "directory",
+            "size": 90
+          },
+          {
+            "name": "tmp/arg0-linux/codex-arg0rb90Ps/.lock",
+            "type": "file",
+            "size": 0
+          },
+          {
+            "name": "tmp/arg0-linux/codex-arg0rb90Ps/apply_patch",
+            "type": "symlink",
+            "size": 121
+          },
+          {
+            "name": "tmp/arg0-linux/codex-arg0rb90Ps/applypatch",
+            "type": "symlink",
+            "size": 121
+          },
+          {
+            "name": "tmp/arg0-linux/codex-arg0rb90Ps/codex-linux-sandbox",
+            "type": "symlink",
+            "size": 121
+          }
+        ],
+        "truncated": false,
+        "errors": [],
+        "authEntriesOmitted": 0
+      },
+      "trace": {
+        "records": [
+          {
+            "stage": "node-enter",
+            "timestamp": "2026-11-09T22:07:41.199Z",
+            "pid": 2,
+            "ppid": 1,
+            "cwd": "/workspace",
+            "stdinKind": "character",
+            "commandHash": "0937395ed266dfe6f5f00819a23d97a6dae326f15e5d970259f7508945141c0a",
+            "argv0basename": "bash",
+            "envNames": [
+              "ALL_PROXY",
+              "CI",
+              "CLAUDE_CODE_HOST_HTTP_PROXY_PORT",
+              "CLAUDE_CODE_HOST_SOCKS_PROXY_PORT",
+              "CLOUDSDK_PROXY_ADDRESS",
+              "CLOUDSDK_PROXY_PASSWORD",
+              "CLOUDSDK_PROXY_PORT",
+              "CLOUDSDK_PROXY_TYPE",
+              "CLOUDSDK_PROXY_USERNAME",
+              "CODEX_HOME",
+              "DISABLE_AUTOUPDATER",
+              "DOCKER_HTTPS_PROXY",
+              "DOCKER_HTTP_PROXY",
+              "FTP_PROXY",
+              "GIT_CONFIG_GLOBAL",
+              "GIT_CONFIG_NOSYSTEM",
+              "GIT_CONFIG_PARAMETERS",
+              "GIT_CONFIG_SYSTEM",
+              "GIT_SSH_COMMAND",
+              "GRPC_PROXY",
+              "HIVEMIND_GUARD_TRACE",
+              "HOME",
+              "HTTPS_PROXY",
+              "HTTP_PROXY",
+              "JAVA_TOOL_OPTIONS",
+              "LOGNAME",
+              "NO_PROXY",
+              "PATH",
+              "PWD",
+              "RSYNC_PROXY",
+              "SANDBOX_RUNTIME",
+              "SHLVL",
+              "TERM",
+              "TMPDIR",
+              "USER",
+              "_",
+              "all_proxy",
+              "ftp_proxy",
+              "grpc_proxy",
+              "http_proxy",
+              "https_proxy",
+              "no_proxy"
+            ]
+          },
+          {
+            "stage": "node-exec",
+            "timestamp": "2026-11-09T22:07:41.215Z",
+            "pid": 2,
+            "ppid": 1,
+            "cwd": "/workspace",
+            "stdinKind": "character",
+            "commandHash": "0937395ed266dfe6f5f00819a23d97a6dae326f15e5d970259f7508945141c0a",
+            "argv0basename": "bash",
+            "envNames": [
+              "ALL_PROXY",
+              "CI",
+              "CLAUDE_CODE_HOST_HTTP_PROXY_PORT",
+              "CLAUDE_CODE_HOST_SOCKS_PROXY_PORT",
+              "CLOUDSDK_PROXY_ADDRESS",
+              "CLOUDSDK_PROXY_PASSWORD",
+              "CLOUDSDK_PROXY_PORT",
+              "CLOUDSDK_PROXY_TYPE",
+              "CLOUDSDK_PROXY_USERNAME",
+              "CODEX_HOME",
+              "DISABLE_AUTOUPDATER",
+              "DOCKER_HTTPS_PROXY",
+              "DOCKER_HTTP_PROXY",
+              "FTP_PROXY",
+              "GIT_CONFIG_GLOBAL",
+              "GIT_CONFIG_NOSYSTEM",
+              "GIT_CONFIG_PARAMETERS",
+              "GIT_CONFIG_SYSTEM",
+              "GIT_SSH_COMMAND",
+              "GRPC_PROXY",
+              "HIVEMIND_GUARD_TRACE",
+              "HOME",
+              "HTTPS_PROXY",
+              "HTTP_PROXY",
+              "JAVA_TOOL_OPTIONS",
+              "LOGNAME",
+              "NO_PROXY",
+              "PATH",
+              "PWD",
+              "RSYNC_PROXY",
+              "SANDBOX_RUNTIME",
+              "SHLVL",
+              "TERM",
+              "TMPDIR",
+              "USER",
+              "_",
+              "all_proxy",
+              "ftp_proxy",
+              "grpc_proxy",
+              "http_proxy",
+              "https_proxy",
+              "no_proxy"
+            ]
+          },
+          {
+            "stage": "node-enter",
+            "timestamp": "2026-11-09T22:07:41.184Z",
+            "pid": 2,
+            "ppid": 1,
+            "cwd": "/workspace",
+            "stdinKind": "character",
+            "commandHash": "1b531c6c4d7249be1643fe91c12160d02c34ce00ad9ed284219aaba468ee5dcd",
+            "argv0basename": "bash",
+            "envNames": [
+              "ALL_PROXY",
+              "CI",
+              "CLAUDE_CODE_HOST_HTTP_PROXY_PORT",
+              "CLAUDE_CODE_HOST_SOCKS_PROXY_PORT",
+              "CLOUDSDK_PROXY_ADDRESS",
+              "CLOUDSDK_PROXY_PASSWORD",
+              "CLOUDSDK_PROXY_PORT",
+              "CLOUDSDK_PROXY_TYPE",
+              "CLOUDSDK_PROXY_USERNAME",
+              "CODEX_HOME",
+              "DISABLE_AUTOUPDATER",
+              "DOCKER_HTTPS_PROXY",
+              "DOCKER_HTTP_PROXY",
+              "FTP_PROXY",
+              "GIT_CONFIG_GLOBAL",
+              "GIT_CONFIG_NOSYSTEM",
+              "GIT_CONFIG_PARAMETERS",
+              "GIT_CONFIG_SYSTEM",
+              "GIT_SSH_COMMAND",
+              "GRPC_PROXY",
+              "HIVEMIND_GUARD_TRACE",
+              "HOME",
+              "HTTPS_PROXY",
+              "HTTP_PROXY",
+              "JAVA_TOOL_OPTIONS",
+              "LOGNAME",
+              "NO_PROXY",
+              "PATH",
+              "PWD",
+              "RSYNC_PROXY",
+              "SANDBOX_RUNTIME",
+              "SHLVL",
+              "TERM",
+              "TMPDIR",
+              "USER",
+              "_",
+              "all_proxy",
+              "ftp_proxy",
+              "grpc_proxy",
+              "http_proxy",
+              "https_proxy",
+              "no_proxy"
+            ]
+          },
+          {
+            "stage": "node-exec",
+            "timestamp": "2026-11-09T22:07:41.219Z",
+            "pid": 2,
+            "ppid": 1,
+            "cwd": "/workspace",
+            "stdinKind": "character",
+            "commandHash": "1b531c6c4d7249be1643fe91c12160d02c34ce00ad9ed284219aaba468ee5dcd",
+            "argv0basename": "bash",
+            "envNames": [
+              "ALL_PROXY",
+              "CI",
+              "CLAUDE_CODE_HOST_HTTP_PROXY_PORT",
+              "CLAUDE_CODE_HOST_SOCKS_PROXY_PORT",
+              "CLOUDSDK_PROXY_ADDRESS",
+              "CLOUDSDK_PROXY_PASSWORD",
+              "CLOUDSDK_PROXY_PORT",
+              "CLOUDSDK_PROXY_TYPE",
+              "CLOUDSDK_PROXY_USERNAME",
+              "CODEX_HOME",
+              "DISABLE_AUTOUPDATER",
+              "DOCKER_HTTPS_PROXY",
+              "DOCKER_HTTP_PROXY",
+              "FTP_PROXY",
+              "GIT_CONFIG_GLOBAL",
+              "GIT_CONFIG_NOSYSTEM",
+              "GIT_CONFIG_PARAMETERS",
+              "GIT_CONFIG_SYSTEM",
+              "GIT_SSH_COMMAND",
+              "GRPC_PROXY",
+              "HIVEMIND_GUARD_TRACE",
+              "HOME",
+              "HTTPS_PROXY",
+              "HTTP_PROXY",
+              "JAVA_TOOL_OPTIONS",
+              "LOGNAME",
+              "NO_PROXY",
+              "PATH",
+              "PWD",
+              "RSYNC_PROXY",
+              "SANDBOX_RUNTIME",
+              "SHLVL",
+              "TERM",
+              "TMPDIR",
+              "USER",
+              "_",
+              "all_proxy",
+              "ftp_proxy",
+              "grpc_proxy",
+              "http_proxy",
+              "https_proxy",
+              "no_proxy"
+            ]
+          },
+          {
+            "stage": "namespace-filter-loaded",
+            "timestamp": "2026-11-09T22:07:41.589Z",
+            "pid": 2,
+            "ppid": 1
+          },
+          {
+            "stage": "namespace-filter-loaded",
+            "timestamp": "2026-11-09T22:07:41.593Z",
+            "pid": 2,
+            "ppid": 1
+          }
+        ],
+        "bytesRead": 3806,
+        "truncated": false,
+        "malformedLines": 0,
+        "error": null
+      }
+    },
+    "diagnosticsAfterSerial": {
+      "cache": {
+        "entries": [
+          {
+            "name": "tmp",
+            "type": "directory",
+            "size": 20
+          },
+          {
+            "name": "tmp/arg0-linux",
+            "type": "directory",
+            "size": 32
+          },
+          {
+            "name": "tmp/arg0-linux/codex-arg0Dq8JLZ",
+            "type": "directory",
+            "size": 90
+          },
+          {
+            "name": "tmp/arg0-linux/codex-arg0Dq8JLZ/.lock",
+            "type": "file",
+            "size": 0
+          },
+          {
+            "name": "tmp/arg0-linux/codex-arg0Dq8JLZ/apply_patch",
+            "type": "symlink",
+            "size": 121
+          },
+          {
+            "name": "tmp/arg0-linux/codex-arg0Dq8JLZ/applypatch",
+            "type": "symlink",
+            "size": 121
+          },
+          {
+            "name": "tmp/arg0-linux/codex-arg0Dq8JLZ/codex-linux-sandbox",
+            "type": "symlink",
+            "size": 121
+          }
+        ],
+        "truncated": false,
+        "errors": [],
+        "authEntriesOmitted": 0
+      },
+      "trace": {
+        "records": [
+          {
+            "stage": "node-enter",
+            "timestamp": "2026-11-09T22:07:41.199Z",
+            "pid": 2,
+            "ppid": 1,
+            "cwd": "/workspace",
+            "stdinKind": "character",
+            "commandHash": "0937395ed266dfe6f5f00819a23d97a6dae326f15e5d970259f7508945141c0a",
+            "argv0basename": "bash",
+            "envNames": [
+              "ALL_PROXY",
+              "CI",
+              "CLAUDE_CODE_HOST_HTTP_PROXY_PORT",
+              "CLAUDE_CODE_HOST_SOCKS_PROXY_PORT",
+              "CLOUDSDK_PROXY_ADDRESS",
+              "CLOUDSDK_PROXY_PASSWORD",
+              "CLOUDSDK_PROXY_PORT",
+              "CLOUDSDK_PROXY_TYPE",
+              "CLOUDSDK_PROXY_USERNAME",
+              "CODEX_HOME",
+              "DISABLE_AUTOUPDATER",
+              "DOCKER_HTTPS_PROXY",
+              "DOCKER_HTTP_PROXY",
+              "FTP_PROXY",
+              "GIT_CONFIG_GLOBAL",
+              "GIT_CONFIG_NOSYSTEM",
+              "GIT_CONFIG_PARAMETERS",
+              "GIT_CONFIG_SYSTEM",
+              "GIT_SSH_COMMAND",
+              "GRPC_PROXY",
+              "HIVEMIND_GUARD_TRACE",
+              "HOME",
+              "HTTPS_PROXY",
+              "HTTP_PROXY",
+              "JAVA_TOOL_OPTIONS",
+              "LOGNAME",
+              "NO_PROXY",
+              "PATH",
+              "PWD",
+              "RSYNC_PROXY",
+              "SANDBOX_RUNTIME",
+              "SHLVL",
+              "TERM",
+              "TMPDIR",
+              "USER",
+              "_",
+              "all_proxy",
+              "ftp_proxy",
+              "grpc_proxy",
+              "http_proxy",
+              "https_proxy",
+              "no_proxy"
+            ]
+          },
+          {
+            "stage": "node-exec",
+            "timestamp": "2026-11-09T22:07:41.215Z",
+            "pid": 2,
+            "ppid": 1,
+            "cwd": "/workspace",
+            "stdinKind": "character",
+            "commandHash": "0937395ed266dfe6f5f00819a23d97a6dae326f15e5d970259f7508945141c0a",
+            "argv0basename": "bash",
+            "envNames": [
+              "ALL_PROXY",
+              "CI",
+              "CLAUDE_CODE_HOST_HTTP_PROXY_PORT",
+              "CLAUDE_CODE_HOST_SOCKS_PROXY_PORT",
+              "CLOUDSDK_PROXY_ADDRESS",
+              "CLOUDSDK_PROXY_PASSWORD",
+              "CLOUDSDK_PROXY_PORT",
+              "CLOUDSDK_PROXY_TYPE",
+              "CLOUDSDK_PROXY_USERNAME",
+              "CODEX_HOME",
+              "DISABLE_AUTOUPDATER",
+              "DOCKER_HTTPS_PROXY",
+              "DOCKER_HTTP_PROXY",
+              "FTP_PROXY",
+              "GIT_CONFIG_GLOBAL",
+              "GIT_CONFIG_NOSYSTEM",
+              "GIT_CONFIG_PARAMETERS",
+              "GIT_CONFIG_SYSTEM",
+              "GIT_SSH_COMMAND",
+              "GRPC_PROXY",
+              "HIVEMIND_GUARD_TRACE",
+              "HOME",
+              "HTTPS_PROXY",
+              "HTTP_PROXY",
+              "JAVA_TOOL_OPTIONS",
+              "LOGNAME",
+              "NO_PROXY",
+              "PATH",
+              "PWD",
+              "RSYNC_PROXY",
+              "SANDBOX_RUNTIME",
+              "SHLVL",
+              "TERM",
+              "TMPDIR",
+              "USER",
+              "_",
+              "all_proxy",
+              "ftp_proxy",
+              "grpc_proxy",
+              "http_proxy",
+              "https_proxy",
+              "no_proxy"
+            ]
+          },
+          {
+            "stage": "node-enter",
+            "timestamp": "2026-11-09T22:07:41.184Z",
+            "pid": 2,
+            "ppid": 1,
+            "cwd": "/workspace",
+            "stdinKind": "character",
+            "commandHash": "1b531c6c4d7249be1643fe91c12160d02c34ce00ad9ed284219aaba468ee5dcd",
+            "argv0basename": "bash",
+            "envNames": [
+              "ALL_PROXY",
+              "CI",
+              "CLAUDE_CODE_HOST_HTTP_PROXY_PORT",
+              "CLAUDE_CODE_HOST_SOCKS_PROXY_PORT",
+              "CLOUDSDK_PROXY_ADDRESS",
+              "CLOUDSDK_PROXY_PASSWORD",
+              "CLOUDSDK_PROXY_PORT",
+              "CLOUDSDK_PROXY_TYPE",
+              "CLOUDSDK_PROXY_USERNAME",
+              "CODEX_HOME",
+              "DISABLE_AUTOUPDATER",
+              "DOCKER_HTTPS_PROXY",
+              "DOCKER_HTTP_PROXY",
+              "FTP_PROXY",
+              "GIT_CONFIG_GLOBAL",
+              "GIT_CONFIG_NOSYSTEM",
+              "GIT_CONFIG_PARAMETERS",
+              "GIT_CONFIG_SYSTEM",
+              "GIT_SSH_COMMAND",
+              "GRPC_PROXY",
+              "HIVEMIND_GUARD_TRACE",
+              "HOME",
+              "HTTPS_PROXY",
+              "HTTP_PROXY",
+              "JAVA_TOOL_OPTIONS",
+              "LOGNAME",
+              "NO_PROXY",
+              "PATH",
+              "PWD",
+              "RSYNC_PROXY",
+              "SANDBOX_RUNTIME",
+              "SHLVL",
+              "TERM",
+              "TMPDIR",
+              "USER",
+              "_",
+              "all_proxy",
+              "ftp_proxy",
+              "grpc_proxy",
+              "http_proxy",
+              "https_proxy",
+              "no_proxy"
+            ]
+          },
+          {
+            "stage": "node-exec",
+            "timestamp": "2026-11-09T22:07:41.219Z",
+            "pid": 2,
+            "ppid": 1,
+            "cwd": "/workspace",
+            "stdinKind": "character",
+            "commandHash": "1b531c6c4d7249be1643fe91c12160d02c34ce00ad9ed284219aaba468ee5dcd",
+            "argv0basename": "bash",
+            "envNames": [
+              "ALL_PROXY",
+              "CI",
+              "CLAUDE_CODE_HOST_HTTP_PROXY_PORT",
+              "CLAUDE_CODE_HOST_SOCKS_PROXY_PORT",
+              "CLOUDSDK_PROXY_ADDRESS",
+              "CLOUDSDK_PROXY_PASSWORD",
+              "CLOUDSDK_PROXY_PORT",
+              "CLOUDSDK_PROXY_TYPE",
+              "CLOUDSDK_PROXY_USERNAME",
+              "CODEX_HOME",
+              "DISABLE_AUTOUPDATER",
+              "DOCKER_HTTPS_PROXY",
+              "DOCKER_HTTP_PROXY",
+              "FTP_PROXY",
+              "GIT_CONFIG_GLOBAL",
+              "GIT_CONFIG_NOSYSTEM",
+              "GIT_CONFIG_PARAMETERS",
+              "GIT_CONFIG_SYSTEM",
+              "GIT_SSH_COMMAND",
+              "GRPC_PROXY",
+              "HIVEMIND_GUARD_TRACE",
+              "HOME",
+              "HTTPS_PROXY",
+              "HTTP_PROXY",
+              "JAVA_TOOL_OPTIONS",
+              "LOGNAME",
+              "NO_PROXY",
+              "PATH",
+              "PWD",
+              "RSYNC_PROXY",
+              "SANDBOX_RUNTIME",
+              "SHLVL",
+              "TERM",
+              "TMPDIR",
+              "USER",
+              "_",
+              "all_proxy",
+              "ftp_proxy",
+              "grpc_proxy",
+              "http_proxy",
+              "https_proxy",
+              "no_proxy"
+            ]
+          },
+          {
+            "stage": "namespace-filter-loaded",
+            "timestamp": "2026-11-09T22:07:41.589Z",
+            "pid": 2,
+            "ppid": 1
+          },
+          {
+            "stage": "namespace-filter-loaded",
+            "timestamp": "2026-11-09T22:07:41.593Z",
+            "pid": 2,
+            "ppid": 1
+          },
+          {
+            "stage": "node-enter",
+            "timestamp": "2026-11-09T22:07:42.999Z",
+            "pid": 2,
+            "ppid": 1,
+            "cwd": "/workspace",
+            "stdinKind": "character",
+            "commandHash": "89bb0548076a315fc8de5a63cd99cfe46baf84869d9b427caa5cff7ffd981a09",
+            "argv0basename": "bash",
+            "envNames": [
+              "ALL_PROXY",
+              "CI",
+              "CLAUDE_CODE_HOST_HTTP_PROXY_PORT",
+              "CLAUDE_CODE_HOST_SOCKS_PROXY_PORT",
+              "CLOUDSDK_PROXY_ADDRESS",
+              "CLOUDSDK_PROXY_PASSWORD",
+              "CLOUDSDK_PROXY_PORT",
+              "CLOUDSDK_PROXY_TYPE",
+              "CLOUDSDK_PROXY_USERNAME",
+              "CODEX_HOME",
+              "DISABLE_AUTOUPDATER",
+              "DOCKER_HTTPS_PROXY",
+              "DOCKER_HTTP_PROXY",
+              "FTP_PROXY",
+              "GIT_CONFIG_GLOBAL",
+              "GIT_CONFIG_NOSYSTEM",
+              "GIT_CONFIG_PARAMETERS",
+              "GIT_CONFIG_SYSTEM",
+              "GIT_SSH_COMMAND",
+              "GRPC_PROXY",
+              "HIVEMIND_GUARD_TRACE",
+              "HOME",
+              "HTTPS_PROXY",
+              "HTTP_PROXY",
+              "JAVA_TOOL_OPTIONS",
+              "LOGNAME",
+              "NO_PROXY",
+              "PATH",
+              "PWD",
+              "RSYNC_PROXY",
+              "SANDBOX_RUNTIME",
+              "SHLVL",
+              "TERM",
+              "TMPDIR",
+              "USER",
+              "_",
+              "all_proxy",
+              "ftp_proxy",
+              "grpc_proxy",
+              "http_proxy",
+              "https_proxy",
+              "no_proxy"
+            ]
+          },
+          {
+            "stage": "node-exec",
+            "timestamp": "2026-11-09T22:07:43.000Z",
+            "pid": 2,
+            "ppid": 1,
+            "cwd": "/workspace",
+            "stdinKind": "character",
+            "commandHash": "89bb0548076a315fc8de5a63cd99cfe46baf84869d9b427caa5cff7ffd981a09",
+            "argv0basename": "bash",
+            "envNames": [
+              "ALL_PROXY",
+              "CI",
+              "CLAUDE_CODE_HOST_HTTP_PROXY_PORT",
+              "CLAUDE_CODE_HOST_SOCKS_PROXY_PORT",
+              "CLOUDSDK_PROXY_ADDRESS",
+              "CLOUDSDK_PROXY_PASSWORD",
+              "CLOUDSDK_PROXY_PORT",
+              "CLOUDSDK_PROXY_TYPE",
+              "CLOUDSDK_PROXY_USERNAME",
+              "CODEX_HOME",
+              "DISABLE_AUTOUPDATER",
+              "DOCKER_HTTPS_PROXY",
+              "DOCKER_HTTP_PROXY",
+              "FTP_PROXY",
+              "GIT_CONFIG_GLOBAL",
+              "GIT_CONFIG_NOSYSTEM",
+              "GIT_CONFIG_PARAMETERS",
+              "GIT_CONFIG_SYSTEM",
+              "GIT_SSH_COMMAND",
+              "GRPC_PROXY",
+              "HIVEMIND_GUARD_TRACE",
+              "HOME",
+              "HTTPS_PROXY",
+              "HTTP_PROXY",
+              "JAVA_TOOL_OPTIONS",
+              "LOGNAME",
+              "NO_PROXY",
+              "PATH",
+              "PWD",
+              "RSYNC_PROXY",
+              "SANDBOX_RUNTIME",
+              "SHLVL",
+              "TERM",
+              "TMPDIR",
+              "USER",
+              "_",
+              "all_proxy",
+              "ftp_proxy",
+              "grpc_proxy",
+              "http_proxy",
+              "https_proxy",
+              "no_proxy"
+            ]
+          },
+          {
+            "stage": "namespace-filter-loaded",
+            "timestamp": "2026-11-09T22:07:43.047Z",
+            "pid": 2,
+            "ppid": 1
+          }
+        ],
+        "bytesRead": 5709,
+        "truncated": false,
+        "malformedLines": 0,
+        "error": null
+      }
+    },
+    "guardCacheCredentialsAbsent": true,
+    "limitations": [
+      "Standalone SRT reproduces the exact managed hook Bash rewrite, without a Claude model or native tool supervisor.",
+      "The parallel phase runs before the serial control; existing guard-cache state is recorded.",
+      "The final trusted no-auth cause probe runs raw nested bwrap with regular stderr and a 3-second process-group watchdog."
+    ],
+    "assessment": {
+      "passed": true,
+      "checks": {
+        "noAuthentication": true,
+        "processBoundary": true,
+        "alpha": true,
+        "beta": true,
+        "exactlyTwoParallel": true,
+        "serial": true,
+        "parallelOverlap": true
+      }
+    },
+    "containerStopped": true,
+    "workerVersion": "85ef9a93-21ec-4547-b703-7ec0edf59fa9"
+  }
+}

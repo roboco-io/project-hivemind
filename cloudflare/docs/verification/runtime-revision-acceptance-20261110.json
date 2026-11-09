@@ -1,0 +1,15 @@
+{
+  "platform": "cloudflare-remote",
+  "recordedAt": "2026-11-09T23:25:27.477Z",
+  "httpStatus": 200,
+  "expectedRuntimeRevision": "dac58a4ec80ef8e5874e0bdc9a609f90031eb4188c2d9fa56ee1f8a2f598444e",
+  "health": {
+    "ok": true,
+    "service": "hivemind-cloudflare",
+    "workerVersion": "68a5c8de-de3d-4ca4-83d0-b27fdc5ca760",
+    "expectedRuntimeRevision": "dac58a4ec80ef8e5874e0bdc9a609f90031eb4188c2d9fa56ee1f8a2f598444e"
+  },
+  "matched": true,
+  "controlPlaneVersion": "68a5c8de-de3d-4ca4-83d0-b27fdc5ca760",
+  "imageDigest": "sha256:9e81936f1330582b40d3d9c6dc2670ead6cc9948950eaa39ae8fa7f9061ab4fd"
+}

@@ -1,6 +1,6 @@
 # ADR 0002: Claude Bash의 추가 격리
 
-상태: 무인증 Cloudflare 경계 검증 통과. 실제 CLI 연결은 별도 수용한다.
+상태: 무인증 경계와 실제 main·native worker 경로의 원격 수용 통과.
 
 ## 관찰
 
@@ -37,9 +37,10 @@ SRT가 지정한 임시 경로는 내부 실행에서 정상 `/tmp`로 연결한
 
 [무인증 원격 증거](../phase0/cloudflare-claude-layer-cb39754e-20261110.json)는
 파일·부모·thread·sibling 별칭, 인증 환경, namespace 재생성, cache와 원본 파일 보호,
-통신 제한 30개 조건을 확인했다. 일반 Node 실행도 유지했다.
-같은 공유 정책과 관리 훅을 실제 main·native worker Bash 경로에서 별도로 확인해야 한다.
-조건을 충족하기 전 Claude 실행을 활성화하지 않는다.
+통신 제한 등 29개 명명 조건과 UID·권한·정상 종료 조건을 확인했다. 일반 Node 실행도 유지했다.
+반복 실행의 proc 메타데이터 조회 문제는 [Bubblewrap 호환 빌드](../bubblewrap-compatibility.md)로 수정했다.
+[실제 Claude 경로](../phase0/cloudflare-claude-subscription-20261110.json)에서도 두 native worker,
+main Bash 경계 검사, MCP와 종료를 확인했다. 해당 계정에서 Claude 실행을 활성화했다.
 
 이 구현은 신뢰하는 본인 저장소의 단일 운영자용 초기 범위다.
 전체 장애·재개 수용과 공개 다중 사용자 서비스의 보안 수용을 대신하지 않는다.

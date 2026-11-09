@@ -1,0 +1,29 @@
+{
+  "platform": "local-git-worktree",
+  "recordedAt": "2026-11-09T23:28:25.289317+00:00",
+  "provider": "claude",
+  "remoteJobId": "59b3b47d-753c-4a61-a3c3-84016596661d",
+  "baselineCommit": "d78dbc913a7281830bce92c9b353fd2a97961cd0",
+  "inputSnapshotId": "4f9b3c79585acc1addb89b6f1c2713fc58775cd0bca89486b4423458d9a8d0d3",
+  "outputSnapshotId": "6f7c82d89d41177819d42c7109d53ae43098e4ee09157c88b928dbf54de72290",
+  "applyPath": "official backend client against isolated Git worktree fixture",
+  "before": {
+    "tests": 2,
+    "pass": 0,
+    "fail": 2,
+    "exitCode": 1
+  },
+  "after": {
+    "tests": 2,
+    "pass": 2,
+    "fail": 0,
+    "exitCode": 0
+  },
+  "changedFiles": [
+    "verification-fixture/alpha.mjs",
+    "verification-fixture/beta.mjs"
+  ],
+  "sourceRepositoryIndexChanged": false,
+  "note": "Local apply evidence; remote execution is recorded separately.",
+  "worktreeRemoved": true
+}
