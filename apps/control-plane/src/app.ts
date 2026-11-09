@@ -47,8 +47,8 @@ export function buildApp(options: AppOptions = {}) {
   app.get('/health',async () => ({status:'ok',mode:options.repository ? 'local-workers' : 'mock-local'}));
   app.get('/favicon.ico',async (_request,reply) => reply.code(204).send());
   const staticRoot = new URL('../../../../apps/dashboard/public/',import.meta.url);
-  for (const [route,file,mime] of [['/','index.html','text/html'],['/app.js','app.js','application/javascript'],['/styles.css','styles.css','text/css']] as const) {
-    app.get(route,async (_request,reply) => reply.type(mime+'; charset=utf-8').send(await readFile(fileURLToPath(new URL(file,staticRoot)))));
+  for (const [route,file,mime] of [['/','index.html','text/html'],['/app.js','app.js','application/javascript'],['/styles.css','styles.css','text/css'],['/brand/hivemind-logo.png','brand/hivemind-logo.png','image/png'],['/brand/hivemind-bee.png','brand/hivemind-bee.png','image/png']] as const) {
+    app.get(route,async (_request,reply) => reply.type(mime.startsWith('image/') ? mime : mime+'; charset=utf-8').send(await readFile(fileURLToPath(new URL(file,staticRoot)))));
   }
   app.get('/api/capabilities',{preHandler:operator},async () => ({providers:options.repository ? ['mock','codex'] : ['mock'],repository:options.repository ?? null}));
   app.get('/api/state',{preHandler:operator},async () => store.state());
