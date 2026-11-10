@@ -33,7 +33,7 @@ flowchart LR
 | Codex CLI | 프로젝트 등록 도구·공통 스킬 | 실제 CLI 0.167.0 세션에서 스킬 사용·status/list·두 워커 diff/테스트 조회 통과 | 실행 승인·종단 실행 전체 수용 |
 | Codex 앱 | CLI와 공유하는 프로젝트 설정·스킬 | 자동 UI 접근이 도구의 보안 제한으로 차단됨 | 사용자 실제 세션 확인·승인·재시작 복원 |
 | Claude Code CLI | 설정 보존 `.mcp.json` 등록 도구·공통 원본을 읽는 `/hivemind` 진입점 | 실제 CLI 2.1.321 세션에서 공통 원본 Read·status/list·두 워커 diff/테스트 MCP 호출 통과 | 실행 승인·종단 실행 전체 수용 |
-| Claude Code 앱 | 로컬 Code 탭용 프로젝트 등록·스킬 | 검증 폴더 선택 후 작업 공간 신뢰 승인 대기 | 승인 후 실제 도구 호출·복원 검증 |
+| Claude Code 앱 | 로컬 Code 탭용 프로젝트 등록·스킬 | 사용자 폴더 신뢰 승인 후 실제 앱 세션에서 공통 원본 읽기·status/list·두 결과 조회 통과 | 새 원격 실행·승인·재시작 복원 검증 |
 
 공통 MCP 서버·중앙 API·Cloudflare 실행·검토 worktree·실제 diff·별도 테스트는 구현돼 있다.
 실제 Codex·Claude 워커를 웹 보조 화면에서 실행했고 같은 결과를 SDK stdio로 조회했다.
