@@ -14,9 +14,9 @@ HIVEMIND는 임시 개발 코드명이다. 공개 제품명은 아직 정하지 
 별도 라이선스가 표시된 서드파티 코드는 해당 [고지](cloudflare/backend/native/BUBBLEWRAP-NOTICE.md)를 따른다.
 
 **1차 지원 대상은 Codex와 Claude Code의 앱·CLI 네 접점**이다.
-현재는 Codex용 MCP 등록·스킬과 공통 서버를 구현했다. Claude Code의 호스트 등록·스킬과 네 접점의 실제 세션 수용은 미완료다.
+Codex·Claude Code용 프로젝트 MCP 등록 도구와 스킬을 구현했다. 실제 CLI 조회를 검증했으며, 앱을 포함한 전체 종단 수용은 [검증 기록](docs/verification/2026-11-10-claude-clients.md)에 구분해 기록한다.
 [지원 설계·구현 차이](docs/client-support.md)를 기준으로 지원 수준을 확인한다.
-Codex 대화에서 Codex·Claude 원격 작업을 등록하고 실행 승인·상태·실제 diff·테스트 결과를 조회한다.
+연결한 대화에서 Codex·Claude 원격 작업을 등록하고 실행 승인·상태·실제 diff·테스트 결과를 조회한다.
 웹 관제실은 선택적인 검증·관리 보조 화면이며, 앱의 상시 HUD는 이번 구현 범위가 아니다.
 
 ```sh
@@ -25,10 +25,12 @@ npm run build
 npm run start
 # 다른 터미널에서 프로젝트 MCP 등록
 npm run mcp:configure
+# Claude Code 앱의 로컬 Code 탭 / CLI는 다음 명령 사용
+npm run mcp:configure:claude
 ```
 
-새 Codex 세션에서 `$hivemind`를 사용한다. 현재 대상 저장소와 고정 커밋을 먼저 확인한다.
-[Codex 연결 안내](docs/codex-integration.md)에 인증 파일·다른 포트·설정 보존과 도구 6개의 사용법을 정리했다.
+새 Codex 세션에서 `$hivemind`, Claude Code 세션에서 `/hivemind`를 사용한다. 현재 대상 저장소와 고정 커밋을 먼저 확인한다.
+[Codex 연결 안내](docs/codex-integration.md)와 [Claude Code 연결 안내](docs/claude-integration.md)에 인증 파일·다른 포트·설정 보존과 도구 6개의 사용법을 정리했다.
 MCP는 중앙 HTTP API만 호출하며 Cloudflare 제어 토큰과 제공자 인증에 직접 접근하지 않는다.
 
 Cloudflare 실행 백엔드는 [cloudflare/](cloudflare/README.md)에 배포했다.
