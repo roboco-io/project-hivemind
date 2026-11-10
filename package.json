@@ -8,7 +8,9 @@
     "url": "git+https://github.com/roboco-io/project-hivemind.git"
   },
   "type": "module",
-  "engines": { "node": ">=24.0.0" },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -16,8 +18,17 @@
     "start": "node --env-file-if-exists=.env dist/apps/control-plane/src/main.js",
     "worker": "node --env-file-if-exists=.env dist/apps/worker/src/main.js",
     "worker:once": "npm run worker -- --once",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "mcp": "node dist/apps/mcp-server/src/main.js",
+    "mcp:configure": "node scripts/configure-hivemind-mcp.ts"
   },
-  "dependencies": { "fastify": "^5.0.0" },
-  "devDependencies": { "@types/node": "^24.0.0", "typescript": "^5.9.0" }
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "fastify": "^5.0.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
 }
