@@ -1,0 +1,395 @@
+{
+  "dashboard": {
+    "recordedAt": "2026-11-10T01:12:20.219Z",
+    "platform": "dashboard-to-cloudflare",
+    "passed": true,
+    "providerProcessesOverlapMs": 30180,
+    "tasks": [
+      {
+        "provider": "claude",
+        "taskId": "cf-73aee5c9-910a-40a2-8f23-d6ff82fcb5d7",
+        "jobId": "d611dc9d-25a1-4995-ad72-35e1f3f91a57",
+        "status": "awaiting_review",
+        "phase": "SUCCEEDED",
+        "baseCommit": "e481d2d26f43a194b4c0dbb13f28649df12eb6a3",
+        "inputSnapshotId": "4f9b3c79585acc1addb89b6f1c2713fc58775cd0bca89486b4423458d9a8d0d3",
+        "outputSnapshotId": "02d7cbc46a301a6e91015f0a4597b1ab44a4f70ba060395550e033986557e484",
+        "authSynced": true,
+        "containerStopped": true,
+        "process": {
+          "status": "passed",
+          "exitCode": 0,
+          "stdout": "두 worker 서브에이전트가 동시에 실행됐고, 둘 다 10초 대기 후 각자 파일을 작성했습니다. `alpha.mjs`와 `beta.mjs`는 모두 `add(a,b)`(a+b)와 `multiply(a,b)`(a*b)를 named export 합니다.\n\n- **export 확인:** 두 모듈을 import해서 확인했습니다. export 키는 `add`와 `multiply`뿐입니다. `add(2,3)`은 5, `multiply(2,3)`은 6을 반환했습니다.\n- **MCP probe:** 두 worker가 끝난 뒤 `phase0_probe`를 호출했고, 같은 nonce가 그대로 돌아왔습니다.\n- **미실행:** `math.test.mjs`와 `verify.mjs`는 수정하지도 실행하지도 않았습니다. 최종 검사는 서비스가 실행합니다.\n- **Git:** 커밋이나 푸시는 하지 않았습니다.",
+          "stderr": "",
+          "durationMs": 30180,
+          "truncated": false,
+          "startedAt": 1794271791226,
+          "finishedAt": 1794271821406
+        },
+        "checks": [
+          {
+            "id": "unit-a",
+            "name": "unit-a",
+            "status": "SUCCEEDED",
+            "command": [
+              "node",
+              "verify.mjs"
+            ],
+            "process": {
+              "status": "passed",
+              "exitCode": 0,
+              "durationMs": 10726,
+              "stdout": "✔ sum (0.731619ms)\n✔ product (0.15872ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 76.632765\n",
+              "stderr": "",
+              "truncated": false
+            },
+            "credentialsAbsent": true,
+            "sourceUnchanged": true
+          },
+          {
+            "id": "unit-b",
+            "name": "unit-b",
+            "status": "SUCCEEDED",
+            "command": [
+              "node",
+              "verify.mjs"
+            ],
+            "process": {
+              "status": "passed",
+              "exitCode": 0,
+              "durationMs": 10721,
+              "stdout": "✔ sum (0.87305ms)\n✔ product (0.20282ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 83.143055\n",
+              "stderr": "",
+              "truncated": false
+            },
+            "credentialsAbsent": true,
+            "sourceUnchanged": true
+          }
+        ],
+        "diff": "diff --git a/alpha.mjs b/alpha.mjs\nindex 929acac..e059eb5 100644\n--- a/alpha.mjs\n+++ b/alpha.mjs\n@@ -1 +1,7 @@\n-export const add = () => 0;\n+export function add(a, b) {\n+  return a + b;\n+}\n+\n+export function multiply(a, b) {\n+  return a * b;\n+}\ndiff --git a/beta.mjs b/beta.mjs\nindex 15129f3..e059eb5 100644\n--- a/beta.mjs\n+++ b/beta.mjs\n@@ -1 +1,7 @@\n-export const multiply = () => 0;\n+export function add(a, b) {\n+  return a + b;\n+}\n+\n+export function multiply(a, b) {\n+  return a * b;\n+}\n"
+      },
+      {
+        "provider": "codex",
+        "taskId": "cf-e217d1da-4258-4a07-a91c-26183ed01873",
+        "jobId": "4ea64a3c-4f1e-4dd2-9858-5ff4dfa7b42e",
+        "status": "completed",
+        "phase": "SUCCEEDED",
+        "baseCommit": "e481d2d26f43a194b4c0dbb13f28649df12eb6a3",
+        "inputSnapshotId": "4f9b3c79585acc1addb89b6f1c2713fc58775cd0bca89486b4423458d9a8d0d3",
+        "outputSnapshotId": "6f7c82d89d41177819d42c7109d53ae43098e4ee09157c88b928dbf54de72290",
+        "authSynced": true,
+        "containerStopped": true,
+        "process": {
+          "status": "passed",
+          "exitCode": 0,
+          "stdout": "완료했습니다.\n\n- 정확히 두 작업자를 동시에 실행했고, 각각 Node.js로 10초 대기 후 담당 파일을 수정했습니다.\n- `alpha.mjs`: `add(a,b) → a+b`\n- `beta.mjs`: `multiply(a,b) → a*b`\n- 두 작업 완료 후 지정 nonce로 `phase0_probe`를 호출했습니다.\n- 실제 export를 import하여 검증했고 통과했습니다.\n\n`math.test.mjs`, `verify.mjs`, Git 메타데이터는 수정하지 않았습니다.",
+          "stderr": "Reading additional input from stdin...\n",
+          "durationMs": 46563,
+          "truncated": false,
+          "startedAt": 1794271788404,
+          "finishedAt": 1794271834967
+        },
+        "checks": [
+          {
+            "id": "unit-a",
+            "name": "unit-a",
+            "status": "SUCCEEDED",
+            "command": [
+              "node",
+              "verify.mjs"
+            ],
+            "process": {
+              "status": "passed",
+              "exitCode": 0,
+              "durationMs": 10724,
+              "stdout": "✔ sum (0.65641ms)\n✔ product (0.15463ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 80.114285\n",
+              "stderr": "",
+              "truncated": false
+            },
+            "credentialsAbsent": true,
+            "sourceUnchanged": true
+          },
+          {
+            "id": "unit-b",
+            "name": "unit-b",
+            "status": "SUCCEEDED",
+            "command": [
+              "node",
+              "verify.mjs"
+            ],
+            "process": {
+              "status": "passed",
+              "exitCode": 0,
+              "durationMs": 10716,
+              "stdout": "✔ sum (0.75071ms)\n✔ product (0.21039ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 82.775135\n",
+              "stderr": "",
+              "truncated": false
+            },
+            "credentialsAbsent": true,
+            "sourceUnchanged": true
+          }
+        ],
+        "diff": "diff --git a/alpha.mjs b/alpha.mjs\nindex 929acac..d0f87bf 100644\n--- a/alpha.mjs\n+++ b/alpha.mjs\n@@ -1 +1 @@\n-export const add = () => 0;\n+export const add = (a, b) => a + b;\ndiff --git a/beta.mjs b/beta.mjs\nindex 15129f3..857b943 100644\n--- a/beta.mjs\n+++ b/beta.mjs\n@@ -1 +1 @@\n-export const multiply = () => 0;\n+export const multiply = (a, b) => a * b;\n"
+      }
+    ],
+    "serverRestartRestored": true,
+    "reviewAcceptanceVerified": true,
+    "preApprovalCancellationVerified": true,
+    "cloudControlTokenAbsentFromDTO": true,
+    "credentials": [
+      {
+        "id": "codex-remote",
+        "provider": "codex",
+        "generation": 7,
+        "quarantined": false,
+        "activeJobId": null
+      },
+      {
+        "id": "claude-remote",
+        "provider": "claude",
+        "generation": 7,
+        "quarantined": false,
+        "activeJobId": null
+      }
+    ]
+  },
+  "mcp": {
+    "recordedAt": "2026-11-10T01:32:13.221Z",
+    "transport": "real MCP SDK over stdio",
+    "passed": true,
+    "tools": [
+      {
+        "name": "hivemind_status",
+        "readOnly": true
+      },
+      {
+        "name": "hivemind_list_tasks",
+        "readOnly": true
+      },
+      {
+        "name": "hivemind_create_task",
+        "readOnly": false
+      },
+      {
+        "name": "hivemind_decide_task",
+        "readOnly": false
+      },
+      {
+        "name": "hivemind_cancel_task",
+        "readOnly": false
+      },
+      {
+        "name": "hivemind_get_result",
+        "readOnly": true
+      }
+    ],
+    "status": {
+      "runtime": "cloudflare",
+      "configured": true,
+      "connection": {
+        "status": "ready",
+        "message": null,
+        "checkedAt": "2026-11-10T01:32:04.544Z"
+      },
+      "repository": {
+        "id": "cloudflare",
+        "name": "dashboard-remote-fixture",
+        "baseCommit": "e481d2d26f43a194b4c0dbb13f28649df12eb6a3",
+        "testProfile": "default",
+        "testCommand": [
+          "node",
+          "verify.mjs"
+        ]
+      },
+      "providers": [
+        "codex",
+        "claude"
+      ],
+      "counts": {
+        "awaiting_execution_approval": 0,
+        "queued": 0,
+        "running": 0,
+        "awaiting_review": 1,
+        "completed": 1,
+        "rejected": 0,
+        "cancelled": 1,
+        "failed": 0
+      },
+      "totalTasks": 3
+    },
+    "results": [
+      {
+        "task": {
+          "id": "cf-e217d1da-4258-4a07-a91c-26183ed01873",
+          "title": "Cloudflare Codex 관제실 검증",
+          "provider": "codex",
+          "runtime": "cloudflare",
+          "status": "completed",
+          "repositoryId": "cloudflare",
+          "baseCommit": "e481d2d26f43a194b4c0dbb13f28649df12eb6a3",
+          "updatedAt": "2026-11-10T01:03:03.768Z",
+          "actualCostMicros": null,
+          "remote": {
+            "phase": "SUCCEEDED",
+            "jobId": "4ea64a3c-4f1e-4dd2-9858-5ff4dfa7b42e",
+            "containerStopped": true,
+            "authSynced": true,
+            "inputSnapshotId": "4f9b3c79585acc1addb89b6f1c2713fc58775cd0bca89486b4423458d9a8d0d3",
+            "outputSnapshotId": "6f7c82d89d41177819d42c7109d53ae43098e4ee09157c88b928dbf54de72290",
+            "errorCode": null,
+            "agent": {
+              "status": "passed",
+              "exitCode": 0,
+              "durationMs": 46563,
+              "truncated": false,
+              "stdout": "완료했습니다.\n\n- 정확히 두 작업자를 동시에 실행했고, 각각 Node.js로 10초 대기 후 담당 파일을 수정했습니다.\n- `alpha.mjs`: `add(a,b) → a+b`\n- `beta.mjs`: `multiply(a,b) → a*b`\n- 두 작업 완료 후 지정 nonce로 `phase0_probe`를 호출했습니다.\n- 실제 export를 import하여 검증했고 통과했습니다.\n\n`math.test.mjs`, `verify.mjs`, Git 메타데이터는 수정하지 않았습니다.",
+              "stderr": "Reading additional input from stdin...\n"
+            },
+            "checks": [
+              {
+                "id": "unit-a",
+                "name": "unit-a",
+                "status": "SUCCEEDED",
+                "command": [
+                  "node",
+                  "verify.mjs"
+                ],
+                "process": {
+                  "status": "passed",
+                  "exitCode": 0,
+                  "durationMs": 10724,
+                  "truncated": false,
+                  "stdout": "✔ sum (0.65641ms)\n✔ product (0.15463ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 80.114285\n",
+                  "stderr": ""
+                },
+                "credentialsAbsent": true,
+                "sourceUnchanged": true
+              },
+              {
+                "id": "unit-b",
+                "name": "unit-b",
+                "status": "SUCCEEDED",
+                "command": [
+                  "node",
+                  "verify.mjs"
+                ],
+                "process": {
+                  "status": "passed",
+                  "exitCode": 0,
+                  "durationMs": 10716,
+                  "truncated": false,
+                  "stdout": "✔ sum (0.75071ms)\n✔ product (0.21039ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 82.775135\n",
+                  "stderr": ""
+                },
+                "credentialsAbsent": true,
+                "sourceUnchanged": true
+              }
+            ]
+          },
+          "summary": "완료했습니다.\n\n- 정확히 두 작업자를 동시에 실행했고, 각각 Node.js로 10초 대기 후 담당 파일을 수정했습니다.\n- `alpha.mjs`: `add(a,b) → a+b`\n- `beta.mjs`: `multiply(a,b) → a*b`\n- 두 작업 완료 후 지정 nonce로 `phase0_probe`를 호출했습니다.\n- 실제 export를 import하여 검증했고 통과했습니다.\n\n`math.test.mjs`, `verify.mjs`, Git 메타데이터는 수정하지 않았습니다."
+        },
+        "diff": "diff --git a/alpha.mjs b/alpha.mjs\nindex 929acac..d0f87bf 100644\n--- a/alpha.mjs\n+++ b/alpha.mjs\n@@ -1 +1 @@\n-export const add = () => 0;\n+export const add = (a, b) => a + b;\ndiff --git a/beta.mjs b/beta.mjs\nindex 15129f3..857b943 100644\n--- a/beta.mjs\n+++ b/beta.mjs\n@@ -1 +1 @@\n-export const multiply = () => 0;\n+export const multiply = (a, b) => a * b;\n",
+        "diffIncluded": true,
+        "logsIncluded": true,
+        "diffTruncated": false,
+        "truncated": false
+      },
+      {
+        "task": {
+          "id": "cf-73aee5c9-910a-40a2-8f23-d6ff82fcb5d7",
+          "title": "Cloudflare Claude 관제실 검증",
+          "provider": "claude",
+          "runtime": "cloudflare",
+          "status": "awaiting_review",
+          "repositoryId": "cloudflare",
+          "baseCommit": "e481d2d26f43a194b4c0dbb13f28649df12eb6a3",
+          "updatedAt": "2026-11-10T00:50:51.977Z",
+          "actualCostMicros": null,
+          "remote": {
+            "phase": "SUCCEEDED",
+            "jobId": "d611dc9d-25a1-4995-ad72-35e1f3f91a57",
+            "containerStopped": true,
+            "authSynced": true,
+            "inputSnapshotId": "4f9b3c79585acc1addb89b6f1c2713fc58775cd0bca89486b4423458d9a8d0d3",
+            "outputSnapshotId": "02d7cbc46a301a6e91015f0a4597b1ab44a4f70ba060395550e033986557e484",
+            "errorCode": null,
+            "agent": {
+              "status": "passed",
+              "exitCode": 0,
+              "durationMs": 30180,
+              "truncated": false,
+              "stdout": "두 worker 서브에이전트가 동시에 실행됐고, 둘 다 10초 대기 후 각자 파일을 작성했습니다. `alpha.mjs`와 `beta.mjs`는 모두 `add(a,b)`(a+b)와 `multiply(a,b)`(a*b)를 named export 합니다.\n\n- **export 확인:** 두 모듈을 import해서 확인했습니다. export 키는 `add`와 `multiply`뿐입니다. `add(2,3)`은 5, `multiply(2,3)`은 6을 반환했습니다.\n- **MCP probe:** 두 worker가 끝난 뒤 `phase0_probe`를 호출했고, 같은 nonce가 그대로 돌아왔습니다.\n- **미실행:** `math.test.mjs`와 `verify.mjs`는 수정하지도 실행하지도 않았습니다. 최종 검사는 서비스가 실행합니다.\n- **Git:** 커밋이나 푸시는 하지 않았습니다.",
+              "stderr": ""
+            },
+            "checks": [
+              {
+                "id": "unit-a",
+                "name": "unit-a",
+                "status": "SUCCEEDED",
+                "command": [
+                  "node",
+                  "verify.mjs"
+                ],
+                "process": {
+                  "status": "passed",
+                  "exitCode": 0,
+                  "durationMs": 10726,
+                  "truncated": false,
+                  "stdout": "✔ sum (0.731619ms)\n✔ product (0.15872ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 76.632765\n",
+                  "stderr": ""
+                },
+                "credentialsAbsent": true,
+                "sourceUnchanged": true
+              },
+              {
+                "id": "unit-b",
+                "name": "unit-b",
+                "status": "SUCCEEDED",
+                "command": [
+                  "node",
+                  "verify.mjs"
+                ],
+                "process": {
+                  "status": "passed",
+                  "exitCode": 0,
+                  "durationMs": 10721,
+                  "truncated": false,
+                  "stdout": "✔ sum (0.87305ms)\n✔ product (0.20282ms)\nℹ tests 2\nℹ suites 0\nℹ pass 2\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 83.143055\n",
+                  "stderr": ""
+                },
+                "credentialsAbsent": true,
+                "sourceUnchanged": true
+              }
+            ]
+          },
+          "summary": "두 worker 서브에이전트가 동시에 실행됐고, 둘 다 10초 대기 후 각자 파일을 작성했습니다. `alpha.mjs`와 `beta.mjs`는 모두 `add(a,b)`(a+b)와 `multiply(a,b)`(a*b)를 named export 합니다.\n\n- **export 확인:** 두 모듈을 import해서 확인했습니다. export 키는 `add`와 `multiply`뿐입니다. `add(2,3)`은 5, `multiply(2,3)`은 6을 반환했습니다.\n- **MCP probe:** 두 worker가 끝난 뒤 `phase0_probe`를 호출했고, 같은 nonce가 그대로 돌아왔습니다.\n- **미실행:** `math.test.mjs`와 `verify.mjs`는 수정하지도 실행하지도 않았습니다. 최종 검사는 서비스가 실행합니다.\n- **Git:** 커밋이나 푸시는 하지 않았습니다."
+        },
+        "diff": "diff --git a/alpha.mjs b/alpha.mjs\nindex 929acac..e059eb5 100644\n--- a/alpha.mjs\n+++ b/alpha.mjs\n@@ -1 +1,7 @@\n-export const add = () => 0;\n+export function add(a, b) {\n+  return a + b;\n+}\n+\n+export function multiply(a, b) {\n+  return a * b;\n+}\ndiff --git a/beta.mjs b/beta.mjs\nindex 15129f3..e059eb5 100644\n--- a/beta.mjs\n+++ b/beta.mjs\n@@ -1 +1,7 @@\n-export const multiply = () => 0;\n+export function add(a, b) {\n+  return a + b;\n+}\n+\n+export function multiply(a, b) {\n+  return a * b;\n+}\n",
+        "diffIncluded": true,
+        "logsIncluded": true,
+        "diffTruncated": false,
+        "truncated": false
+      }
+    ],
+    "draft": "cf-a152b928-548b-45be-81cd-6ed9e0d0ad87",
+    "draftRejectedWithoutExecution": true,
+    "hostCodexModelInvocation": false
+  },
+  "hostRegistration": {
+    "projectScoped": true,
+    "globalCodexConfigModified": false,
+    "codexCliRecognized": true,
+    "configuredCommandStdioHandshake": true,
+    "toolCount": 6,
+    "newHostSessionMayBeRequired": true
+  },
+  "automaticChecks": {
+    "controlAndMcp": 134,
+    "cloudflareProbes": 61,
+    "cloudflareBackend": 142,
+    "typecheck": true,
+    "runtimeManifestCurrent": true,
+    "freshReview": "APPROVED",
+    "dockerBuildAndNetworkDisabledSmoke": true
+  }
+}

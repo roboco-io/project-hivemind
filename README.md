@@ -13,18 +13,43 @@ HIVEMIND는 임시 개발 코드명이다. 공개 제품명은 아직 정하지 
 소스와 문서는 [Apache License 2.0](LICENSE)으로 제공한다.
 별도 라이선스가 표시된 서드파티 코드는 해당 [고지](cloudflare/backend/native/BUBBLEWRAP-NOTICE.md)를 따른다.
 
-현재는 **단일 운영자용 로컬 개발 실행**을 지원한다.
-모의 워커, 실제 Codex 워커와 Claude Code 워커를 선택할 수 있다.
-두 실제 워커는 지정한 저장소의 고정 커밋으로 Git worktree를 만들고,
-실제 diff와 테스트 결과를 관제실에 보고한다.
+현재는 **Codex 앱·CLI의 공통 MCP·스킬을 주 접점으로 쓰는 단일 운영자용 MVP**다.
+Codex 대화에서 Codex·Claude 원격 작업을 등록하고 실행 승인·상태·실제 diff·테스트 결과를 조회한다.
+웹 관제실은 선택적인 검증·관리 보조 화면이며, 앱의 상시 HUD는 이번 구현 범위가 아니다.
 
-Cloudflare 실행 백엔드는 [cloudflare/](cloudflare/README.md)의 별도 패키지로 배포했다.
+```sh
+npm ci
+npm run build
+npm run start
+# 다른 터미널에서 프로젝트 MCP 등록
+npm run mcp:configure
+```
+
+새 Codex 세션에서 `$hivemind`를 사용한다. 현재 대상 저장소와 고정 커밋을 먼저 확인한다.
+[Codex 연결 안내](docs/codex-integration.md)에 인증 파일·다른 포트·설정 보존과 도구 6개의 사용법을 정리했다.
+MCP는 중앙 HTTP API만 호출하며 Cloudflare 제어 토큰과 제공자 인증에 직접 접근하지 않는다.
+
+Cloudflare 실행 백엔드는 [cloudflare/](cloudflare/README.md)에 배포했다.
 공식 구독 인증, 작업별 컨테이너, 불변 snapshot과 별도 테스트 컨테이너를 사용한다.
-실제 Codex·Claude 동시 실행, 제공자별 두 검증 컨테이너와 결과의 Git worktree 적용을 확인했다.
-관제실의 현재 실행 화면은 로컬 실행을 표시한다. 원격 결과는 별도 클라이언트에서 조회·검토한다.
-[Cloudflare 사용법](cloudflare/backend/README.md)과 [원격 검증 기록](cloudflare/docs/verification/2026-11-10-cloudflare.md)을 참조한다.
+중앙 서버에 원격 설정을 제공하면 웹에서도 실행 환경 **Cloudflare**와 제공자 **Codex / Claude Code**를 선택할 수 있다.
+기존 mock/local과 로컬 Codex·Claude worktree 실행도 유지한다.
 
-## 대시보드와 실제 실행
+[Cloudflare 관제 연결·검증](docs/verification/2026-11-10-codex-integration.md) ·
+[원격 백엔드 사용법](cloudflare/backend/README.md) · [원격 백엔드 검증](cloudflare/docs/verification/2026-11-10-cloudflare.md)
+
+## Cloudflare 실제 화면과 공통 MCP
+
+화면에서 두 작업을 등록·승인해 약 30.18초 동안 동시 실행했다.
+각 제공자의 별도 검증 컨테이너 두 개에서 각각 테스트 2건·통과 2건·실패 0건을 확인했다.
+같은 결과를 실제 MCP SDK의 stdio 연결에서도 조회했다. MCP 초안 생성·실행 없는 반려도 확인했다.
+서버 재시작 뒤 작업 ID·diff·로그를 복원했고, 결과 수락은 원본 저장소를 수정하지 않았다.
+검증에는 작은 전용 저장소를 사용했다. 실제 작업 전 서버의 대상 저장소 정책을 설정해야 한다.
+
+![Cloudflare 동시 작업과 테스트 진행](docs/screenshots/remote-running.png)
+![Cloudflare Codex 실제 diff와 테스트 결과](docs/screenshots/remote-codex-result.png)
+![Cloudflare Claude 실제 diff와 테스트 결과](docs/screenshots/remote-claude-result.png)
+
+## 기존 로컬 대시보드와 실행 기록
 
 실행 워커에서 **Codex** 또는 **Claude Code**를 선택한다.
 선택한 제공자의 워커가 고정 커밋과 승인한 테스트 명령으로 작업을 실행한다.
@@ -38,7 +63,7 @@ Cloudflare 실행 백엔드는 [cloudflare/](cloudflare/README.md)의 별도 패
 ![실제 Claude Code 실행의 diff와 테스트 결과](docs/screenshots/claude-result.png)
 
 두 제공자를 각각 실제로 실행해 샘플 테스트 **3개 통과·종료 코드 0**을 확인했다.
-공통 실행 계층의 자동 테스트는 **65개 통과·실패 0개**다.
+당시 공통 실행 계층 검사 **65개 통과·실패 0개**를 확인했다.
 원본 파일·index는 보존됐으며, 결과를 검토하고 수락했다.
 실패한 첫 기동 기록도 보존하며, 위 결과는 문제 수정 후 재실행한 성공 기록이다.
 공개 결과 캡처는 개인 로컬 경로만 숨겼다.

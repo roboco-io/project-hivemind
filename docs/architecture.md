@@ -4,12 +4,15 @@
 
 사람이 목표를 정하고 실행과 결과를 승인한다. 중앙 관제 시스템이 작업 상태와 실행 근거를 관리한다.
 워커는 승인된 작업을 가져와 결과를 보고한다.
-현재는 단일 운영자용 로컬 실행이며 `mock/local`, 설정된 `codex/local`과 `claude/local`을 지원한다.
+현재 주 접점은 Codex 앱·CLI 공통 MCP·스킬이다. 중앙 API가 Cloudflare Codex·Claude 실행을 조정한다.
+웹은 검증·관리 보조 접점이며 기존 mock/local과 로컬 제공자 실행도 지원한다.
 자연어 목표 분해·의존성 DAG·모델 선택과 ChatGPT 연결은 후속 기능이다.
 
 ```mermaid
 flowchart TB
-    Human[사람] --> Web[독립 Web 관제실]
+    Human[사람] --> Codex[Codex 앱 / CLI MCP·스킬]
+    Codex --> API
+    Human --> Web[보조 Web 관제실]
     Web -->|REST / 2초 조회| API[중앙 API]
     API --> Policy[허용 저장소 / 고정 커밋 / 승인 / 분배]
     Policy --> DB[(SQLite 작업 / 이벤트 / 실행 근거)]
@@ -24,7 +27,9 @@ flowchart TB
     Agent --> Test[준비 / 테스트 명령]
     Test --> Evidence[실제 diff / 종료 코드 / 출력 / 사용량]
     Evidence --> Run
-    Future[ChatGPT / ECS / Cloudflare 후속] -.-> API
+    API --> Remote[Cloudflare core / 영속 요청 / 시도별 key]
+    Remote --> CF[Cloudflare API / 작업별 Containers / 별도 검증]
+    Future[AWS / 추가 호스트 후속] -.-> API
 ```
 
 ## 구성 요소
@@ -175,3 +180,25 @@ CLI의 `total_cost_usd` 보고값을 실제 청구액으로 저장하지 않는�
 ChatGPT와 계획 에이전트도 같은 중앙 API를 사용하도록 확장한다.
 AgentAdapter는 모델 실행, RuntimeDriver는 실행 환경의 시작과 중지를 담당한다.
 PostgreSQL, 영속 워크플로, 원격 컨테이너와 이벤트 스트리밍은 [개발 로드맵](roadmap.md)에 따라 추가한다.
+
+
+## Codex 공통 MCP와 원격 관제 연결
+
+`apps/mcp-server`는 stdio 도구 6개로 중앙 운영자 HTTP API를 호출한다.
+MCP는 SQLite나 Cloudflare/제공자 비밀을 직접 열지 않는다. 변경 도구는 읽기 도구와 구분한다.
+초안과 실행 승인, 결과 수락은 각각 별도 동작이다. 사용자 의도 없이 초안에서 실행으로 넘어가지 않는다.
+서버 설정의 대상 저장소와 base를 먼저 대조한다. 자세한 연결은 [안내](codex-integration.md)를 따른다.
+
+`packages/core/src/cloudflare-store.ts`는 원격 작업·이벤트·비공개 요청과 설정 범위를 보존한다.
+전달 응답이 유실되면 같은 snapshot/spec/key로 재연결하며 새 원격 실행을 만들지 않는다.
+설정 범위가 바뀌면 미실행 승인을 차단하고, 모호한 전달·실행 중인 작업은 보존해 원래 설정에서 회수한다.
+취소 요청 뒤 실제 종료 전에는 중단 완료로 표시하지 않는다. 검증 완료 결과의 수락은 로컬 이력 기록이다.
+
+`packages/adapters/src/cloudflare.ts`는 기존 검증 client와 snapshot 코드를 재사용한다.
+고정 커밋의 detached worktree에서 소스를 만들고 완료 snapshot을 검토 worktree에 적용해 실제 Git diff를 얻는다.
+원본 dirty 파일·index와 구분한다. 각 필수 검증의 입력 snapshot, 인증 부재·소스 무결성·종료를 확인한다.
+브라우저/MCP가 경로·원격 URL·검증 argv·제공자 인증을 임의로 선택하지 않는다.
+
+연결 확인은 준비 상태에서 30초 캐시하며 진행 중 작업은 계속 조회한다.
+사용량·비용은 실제 청구액과 구분한다. 원격 소스는 현재 backend의 4MiB·1000파일 한도를 따른다.
+전체 장애·재개 수용과 상시 HUD는 후속이며 AWS는 현재 MVP 완료 이후다.
