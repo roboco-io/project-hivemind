@@ -12,6 +12,8 @@ outputs
 
 .hivemind
 .codex
+.claude
+.mcp.json
 cloudflare/**
 !cloudflare/backend/
 !cloudflare/backend/package.json

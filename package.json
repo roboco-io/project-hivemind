@@ -20,7 +20,8 @@
     "worker:once": "npm run worker -- --once",
     "check": "npm run typecheck && npm test",
     "mcp": "node dist/apps/mcp-server/src/main.js",
-    "mcp:configure": "node scripts/configure-hivemind-mcp.ts"
+    "mcp:configure": "node scripts/configure-hivemind-mcp.ts",
+    "mcp:configure:claude": "node scripts/configure-hivemind-claude.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",

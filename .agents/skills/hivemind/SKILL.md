@@ -1,11 +1,11 @@
 ---
 name: hivemind
-description: HIVEMIND에 연결된 Cloudflare Codex·Claude 작업을 등록하고, 사용자가 요청한 실행 승인·취소·결과 검토를 Codex 앱과 CLI에서 수행한다. 일반 로컬 코드 작업이나 Cloudflare 배포에는 사용하지 않는다.
+description: HIVEMIND에 연결된 Cloudflare Codex·Claude 작업을 등록하고, 사용자가 요청한 실행 승인·취소·결과 검토를 Codex·Claude Code 앱과 CLI에서 수행한다. 일반 로컬 코드 작업이나 Cloudflare 배포에는 사용하지 않는다.
 ---
 
 # HIVEMIND 작업 관제
 
-웹을 열지 않고 프로젝트의 `hivemind` MCP 서버를 사용한다. 도구가 없으면 [연결 안내](../../../docs/codex-integration.md)를 확인한다. MCP 연결을 고치기 위해 사용자 전역 설정이나 원격 인증을 임의로 바꾸지 않는다.
+웹을 열지 않고 프로젝트의 `hivemind` MCP 서버를 사용한다. 도구가 없으면 [Codex 연결 안내](../../../docs/codex-integration.md) 또는 [Claude Code 연결 안내](../../../docs/claude-integration.md)를 확인한다. MCP 연결을 고치기 위해 사용자 전역 설정이나 원격 인증을 임의로 바꾸지 않는다.
 
 ## 작업 등록과 승인
 
@@ -14,7 +14,7 @@ description: HIVEMIND에 연결된 Cloudflare Codex·Claude 작업을 등록하�
 3. 사용자가 해당 작업의 실행을 명시적으로 요청한 경우에만 `hivemind_decide_task`의 `approve`로 실행을 승인한다. “초안만”, “등록만”, “실행하지 마”라는 요청은 실행 승인이 아니다. 현재 대화에서 이미 해당 실행을 요청했다면 같은 확인을 반복하지 않는다. 실행 의도가 없으면 초안을 제시하고 승인을 기다린다.
 4. 승인 직전에 작업 ID와 현재 단계를 확인한다. 실행 승인은 `awaiting_execution_approval`, 결과 수락은 `awaiting_review`에만 적용한다. 단계가 사용자의 요청과 다르면 `approve`를 보내지 않는다. 반려와 취소도 사용자의 해당 의도에 따라 `hivemind_decide_task` 또는 `hivemind_cancel_task`로 기록한다.
 
-Codex의 변경 도구 승인 화면과 HIVEMIND의 실행 승인은 서로 다른 경계다. 초안 생성에 대한 호스트 승인을 원격 실행 의도로 확대하지 않는다.
+호스트의 변경 도구 승인 화면과 HIVEMIND의 실행 승인은 서로 다른 경계다. 초안 생성에 대한 호스트 승인을 원격 실행 의도로 확대하지 않는다.
 
 ## 상태와 결과
 
