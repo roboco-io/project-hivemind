@@ -1,6 +1,8 @@
 # Codex 앱·CLI 연결
 
-HIVEMIND의 주 접점은 Codex 앱과 CLI에서 함께 쓰는 프로젝트 MCP·스킬이다.
+이 문서는 현재 구현된 Codex 등록 어댑터의 사용 안내다.
+1차 지원 대상은 Codex·Claude Code의 앱·CLI 네 접점이며, [지원 설계·미완료 목록](client-support.md)을 따른다.
+Claude Code용 등록·스킬 어댑터는 아직 구현되지 않았다.
 웹 관제실은 선택적인 검증·관리 보조 화면이다. 이 연동은 상시 앱 HUD가 아니다.
 
 MCP는 기존 중앙 HTTP API만 호출한다. SQLite, Cloudflare 제어 토큰과 제공자 인증에는 직접 접근하지 않는다.

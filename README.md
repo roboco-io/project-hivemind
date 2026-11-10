@@ -13,7 +13,9 @@ HIVEMIND는 임시 개발 코드명이다. 공개 제품명은 아직 정하지 
 소스와 문서는 [Apache License 2.0](LICENSE)으로 제공한다.
 별도 라이선스가 표시된 서드파티 코드는 해당 [고지](cloudflare/backend/native/BUBBLEWRAP-NOTICE.md)를 따른다.
 
-현재는 **Codex 앱·CLI의 공통 MCP·스킬을 주 접점으로 쓰는 단일 운영자용 MVP**다.
+**1차 지원 대상은 Codex와 Claude Code의 앱·CLI 네 접점**이다.
+현재는 Codex용 MCP 등록·스킬과 공통 서버를 구현했다. Claude Code의 호스트 등록·스킬과 네 접점의 실제 세션 수용은 미완료다.
+[지원 설계·구현 차이](docs/client-support.md)를 기준으로 지원 수준을 확인한다.
 Codex 대화에서 Codex·Claude 원격 작업을 등록하고 실행 승인·상태·실제 diff·테스트 결과를 조회한다.
 웹 관제실은 선택적인 검증·관리 보조 화면이며, 앱의 상시 HUD는 이번 구현 범위가 아니다.
 

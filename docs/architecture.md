@@ -4,14 +4,19 @@
 
 사람이 목표를 정하고 실행과 결과를 승인한다. 중앙 관제 시스템이 작업 상태와 실행 근거를 관리한다.
 워커는 승인된 작업을 가져와 결과를 보고한다.
-현재 주 접점은 Codex 앱·CLI 공통 MCP·스킬이다. 중앙 API가 Cloudflare Codex·Claude 실행을 조정한다.
+1차 주 접점은 Codex 앱·CLI와 Claude Code 앱·CLI다. 호스트 공통 MCP와 호스트별 스킬·등록 어댑터를 사용한다.
+현재 Codex 등록 어댑터만 구현돼 있으며 실제 호스트 수용 상태는 [지원 표](client-support.md)를 따른다.
+중앙 API는 클라이언트 종류와 별개로 Cloudflare Codex·Claude 워커를 조정한다.
 웹은 검증·관리 보조 접점이며 기존 mock/local과 로컬 제공자 실행도 지원한다.
 자연어 목표 분해·의존성 DAG·모델 선택과 ChatGPT 연결은 후속 기능이다.
 
 ```mermaid
 flowchart TB
-    Human[사람] --> Codex[Codex 앱 / CLI MCP·스킬]
-    Codex --> API
+    Human[사람] --> Codex[Codex 앱 / CLI]
+    Human --> Claude[Claude Code 앱 / CLI]
+    Codex --> MCP[공통 MCP / 호스트 어댑터]
+    Claude --> MCP
+    MCP --> API
     Human --> Web[보조 Web 관제실]
     Web -->|REST / 2초 조회| API[중앙 API]
     API --> Policy[허용 저장소 / 고정 커밋 / 승인 / 분배]
