@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { HiveStore, DomainError, equalSecret, text } from '../../../packages/core/src/store.js';
 import type { CreateTask, RunResult, RepositoryPolicy, Provider, Runtime } from '../../../packages/contracts/src/index.js';
+import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js';
 
-export interface AppOptions { dbPath?: string; operatorToken?: string; workerToken?: string; now?: () => number; repository?: RepositoryPolicy }
+export interface AppOptions { dbPath?: string; operatorToken?: string; workerToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl }
 const string = {type:'string',minLength:1,maxLength:4000};
 const credentials = {workerId:{...string,maxLength:120},leaseToken:{...string,maxLength:120}};
 const body = (properties: Record<string,unknown>, required = Object.keys(properties)) => ({body:{type:'object',additionalProperties:false,required,properties}});
@@ -23,6 +24,8 @@ const executionProperties = {
   claude:{type:'object',additionalProperties:false,required:Object.keys(agentProperties),properties:agentProperties},
 };
 const executionEvidence = {anyOf:[{type:'null'},{type:'object',additionalProperties:false,required:Object.keys(executionProperties).filter(key=>!['setup','codex','claude'].includes(key)),properties:executionProperties}]};
+const taskProperties = {title:{...string,maxLength:160},instructions:{...string,maxLength:12000},budgetMicros:{type:'integer',minimum:0,maximum:1000000000},provider:{type:'string',enum:['mock','codex','claude']},runtime:{type:'string',enum:['local','ecs','cloudflare']},repositoryId:{...string,maxLength:120},baseCommit:{type:'string',pattern:'^[a-fA-F0-9]{40}$'},testProfile:{...string,maxLength:120}};
+const taskRequired = ['title','instructions','budgetMicros','provider','runtime'];
 
 export function buildApp(options: AppOptions = {}) {
   const operatorToken = options.operatorToken ?? 'local-development-only';
@@ -30,7 +33,8 @@ export function buildApp(options: AppOptions = {}) {
   if (!operatorToken.trim() || !workerToken.trim() || equalSecret(operatorToken,workerToken)) throw new Error('Operator and worker tokens must be nonempty and distinct');
   const app = Fastify({bodyLimit:2000000,logger:false,ajv:{customOptions:{coerceTypes:false,removeAdditional:false}}});
   const store = new HiveStore(options.dbPath ?? ':memory:',options.now,options.repository);
-  app.addHook('onClose', async () => store.close());
+  if (options.cloudflare) app.addHook('onReady', async () => options.cloudflare!.start());
+  app.addHook('onClose', async () => { try { await options.cloudflare?.close(); } finally { store.close(); } });
   app.addHook('onRequest',async (_request,reply) => {
     reply.header('cache-control','no-store');
     reply.header('x-content-type-options','nosniff');
@@ -45,17 +49,29 @@ export function buildApp(options: AppOptions = {}) {
     if (!equalSecret(request.headers.authorization ?? '',`Bearer ${token}`)) return reply.code(401).send({error:'Unauthorized'});
   };
   const operator = guard(operatorToken), worker = guard(workerToken);
-  app.get('/health',async () => ({status:'ok',mode:options.repository ? 'local-workers' : 'mock-local'}));
+  app.get('/health',async () => ({status:'ok',mode:options.cloudflare ? (options.repository ? 'hybrid-workers' : 'cloudflare-bridge') : options.repository ? 'local-workers' : 'mock-local'}));
   app.get('/favicon.ico',async (_request,reply) => reply.code(204).send());
   const staticRoot = new URL('../../../../apps/dashboard/public/',import.meta.url);
   for (const [route,file,mime] of [['/','index.html','text/html'],['/app.js','app.js','application/javascript'],['/styles.css','styles.css','text/css'],['/brand/hivemind-logo.png','brand/hivemind-logo.png','image/png'],['/brand/hivemind-bee.png','brand/hivemind-bee.png','image/png']] as const) {
     app.get(route,async (_request,reply) => reply.type(mime.startsWith('image/') ? mime : mime+'; charset=utf-8').send(await readFile(fileURLToPath(new URL(file,staticRoot)))));
   }
-  app.get('/api/capabilities',{preHandler:operator},async () => ({providers:options.repository ? ['mock','codex','claude'] : ['mock'],repository:options.repository ?? null}));
-  app.get('/api/state',{preHandler:operator},async () => store.state());
+  app.get('/api/capabilities',{preHandler:operator},async () => ({providers:options.repository ? ['mock','codex','claude'] : ['mock'],repository:options.repository ?? null,...(options.cloudflare ? {cloudflare:options.cloudflare.capabilities()} : {})}));
+  app.get('/api/state',{preHandler:operator},async () => ({...store.state(),...(options.cloudflare ? {cloudflare:options.cloudflare.state()} : {})}));
+  if (options.cloudflare) {
+    const cloudflare = options.cloudflare;
+    app.post<{Body:CreateTask}>('/api/cloudflare/tasks',{
+      preHandler:operator,schema:body({...taskProperties,provider:{type:'string',enum:['codex','claude']},runtime:{type:'string',const:'cloudflare'}},taskRequired),
+    },async (request,reply) => reply.code(201).send(cloudflare.create(request.body)));
+    app.post<{Params:{id:string};Body:{decision:string;reason:string}}>('/api/cloudflare/tasks/:id/decision',{
+      preHandler:operator,schema:body({decision:{type:'string',enum:['approve','reject']},reason:string}),
+    },async request => cloudflare.decision(request.params.id,request.body.decision,request.body.reason));
+    app.post<{Params:{id:string};Body:{reason:string}}>('/api/cloudflare/tasks/:id/cancel',{
+      preHandler:operator,schema:body({reason:string}),
+    },async request => cloudflare.cancel(request.params.id,request.body.reason));
+  }
   app.post<{Body:CreateTask}>('/api/tasks',{
     preHandler:operator,
-    schema:body({title:{...string,maxLength:160},instructions:{...string,maxLength:12000},budgetMicros:{type:'integer',minimum:0,maximum:1000000000},provider:{type:'string',enum:['mock','codex','claude']},runtime:{type:'string',enum:['local','ecs','cloudflare']},repositoryId:{...string,maxLength:120},baseCommit:{type:'string',pattern:'^[a-fA-F0-9]{40}$'},testProfile:{...string,maxLength:120}},['title','instructions','budgetMicros','provider','runtime']),
+    schema:body(taskProperties,taskRequired),
   },async (request,reply) => reply.code(201).send(store.create(request.body)));
   app.post<{Params:{id:string};Body:{decision:string;reason:string}}>('/api/tasks/:id/decision',{
     preHandler:operator,schema:body({decision:{type:'string',enum:['approve','reject']},reason:string}),

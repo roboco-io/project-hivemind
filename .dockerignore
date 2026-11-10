@@ -11,4 +11,15 @@ outputs
 *.log
 
 .hivemind
-cloudflare/
+.codex
+cloudflare/**
+!cloudflare/backend/
+!cloudflare/backend/package.json
+!cloudflare/backend/src/
+!cloudflare/backend/src/client.ts
+!cloudflare/backend/src/files.ts
+!cloudflare/backend/src/snapshot.ts
+!cloudflare/backend/src/scheduler.ts
+!cloudflare/backend/src/contracts.ts
+!cloudflare/backend/src/runtime/
+!cloudflare/backend/src/runtime/claude-bash-hook.ts
