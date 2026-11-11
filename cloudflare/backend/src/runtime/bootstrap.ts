@@ -1,5 +1,6 @@
+import {timingSafeEqual} from 'node:crypto';
 import {createServer} from 'node:http';
-import {mkdir,open,readFile,stat,writeFile} from 'node:fs/promises';
+import {mkdir,open,readFile,stat,writeFile,rename} from 'node:fs/promises';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {validateRuntimeInput} from './providers.ts';
@@ -19,6 +20,30 @@ export function createBootstrap(runtimeDir='/runtime') {
     let file;try{file=await open(join(runtimeDir,'input.json'),'wx',0o600);}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;const old=JSON.parse(await readFile(join(runtimeDir,'input.json'),'utf8'));return send(JSON.stringify(old)===JSON.stringify(input)?200:409,{prepared:true,jobId:old.jobId,attempt:old.attempt});}
     try{await file.writeFile(JSON.stringify(input));await file.sync();}finally{await file.close();}
     return send(201,{prepared:true,jobId:input.jobId,attempt:input.attempt});
+   }
+   if(path==='/ralph/checkpoint'||path==='/ralph/feedback'){
+    const prepared=await readFile(join(runtimeDir,'input.json'),'utf8').then(JSON.parse,()=>null);
+    const expected=prepared?.ralph?.token, actual=req.headers['x-hivemind-ralph'];
+    if(typeof expected!=='string'||typeof actual!=='string'||Buffer.byteLength(actual)!==Buffer.byteLength(expected)||
+     !timingSafeEqual(Buffer.from(actual),Buffer.from(expected)))return send(403,{error:'Forbidden'});
+    const checkpoint=await readFile(join(runtimeDir,'ralph.json'),'utf8').then(JSON.parse,()=>null);
+    if(!checkpoint)return send(404,{error:'Checkpoint not ready'});
+    if(req.method==='GET'&&path==='/ralph/checkpoint')return send(200,checkpoint);
+    if(req.method==='POST'&&path==='/ralph/feedback'){
+     let body='';for await(const chunk of req){body+=chunk.toString();if(body.length>12000)return send(413,{error:'Feedback too large'});}
+     const value=JSON.parse(body);
+     if(!Number.isInteger(value.round)||value.round<1||value.round>4||
+      value.round!==checkpoint.round||value.snapshotId!==checkpoint.snapshot.digest||
+      typeof value.accepted!=='boolean'||typeof value.message!=='string'||value.message.length>2000)return send(409,{error:'Feedback mismatch'});
+     const final=join(runtimeDir,`feedback-${value.round}.json`);
+     const data=JSON.stringify({accepted:value.accepted,message:value.message});
+     const old=await readFile(final,'utf8').catch(()=>null);
+     if(old!==null)return send(old===data?200:409,{recorded:old===data});
+     const temp=final+'.pending';
+     await writeFile(temp,data,{mode:0o600});
+     await rename(temp,final);
+     return send(200,{recorded:true});
+    }
    }
    if(req.method==='GET'&&path==='/state'){
     const exists=async(name:string)=>stat(join(runtimeDir,name)).then(()=>true,()=>false);

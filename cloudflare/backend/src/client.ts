@@ -2,10 +2,18 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { JobSpec, JobRecord, Snapshot, RuntimeResult, ProcessResult } from './contracts.ts';
+import {validateWorkflowSpec,type WorkflowRecord,type WorkflowSpec} from './workflow.ts';
 import { validateSnapshot } from './snapshot.ts';
 import { readSnapshot, applySnapshot } from './files.ts';
 import { parseSandboxReceipts } from './runtime/claude-bash-hook.ts';
 
+function checkedWorkflow(value:unknown,expected?:string):WorkflowRecord {
+ const result=object(value);
+ if(typeof result.id!=='string'||!/^[a-f0-9-]{36}$/.test(result.id)||(expected&&expected!==result.id)||
+   !['DRAFT','RUNNING','INTEGRATING','SUCCEEDED','FAILED'].includes(String(result.status)))throw new Error('Invalid workflow response');
+ validateWorkflowSpec(result.spec);
+ return result as unknown as WorkflowRecord;
+}
 const statuses=new Set(['QUEUED','STARTING','RUNNING','VERIFYING','SAVING','SUCCEEDED','FAILED','CANCELLING','CANCELLED','TIMED_OUT','NEEDS_REAUTH','AUTH_SYNC_FAILED']);
 const object=(value:unknown):Record<string,unknown>=>{if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Invalid backend response');return value as Record<string,unknown>;};
 function jobId(value:unknown):string{if(typeof value!=='string'||!/^[A-Za-z0-9_-]{1,160}$/.test(value))throw new Error('Invalid job ID');return value;}
@@ -78,6 +86,18 @@ export function createClient(baseUrl:string,controlToken:string,fetchImpl:typeof
   return responseJson(response);
  };
  return {
+  async draftWorkflow(spec:WorkflowSpec):Promise<WorkflowRecord>{
+   return checkedWorkflow(await request('/v1/workflows','POST',validateWorkflowSpec(spec)));
+  },
+  async approveWorkflow(id:string):Promise<WorkflowRecord>{
+   return checkedWorkflow(await request(`/v1/workflows/${jobId(id)}/approve`,'POST'),id);
+  },
+  async getWorkflow(id:string,includeResult=false):Promise<Record<string,unknown>>{
+   const result=object(await request(`/v1/workflows/${jobId(id)}${includeResult?'/result':''}`));
+   const workflow=checkedWorkflow(result.workflow,id);
+   if(includeResult&&result.output!==undefined&&validateSnapshot(result.output).digest!==workflow.outputSnapshotId)throw new Error('Workflow output digest mismatch');
+   return result;
+  },
   async upload(value:Snapshot):Promise<string>{const snapshot=validateSnapshot(value);const result=object(await request(`/v1/snapshots/${snapshot.digest}`,'PUT',snapshot));if(result.snapshotId!==snapshot.digest)throw new Error('Backend snapshot ID mismatch');return snapshot.digest;},
   async submit(spec:JobSpec):Promise<JobRecord>{return checkedJob(await request('/v1/jobs','POST',spec));},
   async get(id:string):Promise<JobRecord>{return checkedJob(await request(`/v1/jobs/${encodeURIComponent(jobId(id))}`),id);},
@@ -97,9 +117,26 @@ export async function runClientCli(args:string[],env:NodeJS.ProcessEnv=process.e
   if(b==='--out')await writeFile(c!,JSON.stringify(snapshot)+'\n',{mode:0o600,flag:'wx'});
   print(JSON.stringify({snapshotId:snapshot.digest,fileCount:snapshot.files.length,files:snapshot.files.map(({path,sha256,executable})=>({path,sha256,executable}))}));return;
  }
- if(!['upload','submit','get','result','apply'].includes(command??''))throw new Error('Commands: snapshot, upload, submit, get, result, apply');
+ if(!['upload','submit','get','result','apply','workflow-draft','workflow-approve','workflow-get','workflow-result'].includes(command??''))throw new Error('Commands: snapshot, upload, submit, get, result, apply, workflow-draft, workflow-approve, workflow-get, workflow-result');
  if(!env.HIVEMIND_URL||!env.HIVEMIND_CONTROL_TOKEN)throw new Error('Set HIVEMIND_URL and HIVEMIND_CONTROL_TOKEN');
  const client=createClient(env.HIVEMIND_URL,env.HIVEMIND_CONTROL_TOKEN,fetchImpl);
+ if(command==='workflow-draft'){
+  if(!a||args.length!==2)throw new Error('Usage: workflow-draft PLAN.json');
+  print(JSON.stringify(await client.draftWorkflow(JSON.parse(await readFile(a,'utf8')))));
+  return;
+ }
+ if(command==='workflow-approve'||command==='workflow-get'){
+  if(!a||args.length!==2)throw new Error(`Usage: ${command} WORKFLOW-ID`);
+  print(JSON.stringify(command==='workflow-approve'?await client.approveWorkflow(a):await client.getWorkflow(a)));
+  return;
+ }
+ if(command==='workflow-result'){
+  if(!a||b!=='--out'||!c||args.length!==4)throw new Error('Usage: workflow-result WORKFLOW-ID --out RESULT.json');
+  const result=await client.getWorkflow(a,true);
+  await writeFile(c,JSON.stringify(result)+'\n',{mode:0o600,flag:'wx'});
+  print(JSON.stringify(result.workflow));
+  return;
+ }
  if(command==='upload'){if(!a||b)throw new Error('Usage: upload DIRECTORY');const snapshot=await readSnapshot(a);print(JSON.stringify({snapshotId:await client.upload(snapshot),fileCount:snapshot.files.length}));return;}
  if(command==='submit'){if(!a||b)throw new Error('Usage: submit JOB-SPEC.json');let spec:JobSpec;try{spec=JSON.parse(await readFile(a,'utf8'));}catch{throw new Error('Could not read a JSON job specification');}print(JSON.stringify(summary(await client.submit(spec))));return;}
  if(command==='get'){if(!a||b)throw new Error('Usage: get JOB-ID');print(JSON.stringify(summary(await client.get(a))));return;}

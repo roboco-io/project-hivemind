@@ -129,3 +129,19 @@ node src/client.ts apply JOB_ID /path/to/source
 이 백엔드는 초기 실행 슬라이스다. 기존 로컬 대시보드는 별도 프로토타입이며 원격 UI 연결은 후속 작업이다.
 외부 Queue, 고급 MCP compute 제출, 자동 장애 재시도, AWS 수용 검증은 이번 구현 범위 밖이다.
 원격 수용 상태와 실패는 `../docs/phase0/` 및 별도 원격 증거 문서에 기록한다.
+
+## 두 워커의 원격 통합 워크플로
+
+공통 계약 파일과 소스 snapshot을 고정한다. 계획에는 `snapshotId`, `contractPath`, `contractHash`(계약 파일의 SHA-256), `idempotencyKey`, `workers`, `integration`을 담는다. `workers`에는 Codex·Claude를 한 번씩 지정한다. 각 항목은 `provider`, `credentialId`, `writes`(허용 경로), `instructions`, `checks`, `timeoutMs`를 포함한다. `integration`은 두 변경을 합친 snapshot에서 실행할 별도 CheckSpec이다. 계약과 검증 스크립트는 워커의 쓰기 범위 밖에 둔다.
+
+```sh
+node src/client.ts upload /path/to/source
+node src/client.ts workflow-draft /path/to/plan.json
+node src/client.ts workflow-approve WORKFLOW-ID
+node src/client.ts workflow-get WORKFLOW-ID
+node src/client.ts workflow-result WORKFLOW-ID --out result.json
+```
+
+초안은 워커를 만들지 않는다. 승인하면 두 작업을 원격 스케줄러에 함께 기록한다. 각 워커는 한 모델 세션에서 최대 3번의 구현·검증을 수행한다. 별도 검증 컨테이너가 해당 라운드의 불변 snapshot을 검사한다. 실패하면 검증 결과를 전달하고 같은 세션을 재개한다. 작업의 시간 제한은 검증 대기까지 포함한다.
+
+두 워커의 검증 성공·인증 회수·컨테이너 종료가 확인되면 허용 경로의 변경을 합친다. 계약 또는 다른 워커의 경로가 변경되거나 통합 테스트가 실패하면 실패 상태를 기록한다. 완료된 결과는 조회용이며 원본 저장소에 대한 적용은 운영자가 결정한다. 승인 이후 진행은 Durable Object의 alarm에서 이루어진다. 로컬 CLI를 종료한 뒤 다른 프로세스로 조회할 수 있다.

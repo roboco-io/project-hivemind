@@ -47,6 +47,14 @@ export class Scheduler {
  private saveReceipt(job:JobRecord,hash:string){this.state.completionReceipts![this.receiptKey(job)]=hash;}
  get(id:string):JobRecord{return copy(this.record(id));}
  list():JobRecord[]{return Object.values(this.state.jobs).map(copy);}
+ enqueueCompute(snapshotId:string, spec:CheckSpec, time:number):JobRecord {
+  now(time);const verified=check(spec);
+  const job:JobRecord={id:randomUUID(),attempt:randomUUID(),kind:'compute',checkId:verified.id,
+   snapshotId:digest(snapshotId,'snapshot id'),argv:verified.argv,timeoutMs:verified.timeoutMs,
+   checks:[],childIds:[],status:'QUEUED',createdAt:time,deadline:0,containerStopped:true,authSynced:true};
+  this.state.jobs[job.id]=job;
+  return copy(job);
+ }
  registerCredential(record:CredentialRecord):void {
   const credential:CredentialRecord={id:id(record.id,'credential id'),provider:provider(record.provider),generation:number(record.generation,'credential generation'),objectKey:objectKey(record.objectKey),quarantined:false};
   if(record.quarantined!==false||record.activeJobId!==undefined)throw new SchedulerError('Credential registration must be ready and unowned',400);
@@ -73,7 +81,7 @@ export class Scheduler {
     if(agents>=2)continue;const credential=this.credential(job.credentialId!);if(credential.quarantined||credential.activeJobId)continue;
     credential.activeJobId=job.id;job.credentialGeneration=credential.generation;agents++;
    }else{
-    if(compute>=4)continue;const parent=this.record(job.parentId!);if(parent.status!=='VERIFYING'){this.cancelOne(job,'CANCELLED',time);continue;}compute++;
+    if(compute>=4)continue;const parent=job.parentId?this.record(job.parentId):undefined;if(parent&&parent.status!=='VERIFYING'){this.cancelOne(job,'CANCELLED',time);continue;}compute++;
    }
    job.status='STARTING';job.containerStopped=false;job.startedAt=time;
    job.deadline=number(time+job.timeoutMs,'deadline');if(job.parentId)job.deadline=Math.min(job.deadline,this.record(job.parentId).deadline);
@@ -104,12 +112,17 @@ export class Scheduler {
   }
   credential.generation=outcome.authGeneration;credential.objectKey=key;delete credential.activeJobId;
   job.containerStopped=true;job.authSynced=true;
+  for(const id of job.checkpoint?.checkIds??[])this.cancelOne(this.record(id),'CANCELLED',time);
   if(job.deadline<=time&&!job.cancellationRequested){job.cancellationRequested=true;job.errorCode='TIMED_OUT';}
   if(job.cancellationRequested){job.status=job.errorCode==='TIMED_OUT'?'TIMED_OUT':'CANCELLED';job.finishedAt=time;}
   else if(!outcome.success||!job.outputSnapshotId){job.status=errorCode==='NEEDS_REAUTH'?'NEEDS_REAUTH':errorCode==='TIMED_OUT'?'TIMED_OUT':'FAILED';job.errorCode=errorCode??(!job.outputSnapshotId?'MISSING_OUTPUT_SNAPSHOT':'AGENT_FAILED');job.finishedAt=time;if(job.status==='NEEDS_REAUTH')credential.quarantined=true;}
   else{
    job.status='VERIFYING';
-   for(const required of job.checks){
+   if(job.ralph&&job.checkpoint?.snapshotId===job.outputSnapshotId&&job.checkpoint.checkIds.length===job.checks.length){
+    job.childIds=[...job.checkpoint.checkIds];
+    for(const id of job.childIds)this.record(id).parentId=job.id;
+    this.settleParent(job.id,time);
+   }else for(const required of job.checks){
     const child:JobRecord={id:randomUUID(),attempt:randomUUID(),kind:'compute',parentId:job.id,checkId:required.id,snapshotId:job.outputSnapshotId,argv:copy(required.argv),checks:[],childIds:[],status:'QUEUED',createdAt:time,deadline:0,timeoutMs:required.timeoutMs,containerStopped:true,authSynced:true};
     this.state.jobs[child.id]=child;job.childIds.push(child.id);
    }
@@ -129,7 +142,7 @@ export class Scheduler {
   if(job.cancellationRequested)job.status=job.errorCode==='TIMED_OUT'?'TIMED_OUT':'CANCELLED';
   else if(outcome.success&&outcome.sourceUnchanged){job.status='SUCCEEDED';delete job.errorCode;}
   else{job.status='FAILED';job.errorCode=!outcome.sourceUnchanged?'SOURCE_CHANGED':errorCode??'CHECK_FAILED';}
-  this.saveReceipt(job,hash);this.settleParent(job.parentId!,time);return copy(job);
+  this.saveReceipt(job,hash);if(job.parentId)this.settleParent(job.parentId,time);return copy(job);
  }
  quarantine(id:string,attempt:string,code:string,time:number,containerStopped=false):JobRecord {
   now(time);const job=this.attempt(id,attempt);string(code,'error code',200);
@@ -137,11 +150,12 @@ export class Scheduler {
    if(job.authSynced)throw new SchedulerError('Cannot quarantine a released credential owner');
    if(terminal(job.status)&&job.status!=='AUTH_SYNC_FAILED')throw new SchedulerError('Agent is already terminal');
    const credential=this.credential(job.credentialId!);if(credential.activeJobId!==job.id)throw new SchedulerError('Credential ownership changed');
+   for(const id of job.checkpoint?.checkIds??[])this.cancelOne(this.record(id),'CANCELLED',time);
    credential.quarantined=true;job.status='AUTH_SYNC_FAILED';job.errorCode=code;job.containerStopped=job.containerStopped||containerStopped;job.finishedAt=time;
   }else{
    if(terminal(job.status)){if(!job.containerStopped)job.containerStopped=containerStopped;return copy(job);}
    job.errorCode=code;job.containerStopped=containerStopped;
-   if(containerStopped){job.status='FAILED';job.finishedAt=time;this.settleParent(job.parentId!,time);}else job.status='CANCELLING';
+   if(containerStopped){job.status='FAILED';job.finishedAt=time;if(job.parentId)this.settleParent(job.parentId,time);}else job.status='CANCELLING';
   }
   return copy(job);
  }
@@ -155,9 +169,9 @@ export class Scheduler {
   const job=this.record(id);if(terminal(job.status))return [];
   const changed:JobRecord[]=[];this.cancelOne(job,reason,time);changed.push(copy(job));
   if(job.kind==='agent'){
-   for(const childId of job.childIds){const child=this.record(childId);if(!terminal(child.status)){this.cancelOne(child,reason,time);changed.push(copy(child));}}
+   for(const childId of new Set([...job.childIds,...(job.checkpoint?.checkIds??[])])){const child=this.record(childId);if(!terminal(child.status)){this.cancelOne(child,reason,time);changed.push(copy(child));}}
    this.settleParent(job.id,time);
-  }else this.settleParent(job.parentId!,time);
+  }else if(job.parentId)this.settleParent(job.parentId,time);
   return changed;
  }
  requestCancel(id:string,time:number):JobRecord[]{now(time);return this.cancel(id,'CANCELLED',time);}

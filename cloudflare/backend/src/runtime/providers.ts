@@ -1,5 +1,5 @@
 import type {RuntimeInput,Provider,ProcessResult} from '../contracts.ts';
-import {validateSnapshot} from '../snapshot.ts';
+import {canonicalSourcePath,validateSnapshot} from '../snapshot.ts';
 import {claudeOuterSandboxSettings} from './claude-guard-policy.ts';
 import {isDeepStrictEqual} from 'node:util';
 export interface ProviderPaths {home:string;privateDir:string;workspace:string;scriptRoot:string}
@@ -7,16 +7,24 @@ const object=(x:unknown):Record<string,any>|null=>x!==null&&typeof x==='object'&
 const string=(x:unknown,max=24000):x is string=>typeof x==='string'&&x.length>0&&x.length<=max&&!x.includes('\0');
 export function validateRuntimeInput(input:unknown):RuntimeInput {
  const v=object(input);if(!v)throw new Error('Invalid runtime input');
- const allowed=['version','jobId','attempt','mode','provider','instructions','snapshot','argv','timeoutMs','auth','authReturnPublicKey','claudeNestedCompatible'];
+ const allowed=['version','jobId','attempt','mode','provider','instructions','snapshot','argv','timeoutMs','auth','authReturnPublicKey','claudeNestedCompatible','ralph'];
  if(Object.keys(v).some(k=>!allowed.includes(k)))throw new Error('Unknown runtime field');
  if(v.version!==1||!string(v.jobId,120)||!string(v.attempt,120)||!/^[A-Za-z0-9_-]+$/.test(v.jobId)||!/^[A-Za-z0-9_-]+$/.test(v.attempt)||!['agent','compute'].includes(v.mode)||!Number.isSafeInteger(v.timeoutMs)||v.timeoutMs<1||v.timeoutMs>3600000)throw new Error('Invalid runtime identity or deadline');
  v.snapshot=validateSnapshot(v.snapshot);
  if(v.mode==='compute'){
-  if(v.auth!==undefined||v.provider!==undefined||v.authReturnPublicKey!==undefined||v.instructions!==undefined||v.claudeNestedCompatible!==undefined)throw new Error('Compute cannot receive provider authentication or agent settings');
+  if(v.auth!==undefined||v.provider!==undefined||v.authReturnPublicKey!==undefined||v.instructions!==undefined||v.claudeNestedCompatible!==undefined||v.ralph!==undefined)throw new Error('Compute cannot receive provider authentication or agent settings');
   if(!Array.isArray(v.argv)||!v.argv.length||v.argv.length>32||v.argv.some((x:unknown)=>!string(x,1000)))throw new Error('Invalid compute argv');
  }else{
   if(!['codex','claude'].includes(v.provider)||!string(v.instructions)||!string(v.auth,262144)||!string(v.authReturnPublicKey,10000)||v.argv!==undefined)throw new Error('Agent authentication and instructions are required');
   if(v.claudeNestedCompatible!==undefined&&typeof v.claudeNestedCompatible!=='boolean')throw new Error('Invalid sandbox policy');
+  if(v.ralph!==undefined){
+   const r=object(v.ralph);
+   if(!r||Object.keys(r).some(k=>!['maxRounds','writes','token'].includes(k))||
+    !Number.isSafeInteger(r.maxRounds)||r.maxRounds<1||r.maxRounds>4||
+    !Array.isArray(r.writes)||r.writes.length<1||r.writes.length>32||
+    !r.writes.every((p:unknown)=>canonicalSourcePath(p)===p)||
+    typeof r.token!=='string'||!/^[a-f0-9]{64}$/.test(r.token))throw new Error('Invalid Ralph policy');
+  }
   if(v.provider==='codex'){
    let auth;try{auth=JSON.parse(v.auth);}catch{throw new Error('Invalid subscription auth');}
    if(auth.auth_mode!=='chatgpt'||!object(auth.tokens)||!string(auth.tokens.access_token,262144)||!string(auth.tokens.refresh_token,262144)||auth.OPENAI_API_KEY)throw new Error('Codex requires subscription authentication');
@@ -24,12 +32,13 @@ export function validateRuntimeInput(input:unknown):RuntimeInput {
  }
  return v as unknown as RuntimeInput;
 }
-export function providerArgs(provider:Provider,instructions:string,paths:ProviderPaths):string[] {
+export function providerArgs(provider:Provider,instructions:string,paths:ProviderPaths,sessionId?:string):string[] {
+ if(sessionId!==undefined&&!/^[a-f0-9-]{36}$/i.test(sessionId))throw new Error('Invalid provider session');
  if(provider==='codex'){
   const denied=[...new Set(['/runtime','/proc',paths.home+'/.codex/auth.json',paths.privateDir])].map(path=>`${JSON.stringify(path)}="deny"`).join(',');
-  return ['-a','never','-c','cli_auth_credentials_store="file"','-c','default_permissions="hivemind"','-c',`permissions.hivemind={extends=":workspace",filesystem={${denied}}}`,'-c','agents.enabled=true','-c','agents.max_concurrent_threads_per_session=3','-c','mcp_servers.phase0.command="node"','-c',`mcp_servers.phase0.args=[${JSON.stringify(paths.scriptRoot+'/mcp-server.ts')}]`,'-c','mcp_servers.phase0.required=true','exec','--json','--skip-git-repo-check',instructions];
+  return ['-a','never','-c','cli_auth_credentials_store="file"','-c','default_permissions="hivemind"','-c',`permissions.hivemind={extends=":workspace",filesystem={${denied}}}`,'-c','agents.enabled=true','-c','agents.max_concurrent_threads_per_session=3','-c','mcp_servers.phase0.command="node"','-c',`mcp_servers.phase0.args=[${JSON.stringify(paths.scriptRoot+'/mcp-server.ts')}]`,'-c','mcp_servers.phase0.required=true','exec',...(sessionId?['resume','--json','--skip-git-repo-check',sessionId]:['--json','--skip-git-repo-check']),instructions];
  }
- return ['-p','--restricted','--output-format','stream-json','--verbose','--settings',paths.privateDir+'/settings.json','--strict-mcp-config','--mcp-config',paths.privateDir+'/mcp.json','--permission-mode','dontAsk','--permission-prompts','none','--tools','Bash,Agent','--allowedTools','Bash,Agent,mcp__phase0__phase0_probe','--disallowedTools','Write,Edit,NotebookEdit','--disable-slash-commands','--forward-subagent-text','--include-hook-events','--agents',JSON.stringify({worker:{description:'Perform an independent coding task in the workspace.',prompt:'Use sandboxed Bash only. Do not inspect credentials, private runtime state or environment secrets.',tools:['Bash']}}),'--',instructions];
+ return ['-p',...(sessionId?['--resume',sessionId]:[]),'--restricted','--output-format','stream-json','--verbose','--settings',paths.privateDir+'/settings.json','--strict-mcp-config','--mcp-config',paths.privateDir+'/mcp.json','--permission-mode','dontAsk','--permission-prompts','none','--tools','Bash,Agent','--allowedTools','Bash,Agent,mcp__phase0__phase0_probe','--disallowedTools','Write,Edit,NotebookEdit','--disable-slash-commands','--forward-subagent-text','--include-hook-events','--agents',JSON.stringify({worker:{description:'Perform an independent coding task in the workspace.',prompt:'Use sandboxed Bash only. Do not inspect credentials, private runtime state or environment secrets.',tools:['Bash']}}),'--',instructions];
 }
 export function claudeSettings(paths:ProviderPaths,nested:boolean):Record<string,unknown> {
  const hook=[{matcher:'^worker$',hooks:[{type:'command',command:`node ${paths.scriptRoot}/claude-agent-hook.ts`,timeout:5}]}];

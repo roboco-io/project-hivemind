@@ -1,6 +1,7 @@
 import type {JobSpec,Provider,Snapshot} from '../contracts.ts';
 import {validateJobSpec} from '../scheduler.ts';
 import {validateSnapshot} from '../snapshot.ts';
+import {validateWorkflowSpec,type WorkflowSpec} from '../workflow.ts';
 import {validateAuth} from '../crypto.ts';
 
 export const MAX_BODY_BYTES=8*1024*1024;
@@ -14,6 +15,9 @@ export interface ApiService {
  job(id:string):Promise<unknown>;
  cancel(id:string):Promise<unknown>;
  result(id:string):Promise<unknown>;
+ createWorkflow?(spec:WorkflowSpec):Promise<unknown>;
+ approveWorkflow?(id:string):Promise<unknown>;
+ workflow?(id:string,includeResult:boolean):Promise<unknown>;
 }
 export const json=(value:unknown,status=200)=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json','cache-control':'no-store'}});
 export function authorize(request:Request,token:string|undefined):Response|null {
@@ -40,7 +44,16 @@ export async function handleApi(request:Request,token:string|undefined,service:A
   if(request.method==='PUT'&&(match=/^\/v1\/snapshots\/([a-f0-9]{64})$/.exec(path))){let snapshot:Snapshot;try{snapshot=validateSnapshot(await body(request));}catch(error){if(error instanceof ApiError)throw error;throw new ApiError(400);}if(snapshot.digest!==match[1])throw new ApiError(400);return json(await service.putSnapshot(snapshot),201);}
   if(request.method==='POST'&&(match=/^\/v1\/credentials\/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})$/.exec(path))){const value=await body(request);if(!value||typeof value!=='object'||Array.isArray(value))throw new ApiError(400);const data=value as Record<string,unknown>;if(Object.keys(data).some(k=>!['provider','auth'].includes(k))||(data.provider!=='codex'&&data.provider!=='claude'))throw new ApiError(400);let auth:string;try{auth=validateAuth(data.provider,data.auth);}catch{throw new ApiError(400);}return json(await service.registerCredential(match[1]!,data.provider,auth),201);}
   if(request.method==='GET'&&path==='/v1/credentials')return json(await service.credentials());
-  if(request.method==='POST'&&path==='/v1/jobs'){let spec:JobSpec;try{spec=validateJobSpec(await body(request));}catch(error){if(error instanceof ApiError)throw error;throw new ApiError(400);}return json(await service.submit(spec),202);}
+  if(request.method==='POST'&&path==='/v1/workflows'&&service.createWorkflow){
+   const raw=await body(request);
+   let spec:WorkflowSpec;try{spec=validateWorkflowSpec(raw);}catch{throw new ApiError(400);}
+   return json(await service.createWorkflow(spec),201);
+  }
+  if((match=/^\/v1\/workflows\/([a-f0-9-]{36})(\/approve|\/result)?$/.exec(path))){
+   if(request.method==='POST'&&match[2]==='/approve'&&service.approveWorkflow)return json(await service.approveWorkflow(match[1]!),202);
+   if(request.method==='GET'&&match[2]!=='/approve'&&service.workflow)return json(await service.workflow(match[1]!,match[2]==='/result'));
+  }
+  if(request.method==='POST'&&path==='/v1/jobs'){let spec:JobSpec;try{spec=validateJobSpec(await body(request));}catch(error){if(error instanceof ApiError)throw error;throw new ApiError(400);}if(spec.idempotencyKey.startsWith('workflow:'))throw new ApiError(400);return json(await service.submit(spec),202);}
   if(request.method==='GET'&&path==='/v1/jobs')return json(await service.jobs());
   if((match=/^\/v1\/jobs\/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})(\/cancel|\/result)?$/.exec(path))){if(request.method==='GET'&&!match[2])return json(await service.job(match[1]!));if(request.method==='GET'&&match[2]==='/result')return json(await service.result(match[1]!));if(request.method==='POST'&&match[2]==='/cancel')return json(await service.cancel(match[1]!),202);}
   return json({error:'Not found'},404);
