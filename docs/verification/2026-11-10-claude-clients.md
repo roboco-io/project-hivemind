@@ -1,6 +1,6 @@
 # Claude Code 등록·스킬과 실제 클라이언트 검증
 
-검증일: 2026-11-10. macOS, Node.js 24.14.0. AWS와 Cloudflare 배포·인증 원본 재등록은 수행하지 않았다.
+검증일: 2026-11-10~11. macOS, Node.js 24.14.0. AWS와 Cloudflare 배포·인증 원본 재등록은 수행하지 않았다.
 
 ## 구현과 설정 보존
 
@@ -15,12 +15,18 @@
 |---|---|---|
 | Codex CLI 0.167.0 | `$hivemind` 실제 세션: `hivemind_status`, `hivemind_list_tasks`, 기존 두 작업의 `hivemind_get_result` 성공·정상 종료 | 이 호스트에서 새 원격 실행·승인·취소·재시작 전체 수용 |
 | Claude Code CLI 2.1.321 | `/hivemind` 실제 세션: 공통 원본 `Read`, status/list와 두 결과 도구 호출, `result.success` | 새 원격 실행·승인·취소·재시작 전체 수용 |
-| Codex 앱 | 자동 조작 도구가 앱 접근을 보안상 거부함. 현재 세션에 HIVEMIND MCP 도구도 노출되지 않음 | 사용자 새 앱 세션의 실제 검증 필요 |
+| Codex 앱 | 2026-11-11, 실제 로컬 Codex 앱 채팅(0.167.0-alpha.3.2): status/list와 두 get_result 조회 통과 | 새 원격 실행·승인·재시작 전체 수용 |
 | Claude Code 앱의 로컬 Code 탭 | 사용자 승인 후 실제 로컬 Code 세션: `/hivemind` 발견·공통 원본 Read·status/list·두 get_result 호출 4회와 화면 결과 확인 | 새 원격 실행·승인·재시작 전체 수용 |
 
 Claude 앱 세션 `local_213bfe72-3d91-4ed4-bf1a-55f264a12258`의 도구 이력을 펼쳐 실제 원본 경로와 도구 호출 네 건을 확인했다. 앱 응답은 2026-11-10T10:25:38Z 조회 기준 ready·작업 4건과 두 워커 결과를 표시했다. 사용자에게 승인받은 검증 폴더만 신뢰했으며 다른 전역 보안 설정은 바꾸지 않았다.
 
 CLI 검증은 설치된 실제 클라이언트와 모델 세션으로 수행했다. SDK로 대체하지 않았다. 조회 전용 도구만 세션에 허용했고 권한 우회 옵션은 사용하지 않았다. 새 유료 원격 작업은 만들지 않았다.
+
+## Codex 앱에서 도구가 없던 경우
+
+기존 데스크톱 Work 대화에서는 작업 폴더가 Hivemind여도 스킬만 인식되고 MCP 도구는 노출되지 않았다. 같은 앱 버전에서 Hivemind 프로젝트를 선택해 새 로컬 Codex 채팅을 만들자, 재시작이나 설정 변경 없이 도구가 노출됐다. 이 비교는 채팅 모드와 초기 설정이 달라진 경우의 복구를 확인한다. 개별 내부 조건까지 분리해 확인한 것은 아니다.
+
+새 채팅의 실제 MCP 결과와 완료 기록을 확인했다. 셸·CLI·HTTP 직접 호출로 대체하지 않았고, 프로젝트·전역 Codex 설정 파일의 해시는 전후 동일했다. [로컬 채팅 설정 안내](../codex-integration.md)를 따른다.
 
 ## 실제 조회 결과
 
@@ -31,7 +37,7 @@ CLI 검증은 설치된 실제 클라이언트와 모델 세션으로 수행했�
 | Codex | `cf-e217d1da-4258-4a07-a91c-26183ed01873` | `completed` / `SUCCEEDED`, 실제 alpha·beta 함수 수정 diff |
 | Claude | `cf-73aee5c9-910a-40a2-8f23-d6ff82fcb5d7` | `awaiting_review` / `SUCCEEDED`, 실제 add·multiply 함수 수정 diff |
 
-두 CLI가 각 작업의 diff와 agent·check 로그를 조회했다. 두 작업 모두 agent 종료 코드 0, `unit-a`·`unit-b` 성공이다. 각 검증의 `node verify.mjs`는 테스트 2개 통과·실패 0·종료 코드 0을 반환했다. `credentialsAbsent`, `sourceUnchanged`, `authSynced`, `containerStopped`는 true다. 요청한 출력의 잘림 표시는 false였다. 비용은 null로 미확정이며, 상세 인증 저장 로그와 별도 종료 로그는 미제공이다.
+두 앱과 두 CLI가 각 작업의 diff와 agent·check 로그를 조회했다. 두 작업 모두 agent 종료 코드 0, `unit-a`·`unit-b` 성공이다. 각 검증의 `node verify.mjs`는 테스트 2개 통과·실패 0·종료 코드 0을 반환했다. `credentialsAbsent`, `sourceUnchanged`, `authSynced`, `containerStopped`는 true다. 요청한 출력의 잘림 표시는 false였다. 비용은 null로 미확정이며, 상세 인증 저장 로그와 별도 종료 로그는 미제공이다.
 
 ## 자동 검사와 완료 경계
 

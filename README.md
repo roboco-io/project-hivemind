@@ -14,7 +14,7 @@ HIVEMIND는 임시 개발 코드명이다. 공개 제품명은 아직 정하지 
 별도 라이선스가 표시된 서드파티 코드는 해당 [고지](cloudflare/backend/native/BUBBLEWRAP-NOTICE.md)를 따른다.
 
 **1차 지원 대상은 Codex와 Claude Code의 앱·CLI 네 접점**이다.
-Codex·Claude Code용 프로젝트 MCP 등록 도구와 스킬을 구현했다. 실제 CLI 조회를 검증했으며, 앱을 포함한 전체 종단 수용은 [검증 기록](docs/verification/2026-11-10-claude-clients.md)에 구분해 기록한다.
+Codex·Claude Code용 프로젝트 MCP 등록 도구와 스킬을 구현했다. 네 앱·CLI에서 실제 상태와 결과 조회를 검증했으며, 새 원격 작업의 전체 실행 수용은 [검증 기록](docs/verification/2026-11-10-claude-clients.md)에 구분해 기록한다.
 [지원 설계·구현 차이](docs/client-support.md)를 기준으로 지원 수준을 확인한다.
 연결한 대화에서 Codex·Claude 원격 작업을 등록하고 실행 승인·상태·실제 diff·테스트 결과를 조회한다.
 웹 관제실은 선택적인 검증·관리 보조 화면이며, 앱의 상시 HUD는 이번 구현 범위가 아니다.

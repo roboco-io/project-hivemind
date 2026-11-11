@@ -48,7 +48,8 @@ Cloudflare `CONTROL_TOKEN`과 제공자 인증 파일은 MCP 설정에 넣지 �
 기존 `.gitignore`와 사용자 전역 `~/.codex` 설정은 수정하지 않는다.
 
 프로젝트를 신뢰한 상태에서 열어야 프로젝트 설정이 적용된다.
-설정 후 새 Codex 세션을 열고, 도구나 스킬이 보이지 않으면 앱 또는 CLI를 다시 시작한다.
+Codex 앱에서는 모드를 **Codex**로 바꾸고, Hivemind 프로젝트를 선택한 뒤 **이 컴퓨터**에서 새 로컬 채팅을 연다. 첫 확인은 등록 파일이 있는 원래 프로젝트에서 한다. `/mcp`로 연결을 확인한다.
+기존 ChatGPT Work 채팅에서 작업 폴더를 Hivemind로 설정하면 스킬은 보여도 프로젝트 MCP 도구가 없을 수 있다. 이 경우 전역에 다시 등록하거나 앱을 재시작하기 전에 위의 새 로컬 채팅에서 확인한다. [Codex 실행 모드](https://learn.chatgpt.com/docs/environments/modes) · [앱 MCP 확인](https://learn.chatgpt.com/docs/extend/mcp)
 스킬은 저장소의 `.agents/skills/hivemind/SKILL.md`에 있으며 `$hivemind`로 호출할 수 있다.
 프로젝트 설정과 스킬 탐색은 [공식 MCP 안내](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)와 [공식 스킬 안내](https://learn.chatgpt.com/docs/build-skills)를 따른다.
 
