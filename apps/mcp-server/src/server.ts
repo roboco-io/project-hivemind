@@ -1,3 +1,4 @@
+import {workflowApproval,workflowDraft,workflowId,workflowList,workflowRegistration,workflowView} from '../../../packages/contracts/src/workflow.js';
 import { constants, openSync, closeSync, fstatSync, readFileSync } from 'node:fs';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -82,7 +83,7 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
     const response = await fetchImpl(new URL(path, settings.apiUrl), {
       method: body === undefined ? 'GET' : 'POST', redirect: 'error',
       headers: { authorization: 'Bearer ' + settings.operatorToken, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
-      ...(encoded === undefined ? {} : { body: encoded }), signal: AbortSignal.any([signal, AbortSignal.timeout(10000)])
+      ...(encoded === undefined ? {} : { body: encoded }), signal: AbortSignal.any([signal, AbortSignal.timeout(path.startsWith('/api/cloudflare/workflows')?30000:10000)])
     });
     if (!response.ok || Number(response.headers.get('content-length')) > 2_000_000 || !response.body) { await response.body?.cancel(); throw new Error(toolError); }
     const reader = response.body.getReader(); const chunks: Uint8Array[] = []; let size = 0;
@@ -149,7 +150,7 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
     const cloud = capabilities.cloudflare ? record(capabilities.cloudflare) : null;
     const counts = Object.fromEntries(taskStates.map(status => [status,0])); const tasks = cloudTasks(state);
     for (const task of tasks) if (typeof task.status === 'string' && Object.hasOwn(counts,task.status)) counts[task.status]!++;
-    return { runtime: 'cloudflare', configured: Boolean(cloud), connection: connection(state.cloudflare ? record(state.cloudflare).connection : cloud?.connection), repository: cloud ? repository(cloud.repository) : null, providers: cloud && Array.isArray(cloud.providers) ? cloud.providers.filter(provider => provider === 'codex' || provider === 'claude') : [], counts, totalTasks: tasks.length };
+    return { runtime: 'cloudflare', configured: Boolean(cloud), connection: connection(state.cloudflare ? record(state.cloudflare).connection : cloud?.connection), repository: cloud ? repository(cloud.repository) : null, providers: cloud && Array.isArray(cloud.providers) ? cloud.providers.filter(provider => provider === 'codex' || provider === 'claude') : [], counts, totalTasks: tasks.length, workflowsAvailable: cloud?.workflows === true };
   }));
   server.registerTool('hivemind_list_tasks', { title: 'HIVEMIND 작업 목록', description: '최근 Cloudflare 작업 요약을 최대 20개 조회합니다. 로컬 작업은 포함하지 않습니다.', inputSchema: z.strictObject({ limit: z.number().int().min(1).max(20).default(20) }), annotations: readOnly }, async ({limit}, extra) => run(async () => {
     const tasks = cloudTasks(await api('/api/state',extra.signal));
@@ -180,5 +181,37 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
     });
     return { task: { ...taskSummary, summary: limit.take(task.summary), remote: { ...taskSummary.remote, inputSnapshotId: text(rawRemote.inputSnapshotId,200), outputSnapshotId: text(rawRemote.outputSnapshotId,200), errorCode: text(rawRemote.errorCode,100), agent: evidenceProcess(rawRemote.agent,includeLogs,limit), checks } }, ...(includeDiff ? {diff} : {}), diffIncluded: includeDiff, logsIncluded: includeLogs, diffTruncated: task.diffTruncated === true, truncated: limit.truncated || task.diffTruncated === true || rawChecks.some(value => record(value).process && record(record(value).process).truncated === true) || Boolean(rawRemote.agent && record(rawRemote.agent).truncated === true) };
   }));
+  const workflowPath = '/api/cloudflare/workflows';
+  server.registerTool('hivemind_create_workflow', {title:'HIVEMIND 공통 계약 워크플로 등록',
+    description:'고정 커밋의 계약 파일과 Codex·Claude 쓰기 범위로 초안만 등록합니다. 재시도 시 같은 requestId를 사용하세요.',
+    inputSchema:workflowDraft,annotations:mutation}, async (args,extra) => run(async () => ({
+      workflow:workflowRegistration.parse(await api(workflowPath,extra.signal,args)),
+    })));
+  server.registerTool('hivemind_approve_workflow',{title:'HIVEMIND 워크플로 실행 승인',
+    description:'사용자가 명시적으로 실행을 승인한 초안의 ID와 계약 해시를 전달합니다. 두 원격 모델 작업을 시작합니다.',
+    inputSchema:workflowApproval,annotations:mutation}, async ({workflowId:id,contractHash},extra) => run(async () => ({
+      workflow:workflowRegistration.parse(await api(workflowPath+'/'+id+'/approve',extra.signal,{contractHash})),
+    })));
+  server.registerTool('hivemind_list_workflows',{title:'HIVEMIND 워크플로 목록',
+    description:'이 중앙 서비스에 등록된 최근 20개 워크플로의 ID와 계약을 조회합니다.',
+    inputSchema:noArgs,annotations:readOnly}, async (_args,extra) => run(async () => workflowList.parse(await api(workflowPath,extra.signal))));
+  server.registerTool('hivemind_get_workflow',{title:'HIVEMIND 워크플로 진행과 통합 결과',
+    description:'같은 워크플로 ID로 워커별 랄프 라운드, 검사 상태와 통합 결과를 조회합니다.',
+    inputSchema:z.strictObject({workflowId,includeDiff:z.boolean().default(false),includeLogs:z.boolean().default(false),
+      maxChars:z.number().int().min(1).max(20000).default(12000)}),annotations:readOnly},
+    async ({workflowId:id,includeDiff,includeLogs,maxChars},extra) => run(async () => {
+      const path=workflowPath+'/'+id;
+      const current=workflowView.parse(await api(path,extra.signal));
+      const terminal=current.status==='SUCCEEDED'||current.status==='FAILED';
+      const result=terminal?workflowView.parse(await api(path+'/result'+(includeDiff?'?diff=1':''),extra.signal)):current;
+      if(result.id!==id||result.contractHash!==current.contractHash||result.inputSnapshotId!==current.inputSnapshotId)throw new Error(toolError);
+      const limit=budget(maxChars);
+      const {diff,verification,...view}=result;
+      return {workflow:{...view,...(includeDiff?{diff:limit.take(diff)}:{}),
+        verification:verification?{...verification,process:{
+          status:verification.process.status,exitCode:verification.process.exitCode,durationMs:verification.process.durationMs,
+          truncated:verification.process.truncated,...(includeLogs?{stdout:limit.take(verification.process.stdout),stderr:limit.take(verification.process.stderr)}:{}),
+        }}:null},truncated:limit.truncated||result.diffTruncated===true||verification?.process.truncated===true};
+    }));
   return server;
 }

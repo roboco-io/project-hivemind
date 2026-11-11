@@ -5,7 +5,9 @@ import { HiveStore, DomainError, equalSecret, text } from '../../../packages/cor
 import type { CreateTask, RunResult, RepositoryPolicy, Provider, Runtime } from '../../../packages/contracts/src/index.js';
 import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js';
 
-export interface AppOptions { dbPath?: string; operatorToken?: string; workerToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl }
+import type {CloudWorkflowControl} from '../../../packages/contracts/src/workflow.js';
+
+export interface AppOptions { dbPath?: string; operatorToken?: string; workerToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl }
 const string = {type:'string',minLength:1,maxLength:4000};
 const credentials = {workerId:{...string,maxLength:120},leaseToken:{...string,maxLength:120}};
 const body = (properties: Record<string,unknown>, required = Object.keys(properties)) => ({body:{type:'object',additionalProperties:false,required,properties}});
@@ -34,7 +36,7 @@ export function buildApp(options: AppOptions = {}) {
   const app = Fastify({bodyLimit:2000000,logger:false,ajv:{customOptions:{coerceTypes:false,removeAdditional:false}}});
   const store = new HiveStore(options.dbPath ?? ':memory:',options.now,options.repository);
   if (options.cloudflare) app.addHook('onReady', async () => options.cloudflare!.start());
-  app.addHook('onClose', async () => { try { await options.cloudflare?.close(); } finally { store.close(); } });
+  app.addHook('onClose', async () => { try { await options.cloudflare?.close(); } finally { try { options.workflows?.close(); } finally { store.close(); } } });
   app.addHook('onRequest',async (_request,reply) => {
     reply.header('cache-control','no-store');
     reply.header('x-content-type-options','nosniff');
@@ -55,7 +57,7 @@ export function buildApp(options: AppOptions = {}) {
   for (const [route,file,mime] of [['/','index.html','text/html'],['/app.js','app.js','application/javascript'],['/styles.css','styles.css','text/css'],['/brand/hivemind-logo.png','brand/hivemind-logo.png','image/png'],['/brand/hivemind-bee.png','brand/hivemind-bee.png','image/png']] as const) {
     app.get(route,async (_request,reply) => reply.type(mime.startsWith('image/') ? mime : mime+'; charset=utf-8').send(await readFile(fileURLToPath(new URL(file,staticRoot)))));
   }
-  app.get('/api/capabilities',{preHandler:operator},async () => ({providers:options.repository ? ['mock','codex','claude'] : ['mock'],repository:options.repository ?? null,...(options.cloudflare ? {cloudflare:options.cloudflare.capabilities()} : {})}));
+  app.get('/api/capabilities',{preHandler:operator},async () => ({providers:options.repository ? ['mock','codex','claude'] : ['mock'],repository:options.repository ?? null,...(options.cloudflare ? {cloudflare:{...options.cloudflare.capabilities(),...(options.workflows?{workflows:true}:{})}} : {})}));
   app.get('/api/state',{preHandler:operator},async () => ({...store.state(),...(options.cloudflare ? {cloudflare:options.cloudflare.state()} : {})}));
   if (options.cloudflare) {
     const cloudflare = options.cloudflare;
@@ -68,6 +70,18 @@ export function buildApp(options: AppOptions = {}) {
     app.post<{Params:{id:string};Body:{reason:string}}>('/api/cloudflare/tasks/:id/cancel',{
       preHandler:operator,schema:body({reason:string}),
     },async request => cloudflare.cancel(request.params.id,request.body.reason));
+  }
+  if (options.workflows) {
+    const workflows = options.workflows;
+    app.post('/api/cloudflare/workflows',{preHandler:operator},async (request,reply) => reply.code(201).send(await workflows.draft(request.body)));
+    app.get('/api/cloudflare/workflows',{preHandler:operator},async () => ({workflows:workflows.list()}));
+    app.post<{Params:{id:string}}>('/api/cloudflare/workflows/:id/approve',{
+      preHandler:operator,schema:body({contractHash:{type:'string',pattern:'^[a-f0-9]{64}$'}}),
+    },async request => workflows.approve(request.params.id,request.body));
+    app.get<{Params:{id:string}}>('/api/cloudflare/workflows/:id',{preHandler:operator},
+      async request => workflows.read(request.params.id,false,false));
+    app.get<{Params:{id:string};Querystring:{diff?:string}}>('/api/cloudflare/workflows/:id/result',{preHandler:operator},
+      async request => workflows.read(request.params.id,true,request.query.diff==='1'));
   }
   app.post<{Body:CreateTask}>('/api/tasks',{
     preHandler:operator,

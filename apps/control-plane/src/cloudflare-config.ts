@@ -2,6 +2,7 @@ import { constants, openSync, closeSync, fstatSync, readFileSync, realpathSync, 
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { basename, dirname, isAbsolute, resolve } from 'node:path';
+import type {WorkflowChecks} from '../../../packages/adapters/src/cloud-workflow.js';
 import type { CloudPortOptions } from '../../../packages/adapters/src/cloudflare.js';
 
 const prefix = 'HIVEMIND_CLOUDFLARE_';
@@ -52,6 +53,29 @@ function readControlToken(path: string): string {
   } finally { closeSync(descriptor); }
 }
 
+function parseChecks(parsed:unknown,controlToken:string):CloudPortOptions['checks'] {
+  if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 4) throw invalid();
+    const checks: CloudPortOptions['checks'] = parsed.map((item: unknown) => {
+      if (!item || typeof item !== 'object' || Array.isArray(item)) throw invalid();
+      const check = item as Record<string, unknown>;
+      if (Object.keys(check).length !== 3 || !['id','argv','timeoutMs'].every(key => Object.hasOwn(check,key)) || typeof check.id !== 'string' || !identifier(check.id) || !Array.isArray(check.argv) || check.argv.length < 1 || check.argv.length > 32 || !check.argv.every(arg => typeof arg === 'string' && !!arg.trim() && arg.length <= 1000 && !arg.includes('\0') && !arg.includes(controlToken))) throw invalid();
+      return { id: check.id, argv: check.argv as string[], timeoutMs: timeout(check.timeoutMs) };
+    });
+    if (new Set(checks.map(check => check.id)).size !== checks.length) throw invalid();
+  return checks;
+}
+export function loadCloudWorkflowChecks(config:CloudPortOptions|undefined,env:NodeJS.ProcessEnv=process.env):WorkflowChecks|undefined {
+  if(env[prefix+'WORKFLOW_CHECKS']===undefined)return undefined;
+  if(!config)throw invalid();
+  try {
+    const value:unknown=JSON.parse(required(env,'WORKFLOW_CHECKS'));
+    if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).length!==3)throw invalid();
+    const fields=value as Record<string,unknown>;
+    return {codex:parseChecks(fields.codex,config.controlToken),claude:parseChecks(fields.claude,config.controlToken),
+      integration:parseChecks([fields.integration],config.controlToken)[0]!};
+  }catch{throw invalid();}
+}
+
 /** Server-only configuration. No secret value or filesystem path belongs in an API DTO. */
 export function loadCloudflareConfig(env: NodeJS.ProcessEnv = process.env): CloudPortOptions | undefined {
   if (!names.some(name => env[prefix + name] !== undefined)) return undefined;
@@ -79,14 +103,7 @@ export function loadCloudflareConfig(env: NodeJS.ProcessEnv = process.env): Clou
     }
     if (worktreeRoot === repositoryPath) throw invalid();
     const parsed: unknown = JSON.parse(required(env, 'CHECKS'));
-    if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 4) throw invalid();
-    const checks: CloudPortOptions['checks'] = parsed.map((item: unknown) => {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) throw invalid();
-      const check = item as Record<string, unknown>;
-      if (Object.keys(check).length !== 3 || !['id','argv','timeoutMs'].every(key => Object.hasOwn(check,key)) || typeof check.id !== 'string' || !identifier(check.id) || !Array.isArray(check.argv) || check.argv.length < 1 || check.argv.length > 32 || !check.argv.every(arg => typeof arg === 'string' && !!arg.trim() && arg.length <= 1000 && !arg.includes('\0') && !arg.includes(controlToken))) throw invalid();
-      return { id: check.id, argv: check.argv as string[], timeoutMs: timeout(check.timeoutMs) };
-    });
-    if (new Set(checks.map(check => check.id)).size !== checks.length) throw invalid();
+    const checks = parseChecks(parsed,controlToken);
     const credentialIds = { codex: env[prefix + 'CODEX_CREDENTIAL'] ?? 'codex-remote', claude: env[prefix + 'CLAUDE_CREDENTIAL'] ?? 'claude-remote' };
     if (!identifier(credentialIds.codex) || !identifier(credentialIds.claude) || credentialIds.codex === credentialIds.claude) throw invalid();
     const rawTimeout = env[prefix + 'TIMEOUT_MS'];

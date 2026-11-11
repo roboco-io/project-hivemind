@@ -1,6 +1,9 @@
 import { buildApp } from './app.js';
-import { configurationGitEnvironment, configurationScope, loadCloudflareConfig } from './cloudflare-config.js';
+import { configurationGitEnvironment, configurationScope, loadCloudflareConfig, loadCloudWorkflowChecks } from './cloudflare-config.js';
 import { createCloudPort } from '../../../packages/adapters/src/cloudflare.js';
+import { createCloudWorkflowPort } from '../../../packages/adapters/src/cloud-workflow.js';
+import { createCloudWorkflowControl } from '../../../packages/core/src/cloud-workflow-store.js';
+import { createHash } from 'node:crypto';
 import { createCloudControl } from '../../../packages/core/src/cloudflare-store.js';
 import { execFileSync } from 'node:child_process';
 import { basename } from 'node:path';
@@ -44,7 +47,11 @@ try {
   const dbPath = process.env.HIVEMIND_DB ?? 'data/hivemind.sqlite';
   const config = loadCloudflareConfig();
   if (config) cloudflare = createCloudControl({ dbPath, policy: config.policy, port: createCloudPort(config), executionScope: configurationScope(config) });
-  app = buildApp({dbPath,operatorToken,workerToken,repository,cloudflare});
+  const checks = loadCloudWorkflowChecks(config);
+  const workflows = config && checks ? createCloudWorkflowControl(dbPath,
+    createHash('sha256').update(JSON.stringify({scope:configurationScope(config),checks})).digest('hex'),
+    createCloudWorkflowPort(config,checks)) : undefined;
+  app = buildApp({dbPath,operatorToken,workerToken,repository,cloudflare,workflows});
   const address = await app.listen({host,port});
   console.log(`HIVEMIND control service: ${address}`);
   for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,() => { void app!.close(); });

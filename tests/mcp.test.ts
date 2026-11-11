@@ -50,9 +50,9 @@ async function session(t: Context, api = fakeApi()) {
   return { server, client, call, api };
 }
 
-test('real SDK handshake lists six tools with read-only and explicit mutation annotations', async t => {
+test('real SDK handshake lists ten tools with read-only and explicit mutation annotations', async t => {
   const { client } = await session(t); const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(tool => tool.name).sort(), ['hivemind_cancel_task', 'hivemind_create_task', 'hivemind_decide_task', 'hivemind_get_result', 'hivemind_list_tasks', 'hivemind_status']);
+  assert.deepEqual(tools.map(tool => tool.name).sort(), ['hivemind_approve_workflow', 'hivemind_cancel_task', 'hivemind_create_task', 'hivemind_create_workflow', 'hivemind_decide_task', 'hivemind_get_result', 'hivemind_get_workflow', 'hivemind_list_tasks', 'hivemind_list_workflows', 'hivemind_status']);
   for (const name of ['hivemind_status', 'hivemind_list_tasks', 'hivemind_get_result']) assert.equal(tools.find(tool => tool.name === name)!.annotations!.readOnlyHint, true);
   for (const name of ['hivemind_create_task', 'hivemind_decide_task', 'hivemind_cancel_task']) assert.equal(tools.find(tool => tool.name === name)!.annotations!.readOnlyHint, false);
   assert.equal(tools.find(tool => tool.name === 'hivemind_cancel_task')!.annotations!.destructiveHint, true);
@@ -155,7 +155,7 @@ test('real SDK stdio handshake and calls keep stdout reserved for JSON-RPC', asy
   const transport = new StdioClientTransport({ command: process.execPath, args: [new URL('../apps/mcp-server/src/main.js', import.meta.url).pathname], env: { HIVEMIND_API_URL: 'http://127.0.0.1:' + address.port, HIVEMIND_OPERATOR_TOKEN: operatorToken }, stderr: 'pipe' });
   let stderr = ''; transport.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
   const client = new Client({ name: 'stdio-test', version: '1.0.0' }); t.after(() => client.close());
-  await client.connect(transport); assert.equal((await client.listTools()).tools.length, 6);
+  await client.connect(transport); assert.equal((await client.listTools()).tools.length, 10);
   const result = await client.callTool({ name: 'hivemind_status', arguments: {} });
   assert.ok(JSON.stringify(result).includes(repo.name)); assert.equal(stderr, '');
   assert.equal(api.calls.length, 2);
