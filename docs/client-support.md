@@ -30,15 +30,15 @@ flowchart LR
 
 | 클라이언트 | 구현·등록 | 실제 검증 | 미완료 |
 |---|---|---|---|
-| Codex CLI | 프로젝트 등록 도구·공통 스킬 | 실제 CLI 0.167.0 세션에서 스킬 사용·status/list·두 워커 diff/테스트 조회 통과 | 실행 승인·종단 실행 전체 수용 |
+| Codex CLI | 프로젝트 등록 도구·공통 스킬 | 실제 CLI 0.167.0 세션에서 스킬 사용·status/list 및 두 워커의 새 작업 등록·실행 승인·진행·diff/테스트 조회 통과 | 취소·재시작 등 전체 수용 |
 | Codex 앱 | CLI와 공유하는 프로젝트 설정·스킬 | Hivemind 프로젝트에서 새 로컬 Codex 채팅으로 status/list와 두 워커의 diff·테스트 조회 통과 | 새 원격 실행·승인·재시작 복원 |
-| Claude Code CLI | 설정 보존 `.mcp.json` 등록 도구·공통 원본을 읽는 `/hivemind` 진입점 | 실제 CLI 2.1.321 세션에서 공통 원본 Read·status/list·두 워커 diff/테스트 MCP 호출 통과 | 실행 승인·종단 실행 전체 수용 |
+| Claude Code CLI | 설정 보존 `.mcp.json` 등록 도구·공통 원본을 읽는 `/hivemind` 진입점 | 실제 CLI 2.1.321 세션에서 공통 원본 읽기·status/list 및 두 워커의 새 작업 등록·실행 승인·진행·diff/테스트 조회 통과 | 취소·재시작 등 전체 수용 |
 | Claude Code 앱 | 로컬 Code 탭용 프로젝트 등록·스킬 | 사용자 폴더 신뢰 승인 후 실제 앱 세션에서 공통 원본 읽기·status/list·두 결과 조회 통과 | 새 원격 실행·승인·재시작 복원 검증 |
 
 공통 MCP 서버·중앙 API·Cloudflare 실행·검토 worktree·실제 diff·별도 테스트는 구현돼 있다.
 실제 Codex·Claude 워커를 웹 보조 화면에서 실행했고 같은 결과를 SDK stdio로 조회했다.
 검증 대상은 `dashboard-remote-fixture`라는 전용 저장소다. 현재 Hivemind 저장소 자체의 원격 개발 검증은 아니다.
-전체 내역은 [이전 검증 기록](verification/2026-11-10-codex-integration.md)을 따른다.
+[이전 검증 기록](verification/2026-11-10-codex-integration.md)과 [두 CLI의 새 원격 실행 검증](verification/2026-11-11-remote-execution.md)에 작업 ID와 결과를 기록했다.
 
 ## 호스트 어댑터 원칙
 
