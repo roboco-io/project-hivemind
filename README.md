@@ -31,7 +31,8 @@ npm run mcp:configure:claude
 ```
 
 새 Codex 세션에서 `$hivemind`, Claude Code 세션에서 `/hivemind`를 사용한다. 현재 대상 저장소와 고정 커밋을 먼저 확인한다.
-[Codex 연결 안내](docs/codex-integration.md)와 [Claude Code 연결 안내](docs/claude-integration.md)에 인증 파일·다른 포트·설정 보존과 도구 6개의 사용법을 정리했다.
+[Codex 연결 안내](docs/codex-integration.md)와 [Claude Code 연결 안내](docs/claude-integration.md)에 인증 파일·다른 포트·설정 보존과 도구 사용법을 정리했다.
+[공통 계약 워크플로 연결](docs/workflow-mcp.md)에서 등록·승인·랄프 라운드·통합 결과 조회를 안내한다.
 MCP는 중앙 HTTP API만 호출하며 Cloudflare 제어 토큰과 제공자 인증에 직접 접근하지 않는다.
 
 Cloudflare 실행 백엔드는 [cloudflare/](cloudflare/README.md)에 배포했다.

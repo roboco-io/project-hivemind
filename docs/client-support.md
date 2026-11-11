@@ -40,9 +40,11 @@ flowchart LR
 검증 대상은 `dashboard-remote-fixture`라는 전용 저장소다. 현재 Hivemind 저장소 자체의 원격 개발 검증은 아니다.
 [이전 검증 기록](verification/2026-11-10-codex-integration.md)과 [두 CLI의 새 원격 실행 검증](verification/2026-11-11-remote-execution.md)에 작업 ID와 결과를 기록했다.
 
+[공통 계약 워크플로 안내](workflow-mcp.md)에는 새 MCP 도구와 승인·재조회 절차를 정리했다.
+
 ## 호스트 어댑터 원칙
 
-MCP 도구 6개와 HTTP 계약, 상태·결과 의미는 공통으로 유지한다.
+MCP 도구와 HTTP 계약, 상태·결과 의미는 공통으로 유지한다.
 호스트마다 MCP 등록 형식, 스킬 발견 경로, 신뢰·도구 승인 정책과 재시작 절차를 제공한다.
 스킬의 업무 규칙은 공통 원본으로 유지하고 호스트별 진입점·호출 표기만 조정한다.
 중앙 상태 저장소나 승인 정책을 호스트마다 복제하지 않는다.

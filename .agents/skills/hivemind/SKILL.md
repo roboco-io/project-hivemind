@@ -7,6 +7,14 @@ description: HIVEMIND에 연결된 Cloudflare Codex·Claude 작업을 등록하�
 
 웹을 열지 않고 프로젝트의 `hivemind` MCP 서버를 사용한다. 도구가 없으면 [Codex 연결 안내](../../../docs/codex-integration.md) 또는 [Claude Code 연결 안내](../../../docs/claude-integration.md)를 확인한다. MCP 연결을 고치기 위해 사용자 전역 설정이나 원격 인증을 임의로 바꾸지 않는다.
 
+## 두 워커의 원격 워크플로
+
+1. `hivemind_status`로 `workflowsAvailable`, 대상 저장소와 고정 커밋을 확인한다. 사용자가 지정한 대상과 맞을 때만 계속한다.
+2. `hivemind_create_workflow`로 고정 커밋에 이미 있는 공통 계약의 상대 경로, 제목, 기준 커밋, 요청 UUID, Codex·Claude 각각의 지시와 쓰기 경로를 등록한다. 같은 요청의 응답이 유실되면 같은 UUID와 입력을 사용한다. 명령·인증·원격 URL은 도구에 전달하지 않는다.
+3. 초안 ID, 계약 해시와 두 쓰기 범위를 사용자에게 알린다. 해당 초안 실행을 사용자가 명시적으로 승인했으면 ID와 계약 해시를 `hivemind_approve_workflow`에 전달한다. 초안만 요청한 경우에는 실행을 승인하지 않는다.
+4. `hivemind_get_workflow`로 워커의 상태, 랄프 라운드별 검사, 통합 상태를 조회한다. 완료 뒤에 필요한 경우에만 `includeDiff`·`includeLogs`를 켠다. 통합 검사 종료 코드와 로그를 근거로 결과를 보고한다.
+5. 앱을 다시 열면 같은 ID를 조회한다. ID를 모르면 `hivemind_list_workflows`에서 찾는다. 실행 중인 계획을 다시 만들지 않는다. 통합 결과 조회는 저장소 변경을 적용하지 않는다.
+
 ## 작업 등록과 승인
 
 1. `hivemind_status`로 연결 상태, 대상 저장소 이름·ID, 고정 `baseCommit`과 테스트 정책을 확인한다. 사용자가 현재 요청한 프로젝트와 기준 커밋에 대조한다. 현재 프로젝트가 대상이면 로컬 Git 정보를 읽어 비교할 수 있다. 저장소나 커밋이 다르거나 같은 대상인지 확인할 수 없으면 **작업 생성 전에 멈추고** 차이를 알린다. 확인 없이 현재 폴더의 코드가 제출된다고 가정하지 않는다. 연결이 실패하면 로컬 실행으로 전환하지 않는다.

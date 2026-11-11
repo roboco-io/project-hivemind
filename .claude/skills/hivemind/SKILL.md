@@ -1,6 +1,6 @@
 ---
 name: hivemind
-description: Claude Code 앱의 로컬 Code 탭과 CLI에서 HIVEMIND 원격 작업을 등록하고 사용자가 요청한 실행 승인·취소·결과 검토를 수행한다. 일반 로컬 코드 작업이나 배포에는 사용하지 않는다.
+description: Claude Code 앱의 로컬 Code 탭과 CLI에서 HIVEMIND 원격 작업과 공통 계약 워크플로를 등록하고 사용자가 요청한 실행 승인·취소·결과 검토를 수행한다. 일반 로컬 코드 작업이나 배포에는 사용하지 않는다.
 ---
 
 # HIVEMIND Claude Code 진입점

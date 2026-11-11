@@ -56,3 +56,5 @@ npm run check
 ## 중단된 등록 복구
 
 등록 중 프로세스가 중단되면 `.claude/hivemind-mcp.transaction.local/`에 권한이 제한된 복구 자료가 남을 수 있다. 다른 MCP의 비밀 설정도 포함될 수 있으므로 업로드하거나 출력하지 않는다. 해당 프로젝트의 등록 프로세스가 종료됐는지 확인하고, `manifest.json`의 해시를 현재 파일과 대조한 뒤 변경된 파일을 복구한다. 현재 파일이 저장된 전후 해시와 모두 다르면 사용자 편집을 먼저 보존한다. 복구가 끝난 뒤에만 transaction과 Git 공통 `info/.hivemind-claude.lock`을 정리하고 다시 등록한다. 활성 프로세스의 잠금을 지우지 않는다.
+
+[공통 계약 워크플로](workflow-mcp.md)도 같은 앱·CLI 세션에서 사용한다.
