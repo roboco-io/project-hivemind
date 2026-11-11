@@ -1,0 +1,3440 @@
+{
+  "model": "claude-haiku-4-5-20251001",
+  "cli": "2.1.321",
+  "node": "24.14.0",
+  "order_seed": 20261111,
+  "runs": [
+    {
+      "task": "shared",
+      "condition": "C",
+      "block": 1,
+      "order": 1,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 21.932,
+      "verification_seconds": 0.122,
+      "integration_seconds": 0.001,
+      "test_exit": 0,
+      "sha256": "304ca411e480d8f2c15f3fbda340fbb21585c185828b3d28b90469257c081dc8",
+      "gap_from_previous_session_seconds": null,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 120,
+        "cache_creation_input_tokens": 10535,
+        "cache_read_input_tokens": 76613,
+        "output_tokens": 5066
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 10535,
+      "estimated_api_usd": 0.0541813,
+      "cli_reported_usd": 0.0541813,
+      "session_count": 4,
+      "session_overlap_seconds": 20.122,
+      "sessions": [
+        {
+          "seconds": 10.127,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2512,
+            "cache_read_input_tokens": 22168,
+            "output_tokens": 1110
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2512,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0128248,
+          "num_turns": 5,
+          "files": [
+            "clamp.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 10.127
+        },
+        {
+          "seconds": 11.348,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2747,
+            "cache_read_input_tokens": 15926,
+            "output_tokens": 1436
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2747,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0142926,
+          "num_turns": 4,
+          "files": [
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 11.348
+        },
+        {
+          "seconds": 11.487,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2869,
+            "cache_read_input_tokens": 22620,
+            "output_tokens": 1400
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2869,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.015034,
+          "num_turns": 7,
+          "files": [
+            "steps.mjs"
+          ],
+          "start_offset_seconds": 10.129,
+          "end_offset_seconds": 21.616
+        },
+        {
+          "seconds": 8.775,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2407,
+            "cache_read_input_tokens": 15899,
+            "output_tokens": 1120
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2407,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0120299,
+          "num_turns": 4,
+          "files": [
+            "width.mjs"
+          ],
+          "start_offset_seconds": 11.35,
+          "end_offset_seconds": 20.126
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "B",
+      "block": 1,
+      "order": 2,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 22.924,
+      "verification_seconds": 0.131,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "8b795b51d1626b8502b7b9214bf2880109179c37954c693d289f45503aa8453a",
+      "gap_from_previous_session_seconds": 0.157,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 68,
+        "cache_creation_input_tokens": 5992,
+        "cache_read_input_tokens": 45323,
+        "output_tokens": 2833
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 5992,
+      "estimated_api_usd": 0.0307493,
+      "cli_reported_usd": 0.0307493,
+      "session_count": 2,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 11.02,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2858,
+            "cache_read_input_tokens": 22405,
+            "output_tokens": 1285
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2858,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0144155,
+          "num_turns": 7,
+          "files": [
+            "clamp.mjs",
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 11.021
+        },
+        {
+          "seconds": 11.741,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3134,
+            "cache_read_input_tokens": 22918,
+            "output_tokens": 1548
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3134,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.016333800000000002,
+          "num_turns": 8,
+          "files": [
+            "steps.mjs",
+            "width.mjs"
+          ],
+          "start_offset_seconds": 11.021,
+          "end_offset_seconds": 22.762
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "A",
+      "block": 1,
+      "order": 3,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 12.834,
+      "verification_seconds": 0.126,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "8cf4d2502c06d4cc0fc3bb2d5291af96e90f334b5adcc818e54a3869680209ed",
+      "gap_from_previous_session_seconds": 0.169,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 34,
+        "cache_creation_input_tokens": 3546,
+        "cache_read_input_tokens": 22336,
+        "output_tokens": 1835
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 3546,
+      "estimated_api_usd": 0.0185346,
+      "cli_reported_usd": 0.0185346,
+      "session_count": 1,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 12.671,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3546,
+            "cache_read_input_tokens": 22336,
+            "output_tokens": 1835
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3546,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0185346,
+          "num_turns": 10,
+          "files": [
+            "clamp.mjs",
+            "steps.mjs",
+            "width.mjs",
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 12.672
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "A",
+      "block": 2,
+      "order": 1,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 14.578,
+      "verification_seconds": 0.12,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "c592815a650ac8c78042b8261e2f76cb771cd3f42f0006f3d7fbad43b0bce17f",
+      "gap_from_previous_session_seconds": 0.162,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 34,
+        "cache_creation_input_tokens": 3792,
+        "cache_read_input_tokens": 22270,
+        "output_tokens": 2055
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 3792,
+      "estimated_api_usd": 0.02012,
+      "cli_reported_usd": 0.02012,
+      "session_count": 1,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 14.423,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3792,
+            "cache_read_input_tokens": 22270,
+            "output_tokens": 2055
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3792,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.02012,
+          "num_turns": 10,
+          "files": [
+            "clamp.mjs",
+            "steps.mjs",
+            "width.mjs",
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 14.424
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "C",
+      "block": 2,
+      "order": 2,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 29.491,
+      "verification_seconds": 0.133,
+      "integration_seconds": 0.001,
+      "test_exit": 0,
+      "sha256": "a0b10ad23f889185a414e01ed1956185624b44111e5106503215e3b3d1142b18",
+      "gap_from_previous_session_seconds": 0.296,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 144,
+        "cache_creation_input_tokens": 11276,
+        "cache_read_input_tokens": 96819,
+        "output_tokens": 5641
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 11276,
+      "estimated_api_usd": 0.0605829,
+      "cli_reported_usd": 0.0605829,
+      "session_count": 4,
+      "session_overlap_seconds": 18.678,
+      "sessions": [
+        {
+          "seconds": 9.668,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2504,
+            "cache_read_input_tokens": 15978,
+            "output_tokens": 1183
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2504,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0125468,
+          "num_turns": 4,
+          "files": [
+            "clamp.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 9.668
+        },
+        {
+          "seconds": 16.35,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 42,
+            "cache_creation_input_tokens": 3385,
+            "cache_read_input_tokens": 29287,
+            "output_tokens": 2003
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3385,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0197557,
+          "num_turns": 7,
+          "files": [
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 16.35
+        },
+        {
+          "seconds": 9.011,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2462,
+            "cache_read_input_tokens": 22209,
+            "output_tokens": 1041
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2462,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0123839,
+          "num_turns": 5,
+          "files": [
+            "steps.mjs"
+          ],
+          "start_offset_seconds": 9.669,
+          "end_offset_seconds": 18.681
+        },
+        {
+          "seconds": 12.83,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 42,
+            "cache_creation_input_tokens": 2925,
+            "cache_read_input_tokens": 29345,
+            "output_tokens": 1414
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2925,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0158965,
+          "num_turns": 7,
+          "files": [
+            "width.mjs"
+          ],
+          "start_offset_seconds": 16.352,
+          "end_offset_seconds": 29.183
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "B",
+      "block": 2,
+      "order": 3,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 25.359,
+      "verification_seconds": 0.131,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "24ffa7553be348722024ed29e7204dd258aac4dbe1023e768a528fb1c0ee015d",
+      "gap_from_previous_session_seconds": 0.174,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 76,
+        "cache_creation_input_tokens": 6240,
+        "cache_read_input_tokens": 51301,
+        "output_tokens": 3049
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 6240,
+      "estimated_api_usd": 0.0329311,
+      "cli_reported_usd": 0.032931100000000005,
+      "session_count": 2,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 11.275,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2695,
+            "cache_read_input_tokens": 22048,
+            "output_tokens": 1259
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2695,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0139238,
+          "num_turns": 6,
+          "files": [
+            "clamp.mjs",
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 11.276
+        },
+        {
+          "seconds": 13.914,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 42,
+            "cache_creation_input_tokens": 3545,
+            "cache_read_input_tokens": 29253,
+            "output_tokens": 1790
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3545,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0190073,
+          "num_turns": 9,
+          "files": [
+            "steps.mjs",
+            "width.mjs"
+          ],
+          "start_offset_seconds": 11.276,
+          "end_offset_seconds": 25.191
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "A",
+      "block": 3,
+      "order": 1,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 14.433,
+      "verification_seconds": 0.128,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "8a750f33cbfbdc49a93f4205453549caa655737bb804cb58d9274162c6f82c1c",
+      "gap_from_previous_session_seconds": 0.166,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 34,
+        "cache_creation_input_tokens": 3838,
+        "cache_read_input_tokens": 22635,
+        "output_tokens": 2085
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 3838,
+      "estimated_api_usd": 0.0203985,
+      "cli_reported_usd": 0.0203985,
+      "session_count": 1,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 14.272,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3838,
+            "cache_read_input_tokens": 22635,
+            "output_tokens": 2085
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3838,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0203985,
+          "num_turns": 11,
+          "files": [
+            "clamp.mjs",
+            "steps.mjs",
+            "width.mjs",
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 14.272
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "B",
+      "block": 3,
+      "order": 2,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 28.575,
+      "verification_seconds": 0.131,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "2fefff846c3003bed4959dd4223ae6c557e85702ca6ae20da2572d9c209b5141",
+      "gap_from_previous_session_seconds": 0.17,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 68,
+        "cache_creation_input_tokens": 6505,
+        "cache_read_input_tokens": 45167,
+        "output_tokens": 3499
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 6505,
+      "estimated_api_usd": 0.035089699999999995,
+      "cli_reported_usd": 0.0350897,
+      "session_count": 2,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 11.637,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2704,
+            "cache_read_input_tokens": 22074,
+            "output_tokens": 1296
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2704,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.014129400000000002,
+          "num_turns": 6,
+          "files": [
+            "clamp.mjs",
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 11.637
+        },
+        {
+          "seconds": 16.766,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3801,
+            "cache_read_input_tokens": 23093,
+            "output_tokens": 2203
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3801,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.020960299999999998,
+          "num_turns": 8,
+          "files": [
+            "steps.mjs",
+            "width.mjs"
+          ],
+          "start_offset_seconds": 11.638,
+          "end_offset_seconds": 28.404
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "C",
+      "block": 3,
+      "order": 3,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 28.485,
+      "verification_seconds": 0.136,
+      "integration_seconds": 0.001,
+      "test_exit": 0,
+      "sha256": "5007a2de73b5c0465af7b899fb8817f8f9a4ee36f47caf782dd6db7a08ff47b8",
+      "gap_from_previous_session_seconds": 0.308,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 152,
+        "cache_creation_input_tokens": 11780,
+        "cache_read_input_tokens": 104141,
+        "output_tokens": 6078
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 11780,
+      "estimated_api_usd": 0.06451609999999999,
+      "cli_reported_usd": 0.0645161,
+      "session_count": 4,
+      "session_overlap_seconds": 22.96,
+      "sessions": [
+        {
+          "seconds": 8.421,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2185,
+            "cache_read_input_tokens": 15976,
+            "output_tokens": 959
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2185,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0107886,
+          "num_turns": 4,
+          "files": [
+            "clamp.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 8.421
+        },
+        {
+          "seconds": 17.698,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 58,
+            "cache_creation_input_tokens": 3800,
+            "cache_read_input_tokens": 43010,
+            "output_tokens": 2153
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3800,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.022724,
+          "num_turns": 8,
+          "files": [
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 17.699
+        },
+        {
+          "seconds": 14.539,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 42,
+            "cache_creation_input_tokens": 3230,
+            "cache_read_input_tokens": 29221,
+            "output_tokens": 1750
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3230,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.018174100000000002,
+          "num_turns": 8,
+          "files": [
+            "steps.mjs"
+          ],
+          "start_offset_seconds": 8.423,
+          "end_offset_seconds": 22.962
+        },
+        {
+          "seconds": 10.472,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2565,
+            "cache_read_input_tokens": 15934,
+            "output_tokens": 1216
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2565,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0128294,
+          "num_turns": 4,
+          "files": [
+            "width.mjs"
+          ],
+          "start_offset_seconds": 17.7,
+          "end_offset_seconds": 28.172
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "C",
+      "block": 4,
+      "order": 1,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 19.748,
+      "verification_seconds": 0.13,
+      "integration_seconds": 0.001,
+      "test_exit": 0,
+      "sha256": "12c88211aac10a3bd8722e76d199e8d2292a8cb8594783e1f35b3766b879b7a9",
+      "gap_from_previous_session_seconds": 0.32,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 112,
+        "cache_creation_input_tokens": 9646,
+        "cache_read_input_tokens": 70182,
+        "output_tokens": 4363
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 9646,
+      "estimated_api_usd": 0.048237199999999994,
+      "cli_reported_usd": 0.0482372,
+      "session_count": 4,
+      "session_overlap_seconds": 18.906,
+      "sessions": [
+        {
+          "seconds": 9.499,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2304,
+            "cache_read_input_tokens": 15984,
+            "output_tokens": 986
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2304,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.011162400000000001,
+          "num_turns": 4,
+          "files": [
+            "clamp.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 9.499
+        },
+        {
+          "seconds": 11.969,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2674,
+            "cache_read_input_tokens": 15965,
+            "output_tokens": 1409
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2674,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0140155,
+          "num_turns": 4,
+          "files": [
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 11.97
+        },
+        {
+          "seconds": 9.408,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2522,
+            "cache_read_input_tokens": 22231,
+            "output_tokens": 1121
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2522,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0129061,
+          "num_turns": 5,
+          "files": [
+            "steps.mjs"
+          ],
+          "start_offset_seconds": 9.501,
+          "end_offset_seconds": 18.909
+        },
+        {
+          "seconds": 7.464,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2146,
+            "cache_read_input_tokens": 16002,
+            "output_tokens": 847
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2146,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.010153200000000001,
+          "num_turns": 4,
+          "files": [
+            "width.mjs"
+          ],
+          "start_offset_seconds": 11.971,
+          "end_offset_seconds": 19.435
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "A",
+      "block": 4,
+      "order": 2,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 13.401,
+      "verification_seconds": 0.129,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "6837dc9963e872384438a72eafec7456af0239e9aa751759221c70a8a5f186c1",
+      "gap_from_previous_session_seconds": 0.174,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 34,
+        "cache_creation_input_tokens": 3621,
+        "cache_read_input_tokens": 22333,
+        "output_tokens": 1922
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 3621,
+      "estimated_api_usd": 0.0191193,
+      "cli_reported_usd": 0.019119300000000002,
+      "session_count": 1,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 13.231,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3621,
+            "cache_read_input_tokens": 22333,
+            "output_tokens": 1922
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3621,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.019119300000000002,
+          "num_turns": 10,
+          "files": [
+            "clamp.mjs",
+            "steps.mjs",
+            "width.mjs",
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 13.232
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "B",
+      "block": 4,
+      "order": 3,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 26.585,
+      "verification_seconds": 0.134,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "c592815a650ac8c78042b8261e2f76cb771cd3f42f0006f3d7fbad43b0bce17f",
+      "gap_from_previous_session_seconds": 0.172,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 84,
+        "cache_creation_input_tokens": 6153,
+        "cache_read_input_tokens": 57920,
+        "output_tokens": 3207
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 6153,
+      "estimated_api_usd": 0.034217,
+      "cli_reported_usd": 0.034217,
+      "session_count": 2,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 12.516,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3085,
+            "cache_read_input_tokens": 22116,
+            "output_tokens": 1652
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3085,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0166756,
+          "num_turns": 6,
+          "files": [
+            "clamp.mjs",
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 12.517
+        },
+        {
+          "seconds": 13.893,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 50,
+            "cache_creation_input_tokens": 3068,
+            "cache_read_input_tokens": 35804,
+            "output_tokens": 1555
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3068,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0175414,
+          "num_turns": 7,
+          "files": [
+            "steps.mjs",
+            "width.mjs"
+          ],
+          "start_offset_seconds": 12.517,
+          "end_offset_seconds": 26.411
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "B",
+      "block": 5,
+      "order": 1,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 28.687,
+      "verification_seconds": 0.139,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "6f2e80b85e9838ce2fedfec893df1499779cc89e1ded340c00d5260eb849cf7a",
+      "gap_from_previous_session_seconds": 0.17,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 84,
+        "cache_creation_input_tokens": 6319,
+        "cache_read_input_tokens": 58586,
+        "output_tokens": 3165
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 6319,
+      "estimated_api_usd": 0.0344056,
+      "cli_reported_usd": 0.034405599999999995,
+      "session_count": 2,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 13.486,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2994,
+            "cache_read_input_tokens": 22384,
+            "output_tokens": 1493
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2994,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0157254,
+          "num_turns": 7,
+          "files": [
+            "clamp.mjs",
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 13.486
+        },
+        {
+          "seconds": 15.026,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 50,
+            "cache_creation_input_tokens": 3325,
+            "cache_read_input_tokens": 36202,
+            "output_tokens": 1672
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3325,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.018680199999999998,
+          "num_turns": 8,
+          "files": [
+            "steps.mjs",
+            "width.mjs"
+          ],
+          "start_offset_seconds": 13.487,
+          "end_offset_seconds": 28.513
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "A",
+      "block": 5,
+      "order": 2,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 13.631,
+      "verification_seconds": 0.128,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "12c88211aac10a3bd8722e76d199e8d2292a8cb8594783e1f35b3766b879b7a9",
+      "gap_from_previous_session_seconds": 0.178,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 34,
+        "cache_creation_input_tokens": 3658,
+        "cache_read_input_tokens": 22285,
+        "output_tokens": 1961
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 3658,
+      "estimated_api_usd": 0.0193835,
+      "cli_reported_usd": 0.0193835,
+      "session_count": 1,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 13.466,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3658,
+            "cache_read_input_tokens": 22285,
+            "output_tokens": 1961
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3658,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0193835,
+          "num_turns": 10,
+          "files": [
+            "clamp.mjs",
+            "steps.mjs",
+            "width.mjs",
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 13.466
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "C",
+      "block": 5,
+      "order": 3,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 23.772,
+      "verification_seconds": 0.136,
+      "integration_seconds": 0.001,
+      "test_exit": 0,
+      "sha256": "27d90bb4f2e12a54189f9d944f2c8423cfb9985fd7ffe546cf04061c48483cb6",
+      "gap_from_previous_session_seconds": 0.291,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 112,
+        "cache_creation_input_tokens": 10314,
+        "cache_read_input_tokens": 70129,
+        "output_tokens": 5151
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 10314,
+      "estimated_api_usd": 0.053507900000000004,
+      "cli_reported_usd": 0.053507900000000004,
+      "session_count": 4,
+      "session_overlap_seconds": 19.654,
+      "sessions": [
+        {
+          "seconds": 8.678,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2334,
+            "cache_read_input_tokens": 15961,
+            "output_tokens": 1058
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2334,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.011580100000000001,
+          "num_turns": 4,
+          "files": [
+            "clamp.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 8.678
+        },
+        {
+          "seconds": 11.521,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2665,
+            "cache_read_input_tokens": 15922,
+            "output_tokens": 1395
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2665,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0139232,
+          "num_turns": 4,
+          "files": [
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 11.522
+        },
+        {
+          "seconds": 10.976,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2701,
+            "cache_read_input_tokens": 22266,
+            "output_tokens": 1313
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2701,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.014227600000000002,
+          "num_turns": 5,
+          "files": [
+            "steps.mjs"
+          ],
+          "start_offset_seconds": 8.68,
+          "end_offset_seconds": 19.657
+        },
+        {
+          "seconds": 11.95,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2614,
+            "cache_read_input_tokens": 15980,
+            "output_tokens": 1385
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2614,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.013777,
+          "num_turns": 4,
+          "files": [
+            "width.mjs"
+          ],
+          "start_offset_seconds": 11.523,
+          "end_offset_seconds": 23.473
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "B",
+      "block": 6,
+      "order": 1,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 30.115,
+      "verification_seconds": 0.128,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "8cf4d2502c06d4cc0fc3bb2d5291af96e90f334b5adcc818e54a3869680209ed",
+      "gap_from_previous_session_seconds": 0.179,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 76,
+        "cache_creation_input_tokens": 6793,
+        "cache_read_input_tokens": 51631,
+        "output_tokens": 3522
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 6793,
+      "estimated_api_usd": 0.0364351,
+      "cli_reported_usd": 0.0364351,
+      "session_count": 2,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 16.006,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3455,
+            "cache_read_input_tokens": 22319,
+            "output_tokens": 1895
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3455,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0186509,
+          "num_turns": 7,
+          "files": [
+            "clamp.mjs",
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 16.006
+        },
+        {
+          "seconds": 13.941,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 42,
+            "cache_creation_input_tokens": 3338,
+            "cache_read_input_tokens": 29312,
+            "output_tokens": 1627
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3338,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0177842,
+          "num_turns": 9,
+          "files": [
+            "steps.mjs",
+            "width.mjs"
+          ],
+          "start_offset_seconds": 16.006,
+          "end_offset_seconds": 29.948
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "C",
+      "block": 6,
+      "order": 2,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 21.094,
+      "verification_seconds": 0.131,
+      "integration_seconds": 0.001,
+      "test_exit": 0,
+      "sha256": "fca5ae422dae4a513bc4e0e876090d3bfa531806b8e19cdc7ff3350b0e114bc9",
+      "gap_from_previous_session_seconds": 0.311,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 128,
+        "cache_creation_input_tokens": 10075,
+        "cache_read_input_tokens": 82413,
+        "output_tokens": 4890
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 10075,
+      "estimated_api_usd": 0.052969300000000004,
+      "cli_reported_usd": 0.0529693,
+      "session_count": 4,
+      "session_overlap_seconds": 19.992,
+      "sessions": [
+        {
+          "seconds": 10.701,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2544,
+            "cache_read_input_tokens": 22341,
+            "output_tokens": 1231
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2544,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.013511100000000002,
+          "num_turns": 5,
+          "files": [
+            "clamp.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 10.701
+        },
+        {
+          "seconds": 11.914,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2904,
+            "cache_read_input_tokens": 22205,
+            "output_tokens": 1540
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2904,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0157625,
+          "num_turns": 5,
+          "files": [
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 11.914
+        },
+        {
+          "seconds": 10.077,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2527,
+            "cache_read_input_tokens": 21947,
+            "output_tokens": 1233
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2527,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.013447699999999998,
+          "num_turns": 4,
+          "files": [
+            "steps.mjs"
+          ],
+          "start_offset_seconds": 10.702,
+          "end_offset_seconds": 20.779
+        },
+        {
+          "seconds": 8.079,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2100,
+            "cache_read_input_tokens": 15920,
+            "output_tokens": 886
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2100,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.010248,
+          "num_turns": 4,
+          "files": [
+            "width.mjs"
+          ],
+          "start_offset_seconds": 11.916,
+          "end_offset_seconds": 19.995
+        }
+      ]
+    },
+    {
+      "task": "shared",
+      "condition": "A",
+      "block": 6,
+      "order": 3,
+      "base": "bc4d37fa54a37d6536999ecc16e0f4a6d1295275",
+      "seconds": 17.415,
+      "verification_seconds": 0.126,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "077b007c5c27bf1a2678e6dcc2c17e8bfa6bb3434fdf1fe84283e34ceb9e2bad",
+      "gap_from_previous_session_seconds": 0.169,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 34,
+        "cache_creation_input_tokens": 4111,
+        "cache_read_input_tokens": 22646,
+        "output_tokens": 2323
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 4111,
+      "estimated_api_usd": 0.0221356,
+      "cli_reported_usd": 0.0221356,
+      "session_count": 1,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 17.253,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 4111,
+            "cache_read_input_tokens": 22646,
+            "output_tokens": 2323
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 4111,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0221356,
+          "num_turns": 11,
+          "files": [
+            "clamp.mjs",
+            "steps.mjs",
+            "width.mjs",
+            "wrap.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 17.253
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "C",
+      "block": 1,
+      "order": 1,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 23.188,
+      "verification_seconds": 0.133,
+      "integration_seconds": 0.001,
+      "test_exit": 1,
+      "sha256": "f993822f4e1d9063e25756be1a89aa0ca9ca83ae99296c0adf6ae12a76966380",
+      "gap_from_previous_session_seconds": 0.373,
+      "tests": {
+        "tests": 12,
+        "pass": 10,
+        "fail": 2
+      },
+      "success": false,
+      "usage": {
+        "input_tokens": 104,
+        "cache_creation_input_tokens": 9760,
+        "cache_read_input_tokens": 63823,
+        "output_tokens": 4602
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 9760,
+      "estimated_api_usd": 0.049016300000000006,
+      "cli_reported_usd": 0.0490163,
+      "session_count": 4,
+      "session_overlap_seconds": 18.089,
+      "sessions": [
+        {
+          "seconds": 8.399,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2252,
+            "cache_read_input_tokens": 15969,
+            "output_tokens": 958
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2252,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0109169,
+          "num_turns": 4,
+          "files": [
+            "slug.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 8.399
+        },
+        {
+          "seconds": 15.904,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 3271,
+            "cache_read_input_tokens": 15935,
+            "output_tokens": 1978
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3271,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0180515,
+          "num_turns": 4,
+          "files": [
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 15.905
+        },
+        {
+          "seconds": 9.69,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2150,
+            "cache_read_input_tokens": 15959,
+            "output_tokens": 889
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2150,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0103669,
+          "num_turns": 4,
+          "files": [
+            "median.mjs"
+          ],
+          "start_offset_seconds": 8.403,
+          "end_offset_seconds": 18.094
+        },
+        {
+          "seconds": 6.964,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2087,
+            "cache_read_input_tokens": 15960,
+            "output_tokens": 777
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2087,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.009681,
+          "num_turns": 4,
+          "files": [
+            "pad.mjs"
+          ],
+          "start_offset_seconds": 15.906,
+          "end_offset_seconds": 22.87
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "B",
+      "block": 1,
+      "order": 2,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 22.271,
+      "verification_seconds": 0.137,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "a899b946d18b77a8e6a3867794dce1fd77df4625d5e65484de43ac55ebafcdf1",
+      "gap_from_previous_session_seconds": 0.207,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 76,
+        "cache_creation_input_tokens": 5518,
+        "cache_read_input_tokens": 51302,
+        "output_tokens": 2527
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 5518,
+      "estimated_api_usd": 0.028877200000000002,
+      "cli_reported_usd": 0.0288772,
+      "session_count": 2,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 10.152,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2797,
+            "cache_read_input_tokens": 22393,
+            "output_tokens": 1224
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2797,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0139873,
+          "num_turns": 7,
+          "files": [
+            "slug.mjs",
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 10.152
+        },
+        {
+          "seconds": 11.91,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 42,
+            "cache_creation_input_tokens": 2721,
+            "cache_read_input_tokens": 28909,
+            "output_tokens": 1303
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2721,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.014889900000000001,
+          "num_turns": 6,
+          "files": [
+            "median.mjs",
+            "pad.mjs"
+          ],
+          "start_offset_seconds": 10.153,
+          "end_offset_seconds": 22.063
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "A",
+      "block": 1,
+      "order": 3,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 19.896,
+      "verification_seconds": 0.12,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "e306e6be3709e17c3008bd6a697f2853b5602fee61702d38cb6b67639a6dc3a4",
+      "gap_from_previous_session_seconds": 0.179,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 34,
+        "cache_creation_input_tokens": 3820,
+        "cache_read_input_tokens": 22712,
+        "output_tokens": 2024
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 3820,
+      "estimated_api_usd": 0.020065200000000002,
+      "cli_reported_usd": 0.0200652,
+      "session_count": 1,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 19.736,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3820,
+            "cache_read_input_tokens": 22712,
+            "output_tokens": 2024
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3820,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0200652,
+          "num_turns": 11,
+          "files": [
+            "median.mjs",
+            "pad.mjs",
+            "slug.mjs",
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 19.736
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "A",
+      "block": 2,
+      "order": 1,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 12.985,
+      "verification_seconds": 0.132,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "3bd94f5805166297d61daa9e6582117e0c1c0893c8cdec44d03f6dc983975df7",
+      "gap_from_previous_session_seconds": 0.157,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 34,
+        "cache_creation_input_tokens": 3649,
+        "cache_read_input_tokens": 22684,
+        "output_tokens": 1864
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 3649,
+      "estimated_api_usd": 0.0189204,
+      "cli_reported_usd": 0.0189204,
+      "session_count": 1,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 12.817,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3649,
+            "cache_read_input_tokens": 22684,
+            "output_tokens": 1864
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3649,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0189204,
+          "num_turns": 11,
+          "files": [
+            "median.mjs",
+            "pad.mjs",
+            "slug.mjs",
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 12.818
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "C",
+      "block": 2,
+      "order": 2,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 20.738,
+      "verification_seconds": 0.13,
+      "integration_seconds": 0.001,
+      "test_exit": 0,
+      "sha256": "d65481f02c55a31f8e489f73d056ae2eecf6488ae2bbb3385a742080b5ed7b71",
+      "gap_from_previous_session_seconds": 0.317,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 128,
+        "cache_creation_input_tokens": 10126,
+        "cache_read_input_tokens": 82218,
+        "output_tokens": 4798
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 10126,
+      "estimated_api_usd": 0.0525918,
+      "cli_reported_usd": 0.0525918,
+      "session_count": 4,
+      "session_overlap_seconds": 20.136,
+      "sessions": [
+        {
+          "seconds": 8.347,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2349,
+            "cache_read_input_tokens": 15969,
+            "output_tokens": 1063
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2349,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0116359,
+          "num_turns": 4,
+          "files": [
+            "slug.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 8.347
+        },
+        {
+          "seconds": 12.77,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 42,
+            "cache_creation_input_tokens": 2716,
+            "cache_read_input_tokens": 28055,
+            "output_tokens": 1290
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2716,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0147295,
+          "num_turns": 5,
+          "files": [
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 12.771
+        },
+        {
+          "seconds": 11.79,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2881,
+            "cache_read_input_tokens": 22234,
+            "output_tokens": 1589
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2881,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0159644,
+          "num_turns": 5,
+          "files": [
+            "median.mjs"
+          ],
+          "start_offset_seconds": 8.348,
+          "end_offset_seconds": 20.139
+        },
+        {
+          "seconds": 7.65,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2180,
+            "cache_read_input_tokens": 15960,
+            "output_tokens": 856
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2180,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.010262,
+          "num_turns": 4,
+          "files": [
+            "pad.mjs"
+          ],
+          "start_offset_seconds": 12.772,
+          "end_offset_seconds": 20.422
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "B",
+      "block": 2,
+      "order": 3,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 24.09,
+      "verification_seconds": 0.115,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "ed0ad3f4cde7279a99534c08a2b23a5b9fd40e5fb034cc81f3840a2fff362025",
+      "gap_from_previous_session_seconds": 0.176,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 68,
+        "cache_creation_input_tokens": 5756,
+        "cache_read_input_tokens": 44830,
+        "output_tokens": 2694
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 5756,
+      "estimated_api_usd": 0.029533,
+      "cli_reported_usd": 0.029532999999999997,
+      "session_count": 2,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 13.0,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2836,
+            "cache_read_input_tokens": 22390,
+            "output_tokens": 1315
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2836,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.014519999999999998,
+          "num_turns": 7,
+          "files": [
+            "slug.mjs",
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 13.0
+        },
+        {
+          "seconds": 10.932,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2920,
+            "cache_read_input_tokens": 22440,
+            "output_tokens": 1379
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2920,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.015012999999999999,
+          "num_turns": 7,
+          "files": [
+            "median.mjs",
+            "pad.mjs"
+          ],
+          "start_offset_seconds": 13.001,
+          "end_offset_seconds": 23.934
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "A",
+      "block": 3,
+      "order": 1,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 20.273,
+      "verification_seconds": 0.127,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "547c82dbb8d982928db75d40af4d79cb42bb7812e7cd8338c6a9b704c49c9044",
+      "gap_from_previous_session_seconds": 0.15,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 58,
+        "cache_creation_input_tokens": 4062,
+        "cache_read_input_tokens": 45402,
+        "output_tokens": 2286
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 4062,
+      "estimated_api_usd": 0.024152200000000002,
+      "cli_reported_usd": 0.024152200000000006,
+      "session_count": 1,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 20.112,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 58,
+            "cache_creation_input_tokens": 4062,
+            "cache_read_input_tokens": 45402,
+            "output_tokens": 2286
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 4062,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.024152200000000006,
+          "num_turns": 11,
+          "files": [
+            "median.mjs",
+            "pad.mjs",
+            "slug.mjs",
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 20.112
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "B",
+      "block": 3,
+      "order": 2,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 27.781,
+      "verification_seconds": 0.128,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "3c21ca0bb24d41a291075b8dc9dde61b57edeb326d807e2ac84473ae3fb99166",
+      "gap_from_previous_session_seconds": 0.173,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 84,
+        "cache_creation_input_tokens": 6357,
+        "cache_read_input_tokens": 59191,
+        "output_tokens": 3156
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 6357,
+      "estimated_api_usd": 0.034497099999999996,
+      "cli_reported_usd": 0.0344971,
+      "session_count": 2,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 14.728,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 42,
+            "cache_creation_input_tokens": 3356,
+            "cache_read_input_tokens": 29615,
+            "output_tokens": 1668
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3356,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.018055500000000002,
+          "num_turns": 8,
+          "files": [
+            "slug.mjs",
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 14.728
+        },
+        {
+          "seconds": 12.88,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 42,
+            "cache_creation_input_tokens": 3001,
+            "cache_read_input_tokens": 29576,
+            "output_tokens": 1488
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3001,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0164416,
+          "num_turns": 7,
+          "files": [
+            "median.mjs",
+            "pad.mjs"
+          ],
+          "start_offset_seconds": 14.729,
+          "end_offset_seconds": 27.609
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "C",
+      "block": 3,
+      "order": 3,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 27.655,
+      "verification_seconds": 0.131,
+      "integration_seconds": 0.001,
+      "test_exit": 0,
+      "sha256": "4768c44389c0e9687dfb2090f991e6b21b33d40f66edc9110cb0a852d70ace67",
+      "gap_from_previous_session_seconds": 0.414,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 128,
+        "cache_creation_input_tokens": 11460,
+        "cache_read_input_tokens": 82990,
+        "output_tokens": 6080
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 11460,
+      "estimated_api_usd": 0.061747,
+      "cli_reported_usd": 0.061746999999999996,
+      "session_count": 4,
+      "session_overlap_seconds": 22.014,
+      "sessions": [
+        {
+          "seconds": 13.761,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2951,
+            "cache_read_input_tokens": 15999,
+            "output_tokens": 1733
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2951,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0161929,
+          "num_turns": 4,
+          "files": [
+            "slug.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 13.761
+        },
+        {
+          "seconds": 12.372,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 42,
+            "cache_creation_input_tokens": 2922,
+            "cache_read_input_tokens": 28949,
+            "output_tokens": 1425
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2922,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.015905899999999997,
+          "num_turns": 6,
+          "files": [
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 12.373
+        },
+        {
+          "seconds": 14.865,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3343,
+            "cache_read_input_tokens": 22022,
+            "output_tokens": 1994
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3343,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.018892199999999998,
+          "num_turns": 5,
+          "files": [
+            "median.mjs"
+          ],
+          "start_offset_seconds": 12.374,
+          "end_offset_seconds": 27.239
+        },
+        {
+          "seconds": 8.254,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2244,
+            "cache_read_input_tokens": 16020,
+            "output_tokens": 928
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2244,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.010756,
+          "num_turns": 4,
+          "files": [
+            "pad.mjs"
+          ],
+          "start_offset_seconds": 13.763,
+          "end_offset_seconds": 22.017
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "C",
+      "block": 4,
+      "order": 1,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 22.014,
+      "verification_seconds": 0.133,
+      "integration_seconds": 0.001,
+      "test_exit": 0,
+      "sha256": "1ba4df56e3cd5f4f55f4c7085d58dcca447230c21069ef6c929d85d500e5185a",
+      "gap_from_previous_session_seconds": 0.317,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 112,
+        "cache_creation_input_tokens": 9835,
+        "cache_read_input_tokens": 70105,
+        "output_tokens": 4704
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 9835,
+      "estimated_api_usd": 0.0503125,
+      "cli_reported_usd": 0.0503125,
+      "session_count": 4,
+      "session_overlap_seconds": 17.551,
+      "sessions": [
+        {
+          "seconds": 8.765,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2387,
+            "cache_read_input_tokens": 15960,
+            "output_tokens": 1161
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2387,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.012201000000000002,
+          "num_turns": 4,
+          "files": [
+            "slug.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 8.765
+        },
+        {
+          "seconds": 14.111,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3158,
+            "cache_read_input_tokens": 22265,
+            "output_tokens": 1807
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3158,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.017611500000000002,
+          "num_turns": 5,
+          "files": [
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 14.111
+        },
+        {
+          "seconds": 8.787,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2166,
+            "cache_read_input_tokens": 15919,
+            "output_tokens": 926
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2166,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0105799,
+          "num_turns": 4,
+          "files": [
+            "median.mjs"
+          ],
+          "start_offset_seconds": 8.767,
+          "end_offset_seconds": 17.554
+        },
+        {
+          "seconds": 7.583,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2124,
+            "cache_read_input_tokens": 15961,
+            "output_tokens": 810
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2124,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0099201,
+          "num_turns": 4,
+          "files": [
+            "pad.mjs"
+          ],
+          "start_offset_seconds": 14.113,
+          "end_offset_seconds": 21.696
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "A",
+      "block": 4,
+      "order": 2,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 13.786,
+      "verification_seconds": 0.115,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "69f8d8d47851672fdd1e8b65679d827d8de09e37357bfcb782f3bb17de6e832d",
+      "gap_from_previous_session_seconds": 0.169,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 34,
+        "cache_creation_input_tokens": 3715,
+        "cache_read_input_tokens": 22630,
+        "output_tokens": 1935
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 3715,
+      "estimated_api_usd": 0.019402,
+      "cli_reported_usd": 0.019402,
+      "session_count": 1,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 13.638,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3715,
+            "cache_read_input_tokens": 22630,
+            "output_tokens": 1935
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3715,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.019402,
+          "num_turns": 11,
+          "files": [
+            "median.mjs",
+            "pad.mjs",
+            "slug.mjs",
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 13.639
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "B",
+      "block": 4,
+      "order": 3,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 29.879,
+      "verification_seconds": 0.132,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "a373e04eb8c02a0028a9c934807003cd00fe8dd09e8952b1e2d54db40d7301f7",
+      "gap_from_previous_session_seconds": 0.148,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 92,
+        "cache_creation_input_tokens": 5745,
+        "cache_read_input_tokens": 64880,
+        "output_tokens": 2723
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 5745,
+      "estimated_api_usd": 0.031685,
+      "cli_reported_usd": 0.031685000000000005,
+      "session_count": 2,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 13.681,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 42,
+            "cache_creation_input_tokens": 2882,
+            "cache_read_input_tokens": 29202,
+            "output_tokens": 1354
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2882,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.015496199999999998,
+          "num_turns": 7,
+          "files": [
+            "slug.mjs",
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 13.681
+        },
+        {
+          "seconds": 16.033,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 50,
+            "cache_creation_input_tokens": 2863,
+            "cache_read_input_tokens": 35678,
+            "output_tokens": 1369
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2863,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.016188800000000003,
+          "num_turns": 7,
+          "files": [
+            "median.mjs",
+            "pad.mjs"
+          ],
+          "start_offset_seconds": 13.682,
+          "end_offset_seconds": 29.715
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "B",
+      "block": 5,
+      "order": 1,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 27.457,
+      "verification_seconds": 0.126,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "d9bfcba014e6e7e9bc8bc7a204aa569dc81fd0a99d2a268ddf4cc4a4caf91e52",
+      "gap_from_previous_session_seconds": 0.169,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 68,
+        "cache_creation_input_tokens": 5909,
+        "cache_read_input_tokens": 45200,
+        "output_tokens": 2678
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 5909,
+      "estimated_api_usd": 0.029796,
+      "cli_reported_usd": 0.029796,
+      "session_count": 2,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 14.664,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2804,
+            "cache_read_input_tokens": 22387,
+            "output_tokens": 1228
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2804,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0140207,
+          "num_turns": 7,
+          "files": [
+            "slug.mjs",
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 14.665
+        },
+        {
+          "seconds": 12.63,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 3105,
+            "cache_read_input_tokens": 22813,
+            "output_tokens": 1450
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3105,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0157753,
+          "num_turns": 8,
+          "files": [
+            "median.mjs",
+            "pad.mjs"
+          ],
+          "start_offset_seconds": 14.665,
+          "end_offset_seconds": 27.296
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "A",
+      "block": 5,
+      "order": 2,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 16.109,
+      "verification_seconds": 0.135,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "f081954b39d8b38966fb5716294b44c963f8c89e17b136697cf54f256cdff0c9",
+      "gap_from_previous_session_seconds": 0.161,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 34,
+        "cache_creation_input_tokens": 4084,
+        "cache_read_input_tokens": 22658,
+        "output_tokens": 2343
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 4084,
+      "estimated_api_usd": 0.0221828,
+      "cli_reported_usd": 0.022182800000000003,
+      "session_count": 1,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 15.94,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 4084,
+            "cache_read_input_tokens": 22658,
+            "output_tokens": 2343
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 4084,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.022182800000000003,
+          "num_turns": 11,
+          "files": [
+            "median.mjs",
+            "pad.mjs",
+            "slug.mjs",
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 15.941
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "C",
+      "block": 5,
+      "order": 3,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 23.545,
+      "verification_seconds": 0.13,
+      "integration_seconds": 0.001,
+      "test_exit": 0,
+      "sha256": "3676c0a0d3f94818870e6ce154a14d73e2a5f7dc4099e17a75c4a8fe43df56af",
+      "gap_from_previous_session_seconds": 0.344,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 120,
+        "cache_creation_input_tokens": 10365,
+        "cache_read_input_tokens": 76486,
+        "output_tokens": 4984
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 10365,
+      "estimated_api_usd": 0.0534186,
+      "cli_reported_usd": 0.053418600000000004,
+      "session_count": 4,
+      "session_overlap_seconds": 20.901,
+      "sessions": [
+        {
+          "seconds": 10.956,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2607,
+            "cache_read_input_tokens": 15963,
+            "output_tokens": 1320
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2607,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.013436300000000002,
+          "num_turns": 4,
+          "files": [
+            "slug.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 10.956
+        },
+        {
+          "seconds": 11.684,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2555,
+            "cache_read_input_tokens": 22350,
+            "output_tokens": 1198
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2555,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.013369000000000002,
+          "num_turns": 5,
+          "files": [
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 11.684
+        },
+        {
+          "seconds": 12.249,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2988,
+            "cache_read_input_tokens": 22215,
+            "output_tokens": 1588
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2988,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.016171500000000002,
+          "num_turns": 5,
+          "files": [
+            "median.mjs"
+          ],
+          "start_offset_seconds": 10.957,
+          "end_offset_seconds": 23.206
+        },
+        {
+          "seconds": 9.218,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2215,
+            "cache_read_input_tokens": 15958,
+            "output_tokens": 878
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2215,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0104418,
+          "num_turns": 4,
+          "files": [
+            "pad.mjs"
+          ],
+          "start_offset_seconds": 11.685,
+          "end_offset_seconds": 20.903
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "B",
+      "block": 6,
+      "order": 1,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 21.734,
+      "verification_seconds": 0.13,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "e306e6be3709e17c3008bd6a697f2853b5602fee61702d38cb6b67639a6dc3a4",
+      "gap_from_previous_session_seconds": 0.169,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 76,
+        "cache_creation_input_tokens": 5463,
+        "cache_read_input_tokens": 51157,
+        "output_tokens": 2450
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 5463,
+      "estimated_api_usd": 0.0283677,
+      "cli_reported_usd": 0.028367700000000003,
+      "session_count": 2,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 10.504,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2751,
+            "cache_read_input_tokens": 22305,
+            "output_tokens": 1177
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2751,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0136515,
+          "num_turns": 7,
+          "files": [
+            "slug.mjs",
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 10.504
+        },
+        {
+          "seconds": 11.063,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 42,
+            "cache_creation_input_tokens": 2712,
+            "cache_read_input_tokens": 28852,
+            "output_tokens": 1273
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2712,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0147162,
+          "num_turns": 6,
+          "files": [
+            "median.mjs",
+            "pad.mjs"
+          ],
+          "start_offset_seconds": 10.505,
+          "end_offset_seconds": 21.568
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "C",
+      "block": 6,
+      "order": 2,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 25.527,
+      "verification_seconds": 0.136,
+      "integration_seconds": 0.001,
+      "test_exit": 0,
+      "sha256": "561df604d0c02653b8241862abbe8c6f6b078c6e09e1509608f5a7739ff1f5ea",
+      "gap_from_previous_session_seconds": 0.332,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 144,
+        "cache_creation_input_tokens": 11214,
+        "cache_read_input_tokens": 95967,
+        "output_tokens": 5754
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 11214,
+      "estimated_api_usd": 0.0609387,
+      "cli_reported_usd": 0.0609387,
+      "session_count": 4,
+      "session_overlap_seconds": 24.26,
+      "sessions": [
+        {
+          "seconds": 9.6,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 2540,
+            "cache_read_input_tokens": 22185,
+            "output_tokens": 1180
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2540,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.013232500000000001,
+          "num_turns": 5,
+          "files": [
+            "slug.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 9.601
+        },
+        {
+          "seconds": 16.448,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 58,
+            "cache_creation_input_tokens": 3199,
+            "cache_read_input_tokens": 41838,
+            "output_tokens": 1616
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3199,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0187198,
+          "num_turns": 7,
+          "files": [
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 16.449
+        },
+        {
+          "seconds": 15.587,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 3292,
+            "cache_read_input_tokens": 15954,
+            "output_tokens": 2050
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3292,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.0184554,
+          "num_turns": 4,
+          "files": [
+            "median.mjs"
+          ],
+          "start_offset_seconds": 9.602,
+          "end_offset_seconds": 25.189
+        },
+        {
+          "seconds": 7.813,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 26,
+            "cache_creation_input_tokens": 2183,
+            "cache_read_input_tokens": 15990,
+            "output_tokens": 908
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 2183,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.010530999999999999,
+          "num_turns": 4,
+          "files": [
+            "pad.mjs"
+          ],
+          "start_offset_seconds": 16.451,
+          "end_offset_seconds": 24.264
+        }
+      ]
+    },
+    {
+      "task": "independent",
+      "condition": "A",
+      "block": 6,
+      "order": 3,
+      "base": "95ab9dee16e5e7dcc94d3ca8bfa21207527fd6bc",
+      "seconds": 14.233,
+      "verification_seconds": 0.129,
+      "integration_seconds": 0.0,
+      "test_exit": 0,
+      "sha256": "935f3804bcb74b466c81e344ff4b339433afa542ec4154bf574d7ca30c57868a",
+      "gap_from_previous_session_seconds": 0.181,
+      "tests": {
+        "tests": 12,
+        "pass": 12,
+        "fail": 0
+      },
+      "success": true,
+      "usage": {
+        "input_tokens": 34,
+        "cache_creation_input_tokens": 4050,
+        "cache_read_input_tokens": 22632,
+        "output_tokens": 2243
+      },
+      "cache_creation_5m": 0,
+      "cache_creation_1h": 4050,
+      "estimated_api_usd": 0.0216122,
+      "cli_reported_usd": 0.021612199999999998,
+      "session_count": 1,
+      "session_overlap_seconds": 0,
+      "sessions": [
+        {
+          "seconds": 14.062,
+          "rc": 0,
+          "subtype": "success",
+          "ok": true,
+          "models": [
+            "claude-haiku-4-5-20251001"
+          ],
+          "usage": {
+            "input_tokens": 34,
+            "cache_creation_input_tokens": 4050,
+            "cache_read_input_tokens": 22632,
+            "output_tokens": 2243
+          },
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 4050,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "cli_cost_usd": 0.021612199999999998,
+          "num_turns": 11,
+          "files": [
+            "median.mjs",
+            "pad.mjs",
+            "slug.mjs",
+            "unique.mjs"
+          ],
+          "start_offset_seconds": 0.0,
+          "end_offset_seconds": 14.063
+        }
+      ]
+    }
+  ]
+}
