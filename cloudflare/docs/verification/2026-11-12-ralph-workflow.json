@@ -1,0 +1,94 @@
+{
+  "workerVersion": "212ae657-e19f-4fa6-8f16-679acd7af99f",
+  "runtimeRevision": "1fd646aca3be167f42cc0f5a482fcaecb1257ec3992233c9ce4b84d8f2136789",
+  "workflowId": "71200945-5090-4f91-b0f9-0aebc9d2738d",
+  "draftStatus": "DRAFT",
+  "draftWorkerCount": 0,
+  "approvedAt": 1794409302803,
+  "finishedAt": 1794409396639,
+  "clientExitCode": 0,
+  "waitBeforeResultQueryMs": 159202,
+  "inputSnapshotId": "f9c9d7713efae1c488c1809e65bd46e91b55a05caab32d3b8dbfe087d851dcba",
+  "contractHash": "cfb0cf13f6d713b8d83ea68e57c1192f0022174923434a3bd40aa8279c340cbb",
+  "outputSnapshotId": "6f3c438202a34160178b3cedcb09e4b82c23cfc4d5a745df6b3dc1fcea2d534b",
+  "changedPaths": [
+    "add.mjs",
+    "multiply.mjs"
+  ],
+  "firstTurnOverlapMs": 7400,
+  "workers": [
+    {
+      "provider": "codex",
+      "jobId": "83075b2f-627d-40f6-b85a-8011cff24bdd",
+      "authSynced": true,
+      "containerStopped": true,
+      "failedCheckId": "4c9741b0-174b-412d-a23f-cc00ddb04c38",
+      "failedCheckStatus": "FAILED",
+      "passedCheckId": "3eb9ef71-4457-4760-b052-305e9e30d15d",
+      "passedCheckExitCode": 0,
+      "rounds": [
+        {
+          "round": 1,
+          "snapshotId": "fbf9d26157395b85d0810c1f27ec59018327c115380e2b9247629dc73809170c",
+          "accepted": false,
+          "startedAt": 1794409322653,
+          "finishedAt": 1794409340354,
+          "sessionHash": "eed01cbad665d1770890e5cd2a0ddc478a0fe0e47f70beeca72864f51152cb6f"
+        },
+        {
+          "round": 2,
+          "snapshotId": "36f285621dc18d835eb3675065001603d82c48535782805ca4f66b3939e36a29",
+          "accepted": true,
+          "startedAt": 1794409357449,
+          "finishedAt": 1794409368926,
+          "sessionHash": "eed01cbad665d1770890e5cd2a0ddc478a0fe0e47f70beeca72864f51152cb6f"
+        }
+      ]
+    },
+    {
+      "provider": "claude",
+      "jobId": "4a212ffb-099c-4514-a453-6f2bf336e769",
+      "authSynced": true,
+      "containerStopped": true,
+      "failedCheckId": "ada93dce-c972-4320-bb50-dc4ec39d8165",
+      "failedCheckStatus": "FAILED",
+      "passedCheckId": "04e973fe-69b5-4154-b3b5-65e2852f5121",
+      "passedCheckExitCode": 0,
+      "rounds": [
+        {
+          "round": 1,
+          "snapshotId": "e1686bc585699a932a0efc48056bfcff3da2b84a909d12fe2c4ae817432ae01d",
+          "accepted": false,
+          "startedAt": 1794409323236,
+          "finishedAt": 1794409330636,
+          "sessionHash": "58b524190eeb9a5d89c26b0833a1d1cf4ecce17294db6569fd77753fe32e696b"
+        },
+        {
+          "round": 2,
+          "snapshotId": "e9f688fe96409a975cef6749407cb7b35dcd6363bfe64f45e6f2679348d3657b",
+          "accepted": true,
+          "startedAt": 1794409348351,
+          "finishedAt": 1794409354536,
+          "sessionHash": "58b524190eeb9a5d89c26b0833a1d1cf4ecce17294db6569fd77753fe32e696b"
+        }
+      ]
+    }
+  ],
+  "integration": {
+    "id": "9c5d8371-7b47-46d9-8baa-44adcb79d584",
+    "containerStopped": true,
+    "credentialsAbsent": true,
+    "sourceUnchanged": true,
+    "process": {
+      "status": "passed",
+      "exitCode": 0,
+      "stdout": "add contract: 2 passed, 0 failed\nmultiply contract: 2 passed, 0 failed\nintegration contract: 5 passed, 0 failed\n",
+      "stderr": "",
+      "durationMs": 649,
+      "truncated": false,
+      "startedAt": 1794409393997,
+      "finishedAt": 1794409394646
+    }
+  },
+  "approvalReplayKeptWorkerIds": true
+}

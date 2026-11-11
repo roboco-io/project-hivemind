@@ -6,8 +6,9 @@
 
 **One Vision. Many Agents.**
 
-사람이 개발 목표와 방향을 정하고, 중앙 관제 시스템이 작업을 분배하며,
-여러 AI 워커가 개발을 수행하는 플랫폼이다.
+사람이 정한 대규모 개발 목표를 중앙 관제 시스템이 검증 가능한 작업 단위로 분배하는 플랫폼이다.
+독립적으로 진행할 수 있는 단위는 여러 워커에서 병렬 실행한다. 각 워커는 랄프 루프로 컨텍스트를 이어 가며 완료 조건까지 구현·검증·수정을 반복해 토큰 효율을 높이는 것을 목표로 한다.
+워커별 랄프 루프의 수용 기준은 [MVP 범위](docs/mvp.md#실행-기본-정책)에 정리했다.
 사람은 작업 과정, 승인, 비용과 Git 변경 제안을 한곳에서 확인한다.
 HIVEMIND는 임시 개발 코드명이다. 공개 제품명은 아직 정하지 않았다.
 소스와 문서는 [Apache License 2.0](LICENSE)으로 제공한다.
@@ -35,6 +36,7 @@ MCP는 중앙 HTTP API만 호출하며 Cloudflare 제어 토큰과 제공자 인
 
 Cloudflare 실행 백엔드는 [cloudflare/](cloudflare/README.md)에 배포했다.
 공식 구독 인증, 작업별 컨테이너, 불변 snapshot과 별도 테스트 컨테이너를 사용한다.
+[원격 통합 워크플로](cloudflare/backend/README.md#두-워커의-원격-통합-워크플로)는 공통 계약을 고정하고 Codex·Claude의 랄프 루프와 통합 검증을 원격에서 진행한다.
 중앙 서버에 원격 설정을 제공하면 웹에서도 실행 환경 **Cloudflare**와 제공자 **Codex / Claude Code**를 선택할 수 있다.
 기존 mock/local과 로컬 Codex·Claude worktree 실행도 유지한다.
 
