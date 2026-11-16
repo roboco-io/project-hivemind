@@ -1,3 +1,8 @@
+import {LargeArtifactStore} from '../large-artifact-store.ts';
+import {largeArtifactKey,authorizeArtifactRead,type LargeArtifactRef,type ArtifactReadGrant} from '../large-artifact.ts';
+import {validateClaudeResultMetrics} from '../claude-result-metrics.ts';
+import {advanceComputeGroup,assignGroup,type ComputeGroupSpec,type ComputeGroupRecord} from '../compute-group.ts';
+import {ensureSchedulerAlarm} from './scheduler-alarm.ts';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {DurableObject,WorkerEntrypoint} from 'cloudflare:workers';
 import type {CredentialRecord,JobRecord,JobSpec,RuntimeInput,RuntimeResult,SchedulerState,Snapshot,RalphCheckpoint,RalphFeedback} from '../contracts.ts';
@@ -7,6 +12,12 @@ import {validateSnapshot} from '../snapshot.ts';
 import {openAuthReturn,openCredential,sealCredential,validateAuth,type StoredCredential} from '../crypto.ts';
 import {ApiError,authorize,handleApi,json,type ApiService} from './api.ts';
 import {advanceWorkflow,changedPaths,workflowFingerprint,type WorkflowRecord,type WorkflowSpec} from '../workflow.ts';
+import {advanceCarbonCampaign,reserveCarbonRequest,settleCarbonRequest,terraSizingOrder,terraCachePairOrder,type NpmCacheMode,type BenchmarkInstance,type CarbonOutcome,type CarbonCampaign,type CarbonEffort,type CarbonUsage} from '../carbon-benchmark.ts';
+import {handleCarbonGateway, syntheticCarbonStream} from '../carbon-gateway.ts';
+import {sha256} from '../snapshot.ts';
+import {handleTerraGateway,syntheticTerraStream,terraCredential,terraOrigin} from '../terra-gateway.ts';
+import {latencySequenceTurns,type TerraGatewayTiming,type TerraLatencyMode} from '../terra-latency.ts';
+import {npmCacheOrigin,npmCachePath,npmCacheMaxBytes,npmCacheKey,npmCacheLockPath} from '../npm-cache-object.ts';
 import runtimeBuild from '../../runtime-build.json' with {type:'json'};
 declare global {namespace Cloudflare {interface GlobalProps {mainModule:typeof import('./worker.ts')}}}
 
@@ -14,6 +25,7 @@ interface Env {
  CF_VERSION_METADATA?:{id:string};
  ARTIFACTS:R2Bucket;CREDENTIALS:R2Bucket;
  SCHEDULER:DurableObjectNamespace<SchedulerDO>;RUNNER:DurableObjectNamespace<RunnerDO>;
+ GEMINI_BENCHMARK_KEY?:string;TERRA_BENCHMARK_AUTH?:string;
  CONTROL_TOKEN?:string;AUTH_STORAGE_KEY:string;AUTH_RETURN_PRIVATE_KEY:string;AUTH_RETURN_PUBLIC_KEY:string;CLAUDE_NESTED_APPROVED?:string;CODEX_SANDBOX_APPROVED?:string;
 }
 const CA='/etc/cloudflare/certs/cloudflare-containers-ca.crt';
@@ -24,6 +36,96 @@ const outbound=(request:Request,hosts:string[])=>{const url=new URL(request.url)
 export class CodexOutbound extends WorkerEntrypoint<Env>{fetch(request:Request){return outbound(request,['chatgpt.com','auth.openai.com','api.openai.com']);}}
 export class ClaudeOutbound extends WorkerEntrypoint<Env>{fetch(request:Request){return outbound(request,['api.anthropic.com','claude.ai','claude.com','platform.claude.com']);}}
 export class ComputeOutbound extends WorkerEntrypoint<Env>{fetch(request:Request){return outbound(request,['registry.npmjs.org','github.com','codeload.github.com','objects.githubusercontent.com','release-assets.githubusercontent.com']);}}
+
+const dependencyHosts=['registry.npmjs.org','github.com','codeload.github.com','objects.githubusercontent.com',
+ 'release-assets.githubusercontent.com','binaries.prisma.sh','raw.githubusercontent.com','realworld-docs.netlify.app'];
+function dependencyOutbound(request:Request,providerHosts:string[]=[]){
+ const url=new URL(request.url);
+ if(providerHosts.includes(url.hostname))return outbound(request,providerHosts);
+ if(!['GET','HEAD'].includes(request.method)&&!(request.method==='POST'&&url.hostname==='github.com'&&url.pathname.endsWith('/git-upload-pack')))
+  return Promise.resolve(new Response('Denied',{status:403}));
+ return outbound(request,dependencyHosts);
+}
+export class ResourceComputeOutbound extends WorkerEntrypoint<Env>{async fetch(request:Request){
+ const url=new URL(request.url);
+ if(url.hostname==='hivemind-artifacts.invalid'){
+  const digest=url.pathname.slice(1),auth=request.headers.get('authorization')??'';
+  if(request.method!=='GET'||url.protocol!=='https:'||url.port||url.search||url.username||url.password||!/^[a-f0-9]{64}$/.test(digest)||!/^Bearer hma_[a-f0-9]{64}$/.test(auth))return new Response('Denied',{status:403});
+  const ref=await this.env.SCHEDULER.getByName('owner').artifactRead(auth.slice(7),digest);
+  if(!ref)return new Response('Denied',{status:403});
+  const object=await this.env.ARTIFACTS.get(largeArtifactKey(digest));
+  if(!object||object.size!==ref.sizeBytes)return new Response('Unavailable',{status:404});
+  return new Response(object.body,{headers:{'content-type':'application/octet-stream','content-length':String(object.size),'cache-control':'no-store'}});
+ }
+ return dependencyOutbound(request);
+}}
+export class ResourceCodexOutbound extends WorkerEntrypoint<Env>{fetch(request:Request){return dependencyOutbound(request,['chatgpt.com','auth.openai.com','api.openai.com']);}}
+export class ResourceClaudeOutbound extends WorkerEntrypoint<Env>{fetch(request:Request){return dependencyOutbound(request,['api.anthropic.com','claude.ai','claude.com','platform.claude.com']);}}
+
+export class CarbonOutbound extends WorkerEntrypoint<Env>{
+ async fetch(request:Request){
+  const url=new URL(request.url);
+  if(url.origin===npmCacheOrigin){
+   if(url.pathname!==npmCachePath||url.search||!['GET','PUT'].includes(request.method))return new Response(null,{status:404});
+   const authorization=request.headers.get('authorization')??'';
+   if(!/^Bearer hmb_[a-f0-9]{64}$/.test(authorization))return new Response(null,{status:403});
+   const write=request.method==='PUT';
+   const key=await this.env.SCHEDULER.getByName('owner').npmCacheGrant(authorization.slice(7),write);
+   if(!key)return new Response(null,{status:403});
+   if(!write){
+    const cached=await this.env.ARTIFACTS.get(key);
+    if(!cached)return new Response(null,{status:404});
+    const digest=cached.customMetadata?.sha256;
+    if(cached.size>npmCacheMaxBytes||!digest||!/^[a-f0-9]{64}$/.test(digest)){
+     await cached.body.cancel();
+     return new Response(null,{status:502});
+    }
+    return new Response(cached.body,{headers:{'content-type':'application/octet-stream',
+     'content-length':String(cached.size),'x-hivemind-cache-length':String(cached.size),'x-hivemind-cache-sha256':digest,'cache-control':'no-store'}});
+   }
+   const length=Number(request.headers.get('x-hivemind-cache-length')),digest=request.headers.get('x-hivemind-cache-sha256');
+   if(!request.body||!Number.isSafeInteger(length)||length<=0||length>npmCacheMaxBytes||!digest||!/^[a-f0-9]{64}$/.test(digest))
+    return new Response(null,{status:400});
+   if(await this.env.ARTIFACTS.head(key))return new Response(null,{status:409});
+   const {readable,writable}=new FixedLengthStream(length);
+   const controller=new AbortController();
+   const transfer=request.body.pipeTo(writable,{signal:controller.signal}).then(()=>true,()=>false);
+   try{
+    const saved=await this.env.ARTIFACTS.put(key,readable,{onlyIf:{etagDoesNotMatch:'*'},sha256:digest,customMetadata:{sha256:digest}});
+    if(!saved){controller.abort();await transfer;return new Response(null,{status:409});}
+    if(!await transfer)return new Response(null,{status:502});
+    return new Response(null,{status:201});
+   }catch{
+    controller.abort();
+    await transfer;
+    return new Response(null,{status:502});
+   }
+  }
+  if(url.origin===terraOrigin){
+   const scheduler=this.env.SCHEDULER.getByName('owner');
+   const probe=request.headers.get('x-hivemind-terra-probe')==='1';
+   const auth=terraCredential(this.env.TERRA_BENCHMARK_AUTH);
+   return handleTerraGateway(request,{
+    credential:probe?{access:'fixture',accountId:'fixture',expires:Date.now()+60000}:auth,
+    ...(probe?{fetchImpl:async()=>syntheticTerraStream()}:{}),
+    reserve:capability=>scheduler.reserveCarbon(capability,'medium',1,probe,'terra'),
+    settle:(...args)=>scheduler.settleCarbon(...args),
+   });
+  }
+  const synthetic=url.origin==='https://hivemind-carbon-probe.invalid';
+  if(synthetic||url.hostname==='generativelanguage.googleapis.com'){
+   const scheduler=this.env.SCHEDULER.getByName('owner');
+   const upstream=synthetic?new Request('https://generativelanguage.googleapis.com'+url.pathname+url.search,request):request;
+   return handleCarbonGateway(upstream,{key:synthetic?'nonbillable-fixture':this.env.GEMINI_BENCHMARK_KEY,
+    ...(synthetic?{fetchImpl:async()=>syntheticCarbonStream()}:{}),
+    reserve:(capability,effort,estimate)=>scheduler.reserveCarbon(capability,effort,estimate,synthetic),
+    settle:(capability,reservationId,usage,tokens,failure)=>scheduler.settleCarbon(capability,reservationId,usage,tokens,failure)});
+  }
+  if(!['GET','HEAD'].includes(request.method)&&!(request.method==='POST'&&url.hostname==='github.com'&&url.pathname.endsWith('/git-upload-pack')))return new Response('Denied',{status:403});
+  return outbound(request,['registry.npmjs.org','github.com','codeload.github.com','objects.githubusercontent.com',
+   'release-assets.githubusercontent.com','realworld-docs.netlify.app','binaries.prisma.sh','raw.githubusercontent.com']);
+ }
+}
 
 interface RunnerMetadata {jobId:string;attempt:string;kind:'agent'|'compute';provider?:'codex'|'claude';prepared:boolean;launchIssued:boolean;pid?:number;stopped:boolean;runtimeRevision?:string;ralphToken?:string}
 interface RuntimeState {prepared:boolean;started:{jobId:string;attempt:string;pid:number;startedAt:number}|null;resultReady:boolean;cancelRequested:boolean}
@@ -41,8 +143,10 @@ export class RunnerDO extends DurableObject<Env>{
   if(!this.metadata){this.metadata={jobId:job.id,attempt:job.attempt,kind:job.kind,provider:job.provider,prepared:false,launchIssued:false,stopped:false};await this.save();}
   const container=this.ctx.container;if(!container)throw new Error('Runtime binding missing');
   if(this.metadata.stopped||(!container.running&&(this.metadata.prepared||this.metadata.launchIssued)))return {ready:false,lost:true,prepared:this.metadata.prepared,launchIssued:this.metadata.launchIssued};
-  if(!container.running)container.start({image:container.images.runtime,instance:'standard-1',enableInternet:false});
-  const handler=job.kind==='compute'?this.ctx.exports.ComputeOutbound:job.provider==='claude'?this.ctx.exports.ClaudeOutbound:this.ctx.exports.CodexOutbound;
+  if(!container.running)container.start({image:container.images.runtime,instance:job.executionGroup?.instance??job.carbon?.instance??'standard-1',enableInternet:false,
+   ...(job.executionGroup||job.carbon?.instance?{labels:{'hvm-bench-job':job.id}}:{})});
+  const handler=job.carbon?this.ctx.exports.CarbonOutbound:job.executionGroup?.dependencyNetwork?
+   (job.kind==='compute'?this.ctx.exports.ResourceComputeOutbound:job.provider==='claude'?this.ctx.exports.ResourceClaudeOutbound:this.ctx.exports.ResourceCodexOutbound):job.kind==='compute'?this.ctx.exports.ComputeOutbound:job.provider==='claude'?this.ctx.exports.ClaudeOutbound:this.ctx.exports.CodexOutbound;
   await container.interceptAllOutboundHttp(handler);await container.interceptOutboundHttps('*',handler);
   const legacy=!this.metadata.runtimeRevision&&(this.metadata.prepared||this.metadata.launchIssued);let ready=false,revisionToPin:string|undefined;
   try{const response=await this.request('/health');if(response.ok){
@@ -106,8 +210,28 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
  private scheduler=new Scheduler();
  constructor(ctx:DurableObjectState,env:Env){super(ctx,env);ctx.blockConcurrencyWhile(async()=>{const state=await ctx.storage.get<SchedulerState>('state');if(state)this.scheduler=new Scheduler(state);});}
  private async save(){await this.ctx.storage.put('state',this.scheduler.state);}
- private async schedule(){if(Object.values(this.scheduler.state.workflows??{}).some(w=>w.status==='RUNNING'||w.status==='INTEGRATING')||this.scheduler.list().some(job=>job.status==='QUEUED'||!job.containerStopped||!terminal(job.status)))await this.ctx.storage.setAlarm(Date.now()+2000);}
- async fetch(request:Request){return this.ctx.blockConcurrencyWhile(async()=>{const response=await handleApi(request,this.env.CONTROL_TOKEN,this);await this.save();await this.schedule();return response;});}
+ private async schedule(){if(Object.values(this.scheduler.state.computeGroups??{}).some(g=>g.status==='RUNNING'||g.status==='INTEGRATING')||Object.values(this.scheduler.state.workflows??{}).some(w=>w.status==='RUNNING'||w.status==='INTEGRATING')||Object.values(this.scheduler.state.carbonCampaigns??{}).some(c=>c.phase!=='done')||this.scheduler.list().some(job=>job.status==='QUEUED'||!job.containerStopped||!terminal(job.status)))await ensureSchedulerAlarm(this.ctx.storage);}
+ async fetch(request:Request){return this.ctx.blockConcurrencyWhile(async()=>{
+  if(new URL(request.url).pathname==='/v1/terra-auth-readiness'&&request.method==='GET'){
+   const denied=authorize(request,this.env.CONTROL_TOKEN);if(denied)return denied;
+   const credential=terraCredential(this.env.TERRA_BENCHMARK_AUTH);
+   return json({present:typeof this.env.TERRA_BENCHMARK_AUTH==='string',valid:!!credential,
+     enough:!!credential&&credential.expires-Date.now()>=1500000});
+  }
+  const response=await handleApi(request,this.env.CONTROL_TOKEN,this);await this.save();await this.schedule();return response;});}
+ private artifactStore(){return new LargeArtifactStore(this.env.ARTIFACTS,this.ctx.storage);}
+ async beginLargeArtifact(ref:LargeArtifactRef){return this.artifactStore().begin(ref);}
+ async putLargeArtifactPart(id:string,part:number,data:Uint8Array){return this.artifactStore().part(id,part,data);}
+ async completeLargeArtifact(id:string){return this.artifactStore().complete(id);}
+ async abortLargeArtifact(id:string){return this.artifactStore().abort(id);}
+ async largeArtifact(digest:string){const head=await this.artifactStore().head(digest);if(!head)throw new ApiError(404);return head;}
+ async artifactRead(token:string,digest:string):Promise<LargeArtifactRef|null>{
+  if(!/^hma_[a-f0-9]{64}$/.test(token)||!/^[a-f0-9]{64}$/.test(digest))return null;
+  const grant=await this.ctx.storage.get<ArtifactReadGrant>('large-cap:'+sha256(token));
+  const job=grant?this.scheduler.state.jobs[grant.jobId]:undefined;
+  if(!authorizeArtifactRead(grant,job,digest,Date.now()))return null;
+  return job!.largeArtifacts!.find(r=>r.sha256===digest)!;
+ }
  async putSnapshot(snapshot:Snapshot){const key=snapshotKey(snapshot.digest);const old=await this.env.ARTIFACTS.get(key);if(old){const value=validateSnapshot(await old.json());if(JSON.stringify(value)!==JSON.stringify(snapshot))throw new ApiError(409);}else await this.env.ARTIFACTS.put(key,JSON.stringify(snapshot),{onlyIf:{etagDoesNotMatch:'*'},httpMetadata:{contentType:'application/json'}});return {snapshotId:snapshot.digest};}
  async registerCredential(id:string,provider:'codex'|'claude',auth:string){
   const prior=Object.hasOwn(this.scheduler.state.credentials,id)?this.scheduler.state.credentials[id]:undefined;
@@ -126,6 +250,56 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
  }
  async credentials(){return Object.values(this.scheduler.state.credentials).map(record=>({...record}));}
  async submit(spec:JobSpec){if(spec.provider==='codex'&&this.env.CODEX_SANDBOX_APPROVED!=='true')throw new ApiError(503);if(spec.provider==='claude'&&this.env.CLAUDE_NESTED_APPROVED!=='true')throw new ApiError(503);if(!await this.env.ARTIFACTS.head(snapshotKey(spec.snapshotId)))throw new ApiError(422);return this.scheduler.submit(spec,Date.now());}
+ async createComputeGroup(spec:ComputeGroupSpec){
+  const groups=this.scheduler.state.computeGroups??={};
+  const previous=Object.values(groups).find(g=>g.spec.idempotencyKey===spec.idempotencyKey);
+  if(previous){if(JSON.stringify(previous.spec)!==JSON.stringify(spec))throw new ApiError(409);return previous;}
+  await this.snapshot(spec.snapshotId);
+  for(const ref of spec.artifacts??[])if(!await this.artifactStore().head(ref))throw new ApiError(422);
+  const group:ComputeGroupRecord={id:randomUUID(),spec,status:'DRAFT',createdAt:Date.now()};
+  groups[group.id]=group;
+  return group;
+ }
+ private recordComputeGroup(id:string){
+  const groups=this.scheduler.state.computeGroups??{};
+  if(!Object.hasOwn(groups,id))throw new ApiError(404);
+  return groups[id]!;
+ }
+ async approveComputeGroup(id:string){
+  const group=this.recordComputeGroup(id);
+  if(group.status!=='DRAFT')return group;
+  await this.snapshot(group.spec.snapshotId);
+  for(const ref of group.spec.artifacts??[])if(!await this.artifactStore().head(ref))throw new ApiError(422);
+  const candidate=new Scheduler(this.scheduler.state);
+  const record=candidate.state.computeGroups![id]!,now=Date.now();
+  record.jobIds=record.spec.checks.map(check=>{
+   const job=candidate.enqueueCompute(record.spec.snapshotId,check,now);
+   assignGroup(candidate.state.jobs[job.id]!,id,record.spec.concurrency,record.spec.instance);
+   if(record.spec.artifacts)candidate.state.jobs[job.id]!.largeArtifacts=structuredClone(record.spec.artifacts);
+   return job.id;
+  });
+  Object.assign(record,{status:'RUNNING',approvedAt:now,
+   deadline:now+record.spec.checks.reduce((sum,c)=>sum+c.timeoutMs,0)+record.spec.integration.timeoutMs+60000});
+  this.scheduler=candidate;
+  return record;
+ }
+ async computeGroup(id:string){
+  const group=this.recordComputeGroup(id);
+  const read=async(id:string)=>{
+   const job=this.scheduler.get(id);
+   return {job,result:job.resultKey?await this.readResult(job.resultKey):undefined};
+  };
+  return {group,jobs:await Promise.all((group.jobIds??[]).map(read)),
+   integration:group.integrationId?await read(group.integrationId):undefined};
+ }
+ async cancelComputeGroup(id:string){
+  const group=this.recordComputeGroup(id);
+  if(['SUCCEEDED','FAILED','CANCELLED'].includes(group.status))return group;
+  if(group.status==='DRAFT'){group.status='CANCELLED';group.finishedAt=Date.now();return group;}
+  group.cancellationRequested=true;
+  for(const jobId of [...(group.jobIds??[]),...(group.integrationId?[group.integrationId]:[])])await this.cancel(jobId);
+  return group;
+ }
  async createWorkflow(spec:WorkflowSpec){
   const workflows=this.scheduler.state.workflows??={};
   const previous=Object.values(workflows).find(w=>w.spec.idempotencyKey===spec.idempotencyKey);
@@ -159,6 +333,7 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
    const instructions=`Use the fixed contract in ${workflow.spec.contractPath}. Only edit: ${writes.join(', ')}.\n\n${worker.instructions}`;
    const job=candidate.submit({...worker,instructions,snapshotId:workflow.spec.snapshotId,idempotencyKey:`workflow:${id}:${worker.provider}`},now);
    candidate.state.jobs[job.id]!.ralph={maxRounds:3,writes};
+   candidate.state.jobs[job.id]!.executionGroup={id,concurrency:workflow.spec.concurrency??2,instance:workflow.spec.instance??'standard-1',dependencyNetwork:workflow.spec.instance!==undefined};
    return job.id;
   }) as [string,string];
   const deadline=now+workflow.spec.workers.reduce((total,worker)=>total+worker.timeoutMs,0)+workflow.spec.integration.timeoutMs+60000;
@@ -175,6 +350,110 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
   return {workflow,workers:await Promise.all(workers.map(async job=>({job,result:job.resultKey?await this.readResult(job.resultKey):undefined}))),
    integration:integration?{job:integration,result:integration.resultKey?await this.readResult(integration.resultKey):undefined}:undefined,
    output:workflow.outputSnapshotId?await this.snapshot(workflow.outputSnapshotId):undefined};
+ }
+ private enqueueCarbon(campaign:CarbonCampaign,effort:CarbonEffort,instance?:BenchmarkInstance,cacheMode?:NpmCacheMode){
+  const job=this.scheduler.enqueueCompute(campaign.snapshotId,{id:'carbon-benchmark',argv:['node','carbon-internal'],timeoutMs:(campaign.latency==='replay'||campaign.latency==='cache-replay')?600000:campaign.latency==='sequence'?360000:campaign.latency===true?120000:1200000},Date.now());
+  this.scheduler.state.jobs[job.id]!.carbon={campaignId:campaign.id,effort,probe:campaign.probe,model:campaign.model,instance,latency:campaign.latency,cacheMode};
+  return job.id;
+ }
+ async createCarbon(snapshotId:string,requestId:string,probe:boolean,model?:'terra',instance?:BenchmarkInstance,sizing?:boolean,latency?:TerraLatencyMode){
+  if(latency==='realworld-warm'||latency==='realworld-cache-pairs'||latency==='realworld-cold'||latency==='realworld-r2-cache')instance='standard-3';
+  const campaigns=this.scheduler.state.carbonCampaigns??={};
+  const old=Object.values(campaigns).find(c=>c.requestId===requestId);
+  if(old){if(old.snapshotId!==snapshotId||old.probe!==probe||old.model!==model||old.instance!==instance||old.sizing!==sizing||old.latency!==latency)throw new ApiError(409);return old;}
+  if(!probe){
+   if(latency==='replay'||latency==='cache-replay')throw new ApiError(400);
+   if(model==='terra'){
+    const auth=terraCredential(this.env.TERRA_BENCHMARK_AUTH);
+    if(!auth||auth.expires-Date.now()<(sizing||latency==='realworld-cache-pairs'?7_800_000:1_500_000))throw new ApiError(503);
+    if(auth.requestId!==requestId)throw new ApiError(409);
+   }else if(!this.env.GEMINI_BENCHMARK_KEY)throw new ApiError(503);
+   const verified=Object.values(campaigns).some(c=>c.probe&&c.model===model&&c.latency===latency&&c.snapshotId===snapshotId&&c.runtimeRevision===runtimeBuild.digest&&
+     c.phase==='done'&&c.runs.length===(model==='terra'?1:2)&&c.runs.every(run=>this.scheduler.get(run.id).status==='SUCCEEDED'));
+   if(sizing){
+    const sizes=new Set(Object.values(campaigns).filter(c=>c.probe&&c.model==='terra'&&!c.latency&&c.snapshotId===snapshotId&&
+      c.runtimeRevision===runtimeBuild.digest&&c.phase==='done'&&c.runs.length===1&&this.scheduler.get(c.runs[0]!.id).status==='SUCCEEDED').map(c=>c.instance));
+    if(!sizes.has('standard-1')||!sizes.has('standard-3'))throw new ApiError(422);
+   }else if(!verified)throw new ApiError(422);
+  }
+  if(!await this.env.ARTIFACTS.head(snapshotKey(snapshotId)))throw new ApiError(422);
+  if(Object.values(campaigns).some(c=>c.phase!=='done'))throw new ApiError(409);
+  const priorSpentMicros=probe?0:Object.values(campaigns).filter(c=>!c.probe&&c.model===model&&c.latency===latency&&c.snapshotId===snapshotId)
+   .reduce((sum,c)=>sum+c.runs.reduce((total,r)=>total+r.spentMicros+(r.reservedMicros??0),0),0);
+  if(priorSpentMicros>=20_000_000)throw new ApiError(422);
+  const campaign:CarbonCampaign={id:randomUUID(),snapshotId,priorSpentMicros,phase:'compare',requestId,probe,model,instance,sizing,latency,runtimeRevision:runtimeBuild.digest,runs:[]};
+  const firstInstance=sizing?terraSizingOrder[0]:instance;
+  const cacheMode=latency==='realworld-cold'?'cold':latency==='realworld-cache-pairs'?(probe?'warm':terraCachePairOrder[0]):undefined;
+  for(const effort of (model==='terra'?['medium']:['medium','low']) as CarbonEffort[])
+   campaign.runs.push({id:this.enqueueCarbon(campaign,effort,firstInstance,cacheMode),effort,instance:firstInstance,cacheMode,spentMicros:0,requests:0});
+  campaigns[campaign.id]=campaign;
+  return campaign;
+ }
+ async carbon(id:string){
+  const records=this.scheduler.state.carbonCampaigns??{};
+  if(!Object.hasOwn(records,id))throw new ApiError(404);
+  const campaign=records[id]!;
+  return {campaign,runs:await Promise.all(campaign.runs.map(async run=>{
+   const job=this.scheduler.get(run.id);
+   return {job,result:job.resultKey?await this.readResult(job.resultKey):undefined};
+  }))};
+ }
+ async npmCacheGrant(capability:string,write:boolean){
+  const id=await this.ctx.storage.get<string>('carbon-cap:'+sha256(capability));
+  if(!id)return null;
+  const job=this.scheduler.get(id);
+  if(job.carbon?.latency!=='realworld-r2-cache'||(write&&!job.carbon.probe)||
+    !['STARTING','RUNNING'].includes(job.status)||job.cancellationRequested||job.deadline<=Date.now())return null;
+  const snapshot=await this.snapshot(job.snapshotId);
+  const lock=snapshot.files.find(file=>file.path===npmCacheLockPath);
+  return lock?npmCacheKey(lock.sha256):null;
+ }
+ async reserveCarbon(capability:string,effort:CarbonEffort|null,estimate:number,synthetic=false,model?:'terra'){
+  return this.ctx.blockConcurrencyWhile(async()=>{
+   const id=await this.ctx.storage.get<string>('carbon-cap:'+sha256(capability));
+   if(!id)return null;
+   const job=this.scheduler.get(id);
+   if(!job.carbon||(job.carbon.latency==='replay'||job.carbon.latency==='cache-replay')||job.carbon.model!==model||Boolean(job.carbon.probe)!==synthetic||(effort!==null&&job.carbon.effort!==effort)||job.cancellationRequested||
+    !['STARTING','RUNNING'].includes(job.status)||job.deadline<=Date.now())return null;
+   const campaign=this.scheduler.state.carbonCampaigns?.[job.carbon.campaignId];
+   if(!campaign||(model==='terra'&&!synthetic&&campaign.requestId!==terraCredential(this.env.TERRA_BENCHMARK_AUTH)?.requestId)||
+    (campaign.latency&&campaign.runs.some(run=>run.id===id&&run.requests>=((campaign.latency==='realworld'||campaign.latency==='realworld-warm'||campaign.latency==='realworld-cache-pairs'||campaign.latency==='realworld-cold'||campaign.latency==='realworld-r2-cache')?500:campaign.latency==='sequence'?latencySequenceTurns:campaign.latency==='wire-replay'&&!campaign.probe?26:1)))||!reserveCarbonRequest(campaign,id,estimate))return null;
+   const reservationId=randomUUID();
+   await this.ctx.storage.put('carbon-reservation:'+id,reservationId);
+   await this.save();
+   return {effort:job.carbon.effort,reservationId};
+  });
+ }
+ async settleCarbon(capability:string,reservationId:string,usage:number|null,tokens?:CarbonUsage,failure?:string,modelWaitMs?:number,timing?:TerraGatewayTiming){
+  return this.ctx.blockConcurrencyWhile(async()=>{
+   const id=await this.ctx.storage.get<string>('carbon-cap:'+sha256(capability));
+   if(!id||await this.ctx.storage.get<string>('carbon-reservation:'+id)!==reservationId)throw new Error('Stale Carbon reservation');
+   const job=this.scheduler.get(id);
+   const campaign=this.scheduler.state.carbonCampaigns?.[job.carbon?.campaignId??''];
+   if(!campaign)throw new Error('Missing Carbon campaign');
+   settleCarbonRequest(campaign,id,usage,tokens,failure);
+   const run=campaign.runs.find(run=>run.id===id)!;
+   if(Number.isSafeInteger(modelWaitMs)&&modelWaitMs!>=0)run.modelWaitMs=(run.modelWaitMs??0)+modelWaitMs!;
+   if((campaign.latency==='wire-replay'||campaign.latency==='sequence'||campaign.latency==='realworld'||campaign.latency==='realworld-warm'||campaign.latency==='realworld-cache-pairs'||campaign.latency==='realworld-cold'||campaign.latency==='realworld-r2-cache')&&timing)(run.gatewayTimings??=[]).push(timing);
+   else if(campaign.latency&&timing)run.gatewayTiming=timing;
+   await this.save();
+   await this.ctx.storage.delete('carbon-reservation:'+id);
+  });
+ }
+ private async advanceCarbon(){
+  for(const campaign of Object.values(this.scheduler.state.carbonCampaigns??{})){
+   if(campaign.phase==='done')continue;
+   const outcomes=new Map<string,CarbonOutcome>();
+   for(const run of campaign.runs){
+    const job=this.scheduler.get(run.id);
+    const ended=terminal(job.status)&&job.containerStopped;
+    if(!ended)return;
+    const result=job.resultKey?await this.readResult(job.resultKey) as {carbon?:{elapsedMs:number}}:undefined;
+    outcomes.set(job.id,{terminal:ended,cancelled:job.status==='CANCELLED',passed:job.status==='SUCCEEDED'&&!!result?.carbon&&!run.blocked,
+     durationMs:result?.carbon?.elapsedMs??Number.MAX_SAFE_INTEGER});
+   }
+   advanceCarbonCampaign(campaign,id=>outcomes.get(id),(effort,instance,cacheMode)=>this.enqueueCarbon(campaign,effort,instance,cacheMode));
+  }
  }
  async jobs(){return this.scheduler.list();}
  async job(id:string){return this.scheduler.get(id);}
@@ -202,6 +481,8 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
     }
     await this.save();
    }
+   for(const group of Object.values(this.scheduler.state.computeGroups??{}))advanceComputeGroup(group,this.scheduler,Date.now());
+   await this.advanceCarbon();
    const plans=Object.values(this.scheduler.state.workflows??{}).filter(w=>w.status==='RUNNING'||w.status==='INTEGRATING');
    if(plans.length){
     const turn=await this.ctx.storage.get<number>('workflowCursor')??0;
@@ -222,10 +503,11 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
    let timeoutMs=await this.ctx.storage.get<number>(timeoutKey);
    if(timeoutMs===undefined){timeoutMs=Math.max(1000,Math.min(job.timeoutMs,job.deadline-Date.now()));await this.ctx.storage.put(timeoutKey,timeoutMs);}
    if(!Number.isSafeInteger(timeoutMs)||timeoutMs<1000||timeoutMs>job.timeoutMs)throw new Error('Invalid prepared timeout');
-   const input:RuntimeInput={version:1,jobId:job.id,attempt:job.attempt,mode:job.kind,snapshot:await this.snapshot(job.snapshotId),timeoutMs};
+   const input:RuntimeInput={version:1,jobId:job.id,attempt:job.attempt,mode:job.kind,snapshot:await this.snapshot(job.snapshotId),timeoutMs,...(job.executionGroup?.dependencyNetwork?{resourceMeasurement:true}:{})};
    if(job.kind==='agent'){
     const credential=this.scheduler.state.credentials[job.credentialId!]!;if(credential.generation!==job.credentialGeneration||credential.activeJobId!==job.id)throw new Error('Credential ownership mismatch');
     const object=await this.env.CREDENTIALS.get(credential.objectKey);if(!object)throw new Error('Credential unavailable');
+    input.model=job.model;input.effort=job.effort;
     input.auth=validateAuth(job.provider!,await openCredential(await object.json() as StoredCredential,credential.id,credential.generation,this.env.AUTH_STORAGE_KEY));input.provider=job.provider;input.instructions=job.instructions;input.authReturnPublicKey=this.env.AUTH_RETURN_PUBLIC_KEY;input.claudeNestedCompatible=job.provider==='claude'&&this.env.CLAUDE_NESTED_APPROVED==='true';
     if(job.ralph){
      const key=`ralphToken:${job.id}`;
@@ -233,7 +515,22 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
      if(!token){token=randomBytes(32).toString('hex');await this.ctx.storage.put(key,token);}
      input.ralph={...job.ralph,token};
     }
-   }else input.argv=job.argv;
+   }else{
+    input.argv=job.argv;
+    if(job.largeArtifacts){
+     const key='large-token:'+job.id;let capability=await this.ctx.storage.get<string>(key);
+     if(!capability){capability='hma_'+randomBytes(32).toString('hex');await this.ctx.storage.put(key,capability);}
+     await this.ctx.storage.put('large-cap:'+sha256(capability),{jobId:job.id,attempt:job.attempt,expiresAt:job.deadline} satisfies ArtifactReadGrant);
+     input.largeArtifacts={refs:job.largeArtifacts,capability};
+    }
+    if(job.carbon){
+     const key='carbon-token:'+job.id;
+     let token=await this.ctx.storage.get<string>(key);
+     if(token===undefined){token='hmb_'+randomBytes(32).toString('hex');await this.ctx.storage.put(key,token);}
+     if(token)await this.ctx.storage.put('carbon-cap:'+sha256(token),job.id);
+     input.carbon={effort:job.carbon.effort,capability:token,probe:job.carbon.probe,model:job.carbon.model,instance:job.carbon.instance,latency:job.carbon.latency,cacheMode:job.carbon.cacheMode};
+    }
+   }
    await runner.prepare(input);
   }
   if(job.cancellationRequested||job.status==='CANCELLING')await runner.cancel();
@@ -260,7 +557,11 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
    const paths=changedPaths(await this.snapshot(job.snapshotId),snapshot);
    const rejected=!paths.length||paths.some(path=>!job.ralph!.writes.includes(path));
    if(!rejected)await this.putSnapshot(snapshot);
-   const checkIds=rejected?[]:job.checks.map(spec=>this.scheduler.enqueueCompute(snapshot.digest,spec,Date.now()).id);
+   const checkIds=rejected?[]:job.checks.map(spec=>{
+    const check=this.scheduler.enqueueCompute(snapshot.digest,spec,Date.now());
+    if(job.executionGroup)this.scheduler.state.jobs[check.id]!.executionGroup={...job.executionGroup};
+    return check.id;
+   });
    if(checkpoint)(stored.checkpointHistory??=[]).push(checkpoint);
    checkpoint={round:value.round,sessionId:value.sessionId,snapshotId:snapshot.digest,checkIds,rejected};
    stored.checkpoint=checkpoint;
@@ -304,9 +605,48 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
     checkpoint.sessionId!==last.sessionId||checkpoint.snapshotId!==last.snapshotId||output?.digest!==last.snapshotId||
     checkpoint.checkIds.length!==job.checks.length||checkpoint.checkIds.some(id=>this.scheduler.get(id).status!=='SUCCEEDED'))throw new InvalidRuntimeResult();
   }
+  if(result.carbon!==undefined&&!job.carbon)throw new InvalidRuntimeResult();
+  if(job.carbon&&result.process.status==='passed'){
+   const evidence=result.carbon;
+   if(!evidence||evidence.model!==job.carbon.model||evidence.effort!==job.carbon.effort||!Number.isSafeInteger(evidence.elapsedMs)||evidence.elapsedMs<0||
+     !Array.isArray(evidence.scores)||(job.carbon.model==='terra'&&!job.carbon.probe&&
+      !this.scheduler.state.carbonCampaigns?.[job.carbon.campaignId]?.runs.find(run=>run.id===job.id&&!run.blocked&&!run.reservedMicros&&run.usage&&run.requests>0))||(job.carbon.latency===true&&(!evidence.latency||evidence.latency.transport!=='sse'||evidence.latency.requests!==1))||
+     ((job.carbon.latency==='realworld-warm'||job.carbon.cacheMode==='warm')&&!evidence.npm?.seed)||
+     ((job.carbon.latency==='realworld-cache-pairs'||job.carbon.latency==='realworld-cold')&&(!evidence.npm?.lockSha256||evidence.npm.cacheMode!==job.carbon.cacheMode))||
+     (job.carbon.latency==='realworld-r2-cache'&&(!evidence.npm?.lockSha256||!evidence.npm.r2?.restore))||
+     (job.carbon.latency==='wire-replay'&&evidence.wireReplay?.length!==(job.carbon.probe?1:26))||
+     (job.carbon.latency==='replay'&&evidence.replay?.samples.length!==3)||
+     (job.carbon.latency==='cache-replay'&&evidence.cacheReplay?.length!==6)||
+     (job.carbon.latency==='sequence'&&(evidence.latencyTurns?.length!==latencySequenceTurns||evidence.latencyTurns.some(turn=>turn.transport!=='sse'||turn.requests!==1)))||(!job.carbon.probe&&(!job.carbon.latency||job.carbon.latency==='realworld'||job.carbon.latency==='realworld-warm'||job.carbon.latency==='realworld-cache-pairs'||job.carbon.latency==='realworld-cold'||job.carbon.latency==='realworld-r2-cache')&&(evidence.scores.length!==3||
+       evidence.scores.some(score=>score.files!==13||score.requests!==154||score.exitCode!==0))))throw new InvalidRuntimeResult();
+  }
+  if(result.resources!==undefined){
+   const value=result.resources;
+   if(!job.executionGroup?.dependencyNetwork||!value||typeof value!=='object'||Array.isArray(value)||
+    Object.keys(value).some(key=>!['usageUsec','throttledUsec','throttledPeriods','peakMemoryBytes','memorySource','memoryLimitBytes'].includes(key))||
+    Object.entries(value).some(([key,n])=>key==='memorySource'?!['cgroup-peak','cgroup-sampled','process-rss-sampled'].includes(String(n)):
+      typeof n!=='number'||!Number.isSafeInteger(n)||n<0))throw new InvalidRuntimeResult();
+  }
+  let claudeResultMetrics:RuntimeResult['claudeResultMetrics'];
+  if(result.claudeResultMetrics!==undefined){
+   if(job.kind!=='agent'||job.provider!=='claude')throw new InvalidRuntimeResult();
+   try{claudeResultMetrics=validateClaudeResultMetrics(result.claudeResultMetrics);}catch{throw new InvalidRuntimeResult();}
+  }
+  if(result.largeArtifacts!==undefined){
+   const a=result.largeArtifacts;
+   if(job.kind!=='compute'||!job.largeArtifacts||!a||Object.keys(a).some(k=>!['durationMs','receipts'].includes(k))||
+    !Number.isFinite(a.durationMs)||a.durationMs<0||!Array.isArray(a.receipts)||a.receipts.length!==job.largeArtifacts.length)throw new InvalidRuntimeResult();
+   for(const [index,receipt] of a.receipts.entries()){
+    const ref=job.largeArtifacts[index]!;
+    if(!receipt||Object.keys(receipt).some(k=>!['name','sha256','sizeBytes','format','expandedBytes','maxFiles','files'].includes(k))||
+     receipt.name!==ref.name||receipt.sha256!==ref.sha256||receipt.sizeBytes!==ref.sizeBytes||receipt.format!==ref.format||receipt.maxFiles!==ref.maxFiles||
+     !Number.isSafeInteger(receipt.expandedBytes)||receipt.expandedBytes<0||receipt.expandedBytes>ref.expandedBytes||
+     !Number.isSafeInteger(receipt.files)||receipt.files<1||receipt.files>ref.maxFiles)throw new InvalidRuntimeResult();
+   }
+  }else if(job.largeArtifacts&&result.process.status==='passed')throw new InvalidRuntimeResult();
   if(output)await this.putSnapshot(output);
   // Only allowlisted result fields enter normal artifacts. The sealed auth return stays private.
-  const safe={version:1,jobId:result.jobId,attempt:result.attempt,inputSnapshotId:result.inputSnapshotId,outputSnapshotId:output?.digest,process:result.process,summary:result.summary,errorCode:result.errorCode,sourceUnchanged:result.sourceUnchanged,credentialsAbsent:result.credentialsAbsent,provider:result.provider,sessionId:result.sessionId,usage:result.usage,subagentReceipts:result.subagentReceipts,mcpReceipts,sandboxReceipts,ralphRounds,sandboxPolicy:result.sandboxPolicy,boundary};
+  const safe={version:1,jobId:result.jobId,attempt:result.attempt,inputSnapshotId:result.inputSnapshotId,outputSnapshotId:output?.digest,process:result.process,summary:result.summary,errorCode:result.errorCode,sourceUnchanged:result.sourceUnchanged,credentialsAbsent:result.credentialsAbsent,provider:result.provider,sessionId:result.sessionId,usage:result.usage,claudeResultMetrics,subagentReceipts:result.subagentReceipts,mcpReceipts,sandboxReceipts,ralphRounds,carbon:result.carbon,resources:result.resources,largeArtifacts:result.largeArtifacts,sandboxPolicy:result.sandboxPolicy,boundary};
   const key=resultKey(job);await this.env.ARTIFACTS.put(key,JSON.stringify(safe),{httpMetadata:{contentType:'application/json'}});
   if(job.kind==='agent'){
    if(!result.authReturn)throw new InvalidRuntimeResult();
@@ -324,4 +664,30 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
   await this.save();await this.ctx.storage.delete(`completion:${job.id}`);
  }
 }
-export default {async fetch(request:Request,env:Env){const path=new URL(request.url).pathname;if(path==='/health'&&request.method==='GET')return json({ok:true,service:'hivemind-cloudflare',workerVersion:env.CF_VERSION_METADATA?.id,expectedRuntimeRevision:runtimeBuild.digest});if(!path.startsWith('/v1/'))return json({error:'Not found'},404);const denied=authorize(request,env.CONTROL_TOKEN);if(denied)return denied;try{return await env.SCHEDULER.getByName('owner').fetch(request);}catch{return json({error:'Service is unavailable'},503);}}};
+async function diagnoseCarbon(env:Env):Promise<Response>{
+ const key=env.GEMINI_BENCHMARK_KEY;
+ if(!key)return json({modelAvailable:false,category:'SECRET_UNAVAILABLE'},503);
+ let response:Response;
+ try{
+  response=await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-4-carbon',
+   {headers:{'x-goog-api-key':key},redirect:'manual',signal:AbortSignal.timeout(8000)});
+ }catch(error){
+  const name=error instanceof Error?error.name:'UnknownError';
+  return json({modelAvailable:false,category:'TRANSPORT',errorType:name});
+ }
+ if(!response.ok){
+  let reason: string|undefined;
+  try{
+   const result=await response.json() as {error?:{status?:unknown;message?:unknown}};
+   if(typeof result.error?.status==='string'&&/^[A-Z_]{1,60}$/.test(result.error.status))reason=result.error.status;
+   if(typeof result.error?.message==='string'&&/location is not supported|unsupported location/i.test(result.error.message))reason='LOCATION_UNSUPPORTED';
+  }catch{/* Preserve the HTTP status. */}
+  return json({http:response.status,modelAvailable:false,reason});
+ }
+ try{
+  const value=await response.json() as {name?:string;inputTokenLimit?:number;outputTokenLimit?:number;thinking?:boolean};
+  return json({http:response.status,modelAvailable:value.name==='models/gemini-4-carbon',
+   inputTokenLimit:value.inputTokenLimit,outputTokenLimit:value.outputTokenLimit,thinking:value.thinking===true});
+ }catch{return json({http:response.status,modelAvailable:false,category:'INVALID_METADATA'});}
+}
+export default {async fetch(request:Request,env:Env){const path=new URL(request.url).pathname;if(path==='/health'&&request.method==='GET')return json({ok:true,service:'hivemind-cloudflare',workerVersion:env.CF_VERSION_METADATA?.id,expectedRuntimeRevision:runtimeBuild.digest});if(!path.startsWith('/v1/'))return json({error:'Not found'},404);const denied=authorize(request,env.CONTROL_TOKEN);if(denied)return denied;if(path==='/v1/carbon-diagnostics'&&request.method==='GET')return diagnoseCarbon(env);try{return await env.SCHEDULER.getByName('owner').fetch(request);}catch{return json({error:'Service is unavailable'},503);}}};

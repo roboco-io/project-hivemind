@@ -1,4 +1,6 @@
-import {mkdir,readFile,writeFile,open,rename,readdir,stat,lstat} from 'node:fs/promises';
+import {prepareLargeArtifacts} from './large-artifacts.ts';
+import {measureBenchmarkResources} from './benchmark-resources.ts';
+import {mkdtemp,rm,mkdir,readFile,writeFile,open,rename,readdir,stat,lstat} from 'node:fs/promises';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import type {RuntimeInput,RuntimeResult,ProcessResult,SourceFile} from '../contracts.ts';
@@ -7,6 +9,7 @@ import {readSnapshot,restoreSnapshot} from '../files.ts';
 import {validateRuntimeInput,providerArgs,claudeSettings,buildEnv,parseProviderResult,type ProviderPaths} from './providers.ts';
 import {runProcess} from './process.ts';
 import {changedPaths} from '../workflow.ts';
+import {runCarbon} from './carbon-run.ts';
 import {writeCheckpoint,waitForFeedback} from './ralph.ts';
 import {computeSandboxArgs} from './compute-sandbox.ts';
 import {claudeGuardHome} from './claude-guard-policy.ts';
@@ -15,7 +18,7 @@ import {MAX_HOOK_BYTES,parseSandboxReceipts,type SandboxReceipt} from './claude-
 export interface RuntimeOptions {
  runtimeDir?:string;workspace?:string;home?:string;scriptRoot?:string;
  commands?:{codex?:string;claude?:string};computePrefix?:string[];
- boundaryCheck?:()=>Promise<RuntimeBoundary>;
+ boundaryCheck?:()=>Promise<RuntimeBoundary>;artifactFetch?:typeof fetch;
 }
 export interface RuntimeBoundary {platform:string;checkedAt:string;capabilities:Record<string,string>;noNewPrivs:number;verified:boolean}
 const capabilityNames=['CapInh','CapPrm','CapEff','CapBnd','CapAmb'];
@@ -77,21 +80,44 @@ export async function executeRuntime(raw:unknown,options:RuntimeOptions={}):Prom
  await mkdir(runtimeDir,{recursive:true,mode:0o700});await mkdir(home,{recursive:true,mode:0o700});
  const controller=new AbortController();let timer:ReturnType<typeof setInterval>|undefined;
  const result:RuntimeResult&{boundary?:RuntimeBoundary}={version:1,jobId:input.jobId,attempt:input.attempt,inputSnapshotId:input.snapshot.digest,process:notRun(),summary:'Execution did not start',sourceUnchanged:true,sandboxPolicy:input.mode==='compute'?'compute-workspace':input.provider==='codex'?'codex-workspace':input.claudeNestedCompatible?'claude-nested-compatible':'claude-strict',...(input.provider?{provider:input.provider}:{})};
+ let temporaryComputeHome:string|undefined;
+ let temporaryArtifactDirectory:string|undefined;
+ let resourceMeasurement:Awaited<ReturnType<typeof measureBenchmarkResources>>|undefined;
  let latestAuth=input.auth,codexAuthWritten=false,materialized=false,providerFailureDiagnostic:string|undefined;
  try {
   if(options.boundaryCheck){result.boundary=await options.boundaryCheck();if(!result.boundary.verified)throw new Error('Linux capability boundary failed');}
+  if(input.resourceMeasurement)resourceMeasurement=await measureBenchmarkResources();
   await restoreSnapshot(workspace,input.snapshot);materialized=true;
   if(input.mode==='agent'&&snapshotContainsAuth(input.snapshot,input.auth))throw new Error('Input source contains authentication material');
   if(await has(join(runtimeDir,'cancel')))controller.abort();
   timer=setInterval(()=>{void has(join(runtimeDir,'cancel')).then(cancel=>{if(cancel)controller.abort();});},100);timer.unref();
   if(input.mode==='compute'){
-   const forbidden=['OPENAI_API_KEY','CODEX_API_KEY','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN','CLOUDFLARE_API_TOKEN','CF_API_TOKEN','PROBE_TOKEN','AUTH_WRAP_KEY'];
-   const isolatedHome=join(runtimeDir,'compute-home');await mkdir(isolatedHome,{recursive:true,mode:0o700});
+   const forbidden=['GEMINI_API_KEY','GOOGLE_API_KEY','OPENAI_API_KEY','CODEX_API_KEY','ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN','CLOUDFLARE_API_TOKEN','CF_API_TOKEN','PROBE_TOKEN','AUTH_WRAP_KEY'];
+   // Codex starts its Linux sandbox helper from its HOME cache.
+   // Keep this credential-free home outside the denied runtime directory and /tmp.
+   if(input.largeArtifacts)temporaryComputeHome=await mkdtemp(join(home,'hivemind-compute-'));
+   const isolatedHome=temporaryComputeHome??join(runtimeDir,'compute-home');
+   await mkdir(isolatedHome,{recursive:true,mode:0o700});
    const env=buildEnv(process.env,isolatedHome);
    result.credentialsAbsent=forbidden.every(k=>!env[k])&&!await has(join(home,'.codex','auth.json'))&&!await has(join(home,'.claude','.credentials.json'));
    if(!result.credentialsAbsent)throw new Error('Compute credential boundary failed');
-   const prefix=options.computePrefix??computeSandboxArgs();
-   result.process=await runProcess([...prefix,...input.argv!],{cwd:workspace,env,timeoutMs:input.timeoutMs,signal:controller.signal,maxBytes:32768,captureDirectory:join(runtimeDir,'compute-output')});
+   const computeStarted=Date.now();
+   // Linux sandbox denies the entire runtime subtree, including nested read grants.
+   if(input.largeArtifacts)temporaryArtifactDirectory=await mkdtemp(join(home,'hivemind-inputs-'));
+   const prepared=input.largeArtifacts&&temporaryArtifactDirectory
+    ?await prepareLargeArtifacts(input.largeArtifacts,{directory:temporaryArtifactDirectory,signal:controller.signal,timeoutMs:input.timeoutMs,fetchImpl:options.artifactFetch})
+    :undefined;
+   if(prepared){
+    if(prepared.paths.source)env.HIVEMIND_ARTIFACT_SOURCE=prepared.paths.source;
+    if(prepared.paths.data)env.HIVEMIND_ARTIFACT_DATA=prepared.paths.data;
+    result.largeArtifacts={durationMs:prepared.durationMs,receipts:prepared.receipts};
+   }
+   const remaining=input.timeoutMs-(Date.now()-computeStarted);if(remaining<1)throw Error('Artifact preparation consumed compute deadline');
+   const prefix=options.computePrefix??computeSandboxArgs(prepared?{readOnly:[prepared.root],deny:[runtimeDir]}:undefined);
+   if(input.carbon){
+    const benchmark=await runCarbon(input.carbon,workspace,runtimeDir,input.timeoutMs,controller.signal);
+    result.process=benchmark.process;result.carbon=benchmark.evidence;
+   }else result.process=await runProcess([...prefix,...input.argv!],{cwd:workspace,env,timeoutMs:remaining,signal:controller.signal,maxBytes:32768,captureDirectory:join(runtimeDir,'compute-output')});
    const current=await readSnapshot(workspace);result.sourceUnchanged=sourceEqual(input.snapshot.files,current.files);
    result.summary=result.sourceUnchanged?'Configured verification finished.':'Verification modified its immutable input source.';
    if(!result.sourceUnchanged&&result.process.status==='passed')result.process={...result.process,status:'error',stderr:result.process.stderr+'\nVerification source integrity failed'};
@@ -117,7 +143,7 @@ export async function executeRuntime(raw:unknown,options:RuntimeOptions={}):Prom
    const start=Date.now();
    for(let round=1;round<=(input.ralph?.maxRounds??1);round++){
     if(Date.now()>=deadline||controller.signal.aborted){ralphError='Ralph deadline or cancellation reached';break;}
-    processResult=await runProcess([options.commands?.[input.provider!]??input.provider!,...providerArgs(input.provider!,nextPrompt,paths,sessionId)],
+    processResult=await runProcess([options.commands?.[input.provider!]??input.provider!,...providerArgs(input.provider!,nextPrompt,paths,sessionId,{model:input.model,effort:input.effort})],
       {cwd:workspace,env:buildEnv(process.env,home,input.provider,input.auth),timeoutMs:Math.max(1,deadline-Date.now()),signal:controller.signal,maxBytes:1024*1024});
     parsed=parseProviderResult(input.provider!,processResult);
     if(!input.ralph||!parsed.success)break;
@@ -154,7 +180,7 @@ export async function executeRuntime(raw:unknown,options:RuntimeOptions={}):Prom
    }
    // Keep the bounded capture intact until refreshed authentication is available.
    result.process={...processResult,status:processResult.status==='passed'&&!parsed.success?'error':processResult.status,stdout:parsed.summary,stderr:processResult.stderr};
-   result.summary=parsed.summary||`${input.provider} ${result.process.status}`;result.sessionId=sessionId??parsed.sessionId;result.usage=parsed.usage;result.errorCode=parsed.errorCode;result.mcpReceipts=parsed.mcpReceipts;
+   result.summary=parsed.summary||`${input.provider} ${result.process.status}`;result.sessionId=sessionId??parsed.sessionId;result.usage=parsed.usage;result.claudeResultMetrics=parsed.claudeResultMetrics;result.errorCode=parsed.errorCode;result.mcpReceipts=parsed.mcpReceipts;
    if(input.provider==='codex')latestAuth=await readFile(join(home,'.codex','auth.json'),'utf8');
    result.subagentReceipts=await receipts(input.provider!,paths).catch(()=>[]);
    if(input.provider==='claude')result.sandboxReceipts=await sandboxAudit(join(paths.privateDir,'bash-guards.jsonl')).catch(()=>[]);
@@ -167,6 +193,9 @@ export async function executeRuntime(raw:unknown,options:RuntimeOptions={}):Prom
   if(input.mode==='agent'&&materialized)result.snapshot=await readSnapshot(workspace).catch(()=>undefined);
  }finally{
   if(timer)clearInterval(timer);
+  if(temporaryArtifactDirectory)await rm(temporaryArtifactDirectory,{recursive:true,force:true});
+  if(temporaryComputeHome)await rm(temporaryComputeHome,{recursive:true,force:true});
+  if(resourceMeasurement)result.resources=await resourceMeasurement();
   if(input.mode==='agent'){
    if(input.provider==='codex'&&codexAuthWritten)latestAuth=await readFile(join(home,'.codex','auth.json'),'utf8').catch(()=>undefined);
    try{if(latestAuth){if(input.provider==='codex'){const v=JSON.parse(latestAuth);if(v.auth_mode!=='chatgpt'||!v.tokens?.access_token||!v.tokens?.refresh_token||v.OPENAI_API_KEY)throw new Error('Invalid refreshed subscription');}result.authReturn={...sealAuth(latestAuth,input.authReturnPublicKey!),version:1};}}catch{result.summary='Authentication write-back could not be sealed';result.process.status='error';}
@@ -174,7 +203,11 @@ export async function executeRuntime(raw:unknown,options:RuntimeOptions={}):Prom
  }
  if(result.snapshot&&snapshotContainsAuth(result.snapshot,input.auth,latestAuth)){delete result.snapshot;result.process.status='error';result.process.stderr='Result source contained authentication material';result.summary='Sensitive output was withheld';}
  if(input.mode==='agent'&&result.process.truncated){result.process.status='error';result.process.stdout='';result.process.stderr='Agent output capture limit exceeded';result.summary='Agent output was withheld because the capture limit was exceeded';}
- const scrub=(text:string)=>cleanText(text,input.auth,latestAuth);
+ const scrub=(text:string)=>{
+  const clean=cleanText(text,input.auth,latestAuth);
+  const withoutCarbon=input.carbon?.capability?clean.replaceAll(input.carbon.capability,'[REDACTED]'):clean;
+  return input.largeArtifacts?.capability?withoutCarbon.replaceAll(input.largeArtifacts.capability,'[REDACTED]'):withoutCarbon;
+ };
  const scrubValue=(value:unknown):unknown=>typeof value==='string'?scrub(value):Array.isArray(value)?value.map(scrubValue):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,scrubValue(v)])):value;
  if(result.subagentReceipts)result.subagentReceipts=scrubValue(result.subagentReceipts) as unknown[];
  if(result.sandboxReceipts)result.sandboxReceipts=scrubValue(result.sandboxReceipts) as SandboxReceipt[];

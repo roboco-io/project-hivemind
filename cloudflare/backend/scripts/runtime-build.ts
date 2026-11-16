@@ -5,11 +5,11 @@ import {constants} from 'node:fs';
 import {join,extname} from 'node:path';
 export interface RuntimeBuildManifest {version:1;digest:string;files:Record<string,string>}
 export const RUNTIME_FIXED_INPUTS=[
- '.dockerignore','backend/Dockerfile','backend/config/claude-managed-settings.json','backend/package.json','backend/package-lock.json','backend/scripts/runtime-build.ts','scripts/phase0/Dockerfile','scripts/phase0/auth-envelope.ts','scripts/phase0/claude-agent-hook.ts','scripts/phase0/claude-receipts.ts','scripts/phase0/native-thread-receipts.ts','scripts/phase0/rollout-receipts.ts','scripts/phase0/mcp-server.ts','docs/bubblewrap-compatibility.md',
+ '.dockerignore','backend/Dockerfile','backend/benchmark/pi-shell','backend/benchmark/agent/models.json','backend/benchmark/agent/settings.json','backend/config/claude-managed-settings.json','backend/package.json','backend/package-lock.json','backend/scripts/runtime-build.ts','scripts/phase0/Dockerfile','scripts/phase0/auth-envelope.ts','scripts/phase0/claude-agent-hook.ts','scripts/phase0/claude-receipts.ts','scripts/phase0/native-thread-receipts.ts','scripts/phase0/rollout-receipts.ts','scripts/phase0/mcp-server.ts','docs/bubblewrap-compatibility.md',
 ] as const;
 export const defaultRoot=fileURLToPath(new URL('../../',import.meta.url));
 const manifestPath='backend/runtime-build.json',maxFileBytes=2*1024*1024,maxTotalBytes=32*1024*1024;
-const trees=[{path:'backend/src',extensions:new Set(['.ts'])},{path:'backend/native',extensions:new Set(['.c','.patch','.sh','.md'])}];
+const trees=[{path:'backend/src',extensions:new Set(['.ts','.mjs','.py'])},{path:'backend/native',extensions:new Set(['.c','.patch','.sh','.md'])}];
 const excludedDirectories=new Set(['node_modules','work','scratch','tmp','dist','coverage']);
 const invalid=()=>new Error('Invalid runtime build input');
 const hash=(value:string|Uint8Array)=>createHash('sha256').update(value).digest('hex');

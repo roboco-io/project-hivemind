@@ -1,3 +1,7 @@
+import {validateLargeArtifacts} from '../large-artifact.ts';
+import {extractClaudeResultMetrics} from '../claude-result-metrics.ts';
+import type {ClaudeResultMetrics} from '../contracts.ts';
+import {validateModelSelection} from '../scheduler.ts';
 import type {RuntimeInput,Provider,ProcessResult} from '../contracts.ts';
 import {canonicalSourcePath,validateSnapshot} from '../snapshot.ts';
 import {claudeOuterSandboxSettings} from './claude-guard-policy.ts';
@@ -7,15 +11,33 @@ const object=(x:unknown):Record<string,any>|null=>x!==null&&typeof x==='object'&
 const string=(x:unknown,max=24000):x is string=>typeof x==='string'&&x.length>0&&x.length<=max&&!x.includes('\0');
 export function validateRuntimeInput(input:unknown):RuntimeInput {
  const v=object(input);if(!v)throw new Error('Invalid runtime input');
- const allowed=['version','jobId','attempt','mode','provider','instructions','snapshot','argv','timeoutMs','auth','authReturnPublicKey','claudeNestedCompatible','ralph'];
+ const allowed=['version','jobId','attempt','mode','provider','instructions','snapshot','argv','timeoutMs','auth','authReturnPublicKey','claudeNestedCompatible','ralph','carbon','model','effort','resourceMeasurement','largeArtifacts'];
  if(Object.keys(v).some(k=>!allowed.includes(k)))throw new Error('Unknown runtime field');
  if(v.version!==1||!string(v.jobId,120)||!string(v.attempt,120)||!/^[A-Za-z0-9_-]+$/.test(v.jobId)||!/^[A-Za-z0-9_-]+$/.test(v.attempt)||!['agent','compute'].includes(v.mode)||!Number.isSafeInteger(v.timeoutMs)||v.timeoutMs<1||v.timeoutMs>3600000)throw new Error('Invalid runtime identity or deadline');
+ if(v.resourceMeasurement!==undefined&&typeof v.resourceMeasurement!=='boolean')throw new Error('Invalid resource measurement flag');
  v.snapshot=validateSnapshot(v.snapshot);
+ if(v.largeArtifacts!==undefined){
+  const a=object(v.largeArtifacts);
+  if(v.mode!=='compute'||v.carbon!==undefined||!a||Object.keys(a).some(k=>!['refs','capability'].includes(k))||typeof a.capability!=='string'||!/^hma_[a-f0-9]{64}$/.test(a.capability))throw new Error('Invalid large artifact capability');
+  a.refs=validateLargeArtifacts(a.refs);
+ }
  if(v.mode==='compute'){
-  if(v.auth!==undefined||v.provider!==undefined||v.authReturnPublicKey!==undefined||v.instructions!==undefined||v.claudeNestedCompatible!==undefined||v.ralph!==undefined)throw new Error('Compute cannot receive provider authentication or agent settings');
+  if(v.model!==undefined||v.effort!==undefined||v.auth!==undefined||v.provider!==undefined||v.authReturnPublicKey!==undefined||v.instructions!==undefined||v.claudeNestedCompatible!==undefined||v.ralph!==undefined)throw new Error('Compute cannot receive provider authentication or agent settings');
+  if(v.carbon!==undefined){
+   const c=object(v.carbon);
+   if(!c||Object.keys(c).some(k=>!['effort','capability','probe','model','instance','latency','cacheMode'].includes(k))||
+    (c.effort!=='low'&&c.effort!=='medium')||(c.model!==undefined&&(c.model!=='terra'||c.effort!=='medium'))||
+    (c.latency!==undefined&&(c.model!=='terra'||(c.latency!==true&&c.latency!=='sequence'&&c.latency!=='realworld'&&c.latency!=='realworld-warm'&&c.latency!=='realworld-cache-pairs'&&c.latency!=='realworld-cold'&&c.latency!=='realworld-r2-cache'&&c.latency!=='wire-replay'&&c.latency!=='replay'&&c.latency!=='cache-replay')||(c.latency!=='cache-replay'&&c.latency!=='realworld-warm'&&c.latency!=='realworld-cache-pairs'&&c.latency!=='realworld-cold'&&c.latency!=='realworld-r2-cache'&&c.instance!==undefined)))||
+    ((c.latency==='replay'||c.latency==='cache-replay')&&c.probe!==true)||(c.latency==='cache-replay'&&c.instance===undefined)||((c.latency==='realworld-warm'||c.latency==='realworld-cache-pairs'||c.latency==='realworld-cold'||c.latency==='realworld-r2-cache')&&c.instance!=='standard-3')||
+    ((c.latency==='realworld-cache-pairs'||c.latency==='realworld-cold')?(c.cacheMode!=='cold'&&c.cacheMode!=='warm'):c.cacheMode!==undefined)||
+    (c.probe!==undefined&&typeof c.probe!=='boolean')||(c.instance!==undefined&&(c.model!=='terra'||(c.instance!=='standard-1'&&c.instance!=='standard-3')))||
+    (typeof c.capability!=='string'||!/^hmb_[a-f0-9]{64}$/.test(c.capability)))
+    throw new Error('Invalid Carbon runtime input');
+  }
   if(!Array.isArray(v.argv)||!v.argv.length||v.argv.length>32||v.argv.some((x:unknown)=>!string(x,1000)))throw new Error('Invalid compute argv');
  }else{
-  if(!['codex','claude'].includes(v.provider)||!string(v.instructions)||!string(v.auth,262144)||!string(v.authReturnPublicKey,10000)||v.argv!==undefined)throw new Error('Agent authentication and instructions are required');
+  if(v.carbon!==undefined||!['codex','claude'].includes(v.provider)||!string(v.instructions)||!string(v.auth,262144)||!string(v.authReturnPublicKey,10000)||v.argv!==undefined)throw new Error('Agent authentication and instructions are required');
+  validateModelSelection(v.provider,v.model,v.effort);
   if(v.claudeNestedCompatible!==undefined&&typeof v.claudeNestedCompatible!=='boolean')throw new Error('Invalid sandbox policy');
   if(v.ralph!==undefined){
    const r=object(v.ralph);
@@ -32,13 +54,14 @@ export function validateRuntimeInput(input:unknown):RuntimeInput {
  }
  return v as unknown as RuntimeInput;
 }
-export function providerArgs(provider:Provider,instructions:string,paths:ProviderPaths,sessionId?:string):string[] {
+export function providerArgs(provider:Provider,instructions:string,paths:ProviderPaths,sessionId?:string,selection?:{model?:string;effort?:'low'|'medium'|'high'|'xhigh'}):string[] {
  if(sessionId!==undefined&&!/^[a-f0-9-]{36}$/i.test(sessionId))throw new Error('Invalid provider session');
+ const configured=validateModelSelection(provider,selection?.model,selection?.effort);
  if(provider==='codex'){
   const denied=[...new Set(['/runtime','/proc',paths.home+'/.codex/auth.json',paths.privateDir])].map(path=>`${JSON.stringify(path)}="deny"`).join(',');
-  return ['-a','never','-c','cli_auth_credentials_store="file"','-c','default_permissions="hivemind"','-c',`permissions.hivemind={extends=":workspace",filesystem={${denied}}}`,'-c','agents.enabled=true','-c','agents.max_concurrent_threads_per_session=3','-c','mcp_servers.phase0.command="node"','-c',`mcp_servers.phase0.args=[${JSON.stringify(paths.scriptRoot+'/mcp-server.ts')}]`,'-c','mcp_servers.phase0.required=true','exec',...(sessionId?['resume','--json','--skip-git-repo-check',sessionId]:['--json','--skip-git-repo-check']),instructions];
+  return [...(configured.model?['-c',`model=${JSON.stringify(configured.model)}`,'-c',`model_reasoning_effort=${JSON.stringify(configured.effort)}`]:[]),'-a','never','-c','cli_auth_credentials_store="file"','-c','default_permissions="hivemind"','-c',`permissions.hivemind={extends=":workspace",filesystem={${denied}}}`,'-c','agents.enabled=true','-c','agents.max_concurrent_threads_per_session=3','-c','mcp_servers.phase0.command="node"','-c',`mcp_servers.phase0.args=[${JSON.stringify(paths.scriptRoot+'/mcp-server.ts')}]`,'-c','mcp_servers.phase0.required=true','exec',...(sessionId?['resume','--json','--skip-git-repo-check',sessionId]:['--json','--skip-git-repo-check']),instructions];
  }
- return ['-p',...(sessionId?['--resume',sessionId]:[]),'--restricted','--output-format','stream-json','--verbose','--settings',paths.privateDir+'/settings.json','--strict-mcp-config','--mcp-config',paths.privateDir+'/mcp.json','--permission-mode','dontAsk','--permission-prompts','none','--tools','Bash,Agent','--allowedTools','Bash,Agent,mcp__phase0__phase0_probe','--disallowedTools','Write,Edit,NotebookEdit','--disable-slash-commands','--forward-subagent-text','--include-hook-events','--agents',JSON.stringify({worker:{description:'Perform an independent coding task in the workspace.',prompt:'Use sandboxed Bash only. Do not inspect credentials, private runtime state or environment secrets.',tools:['Bash']}}),'--',instructions];
+ return [...(configured.model?['--model',configured.model,'--effort',configured.effort!]:[]),'-p',...(sessionId?['--resume',sessionId]:[]),'--restricted','--output-format','stream-json','--verbose','--settings',paths.privateDir+'/settings.json','--strict-mcp-config','--mcp-config',paths.privateDir+'/mcp.json','--permission-mode','dontAsk','--permission-prompts','none','--tools','Bash,Agent','--allowedTools','Bash,Agent,mcp__phase0__phase0_probe','--disallowedTools','Write,Edit,NotebookEdit','--disable-slash-commands','--forward-subagent-text','--include-hook-events','--agents',JSON.stringify({worker:{description:'Perform an independent coding task in the workspace.',prompt:'Use sandboxed Bash only. Do not inspect credentials, private runtime state or environment secrets.',tools:['Bash']}}),'--',instructions];
 }
 export function claudeSettings(paths:ProviderPaths,nested:boolean):Record<string,unknown> {
  const hook=[{matcher:'^worker$',hooks:[{type:'command',command:`node ${paths.scriptRoot}/claude-agent-hook.ts`,timeout:5}]}];
@@ -107,7 +130,7 @@ function mcpReceipts(provider:Provider,events:Record<string,any>[]):McpReceipt[]
 export type ProviderFailureReason='AUTHENTICATION_REQUIRED'|'PROCESS_NOT_PASSED'|'CAPTURE_TRUNCATED'|'CODEX_MISSING_COMPLETION'|'CODEX_ERROR_EVENT'|'CLAUDE_NATIVE_ERROR'|'CLAUDE_RESULT_COUNT'|'CLAUDE_RESULT_SCOPE'|'CLAUDE_RESULT_RECEIPTS'|'CLAUDE_RESULT_NOT_LAST'|'CLAUDE_RESULT_SUBTYPE'|'CLAUDE_RESULT_ERROR_FLAG'|'CLAUDE_RESULT_TEXT_MISSING'|'CLAUDE_REFUSAL'|'CLAUDE_PERMISSION_DENIALS';
 export type TrailingEventKind='RATE_LIMIT_EVENT'|'SYSTEM_HOOK'|'OTHER';
 export interface ClaudeResultShape {initialSession:'ROOT'|'OTHER'|'MISSING';finalSession:'ROOT'|'OTHER'|'MISSING';parentToolUse:'NONEMPTY'|'NULL'|'MISSING';uuidPresent:boolean;uuidDuplicate:boolean;identicalToFinal:boolean;subtype:'SUCCESS'|'OTHER';isError:'TRUE'|'FALSE'|'MISSING'}
-export function parseProviderResult(provider:Provider,process:ProcessResult):{success:boolean;summary:string;sessionId?:string;usage?:Record<string,number>;errorCode?:'NEEDS_REAUTH';mcpReceipts:McpReceipt[];failureReasons:ProviderFailureReason[];trailingEventKinds?:TrailingEventKind[];permissionDenialCount?:number;resultCount?:number;resultShapes?:ClaudeResultShape[];resultShapesTruncated?:boolean} {
+export function parseProviderResult(provider:Provider,process:ProcessResult):{success:boolean;summary:string;sessionId?:string;usage?:Record<string,number>;claudeResultMetrics?:ClaudeResultMetrics;errorCode?:'NEEDS_REAUTH';mcpReceipts:McpReceipt[];failureReasons:ProviderFailureReason[];trailingEventKinds?:TrailingEventKind[];permissionDenialCount?:number;resultCount?:number;resultShapes?:ClaudeResultShape[];resultShapesTruncated?:boolean} {
  const events=records(process.stdout),errorCode=authFailure(provider,events,process)?'NEEDS_REAUTH' as const:undefined,receipts=mcpReceipts(provider,events);let summary='',sessionId:string|undefined,usage:Record<string,number>|undefined;
  const failureReasons:ProviderFailureReason[]=[];
  if(errorCode)failureReasons.push('AUTHENTICATION_REQUIRED');
@@ -164,5 +187,5 @@ export function parseProviderResult(provider:Provider,process:ProcessResult):{su
   resultCount=Math.min(finals.length,16);resultShapesTruncated=finals.length>16;
   resultShapes=finals.slice(0,16).map(record=>({initialSession:relation(record.session_id,initial?.session_id),finalSession:relation(record.session_id,final?.session_id),parentToolUse:present(record.parent_tool_use_id)?'NONEMPTY':record.parent_tool_use_id===null?'NULL':'MISSING',uuidPresent:present(record.uuid),uuidDuplicate:present(record.uuid)&&(uuids.get(record.uuid.toLowerCase())??0)>1,identicalToFinal:isDeepStrictEqual(record,final),subtype:record.subtype==='success'?'SUCCESS':'OTHER',isError:record.is_error===true?'TRUE':record.is_error===false?'FALSE':'MISSING'}));
  }
- return {success:!errorCode&&!nativeError&&process.status==='passed'&&process.exitCode===0&&!process.truncated&&countValid&&scopeValid&&receiptsValid&&events.at(-1)===final&&final?.subtype==='success'&&final?.is_error===false&&typeof final?.result==='string'&&final?.stop_reason!=='refusal'&&(final?.permission_denials===undefined||(Array.isArray(final.permission_denials)&&final.permission_denials.length===0)),summary,sessionId,usage,errorCode,mcpReceipts:receipts,failureReasons,trailingEventKinds,permissionDenialCount,resultCount,resultShapes,resultShapesTruncated};
+ return {success:!errorCode&&!nativeError&&process.status==='passed'&&process.exitCode===0&&!process.truncated&&countValid&&scopeValid&&receiptsValid&&events.at(-1)===final&&final?.subtype==='success'&&final?.is_error===false&&typeof final?.result==='string'&&final?.stop_reason!=='refusal'&&(final?.permission_denials===undefined||(Array.isArray(final.permission_denials)&&final.permission_denials.length===0)),summary,sessionId,usage,errorCode,mcpReceipts:receipts,failureReasons,trailingEventKinds,permissionDenialCount,resultCount,resultShapes,resultShapesTruncated,claudeResultMetrics:scopeValid?extractClaudeResultMetrics(final):undefined};
 }

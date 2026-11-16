@@ -24,3 +24,11 @@ test('public input symlinks are rejected without reading their target',async()=>
 test('oversized public inputs fail closed before producing a manifest',async()=>{
  const root=await fixture();try{await writeFile(join(root,'backend/src/oversized.ts'),Buffer.alloc(2*1024*1024+1));await assert.rejects(buildRuntimeManifest(root),/Invalid runtime build input/);}finally{await rm(root,{recursive:true,force:true});}
 });
+test('Python extraction helper is bound into runtime revision and changes invalidate the stamp',async()=>{
+ const root=await fixture();try{
+  const path='backend/src/runtime/safe-tar.py';await writeFile(join(root,path),'# extractor v1\n');
+  const first=await writeRuntimeManifest(root);assert.equal(first.files[path],createHash('sha256').update('# extractor v1\n').digest('hex'));
+  await writeFile(join(root,path),'# extractor v2\n');const next=await buildRuntimeManifest(root);
+  assert.notEqual(first.digest,next.digest);assert.equal(await checkRuntimeManifest(root),false);
+ }finally{await rm(root,{recursive:true,force:true});}
+});

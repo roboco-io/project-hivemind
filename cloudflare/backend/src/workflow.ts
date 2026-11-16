@@ -13,6 +13,8 @@ export interface WorkflowSpec {
   idempotencyKey: string;
   workers: [WorkflowWorker, WorkflowWorker];
   integration: CheckSpec;
+  concurrency?:1|2;
+  instance?:'standard-1'|'standard-3'|'standard-4';
 }
 export interface WorkflowRecord {
   id: string;
@@ -35,14 +37,16 @@ function object(value: unknown, keys: string[]) {
   return value as Record<string, unknown>;
 }
 export function validateWorkflowSpec(value: unknown): WorkflowSpec {
-  const raw = object(value, ['snapshotId','contractPath','contractHash','idempotencyKey','workers','integration']);
+  const raw = object(value, ['snapshotId','contractPath','contractHash','idempotencyKey','workers','integration','concurrency','instance']);
   if (!Array.isArray(raw.workers) || raw.workers.length !== 2 ||
       typeof raw.contractHash !== 'string' || !/^[a-f0-9]{64}$/.test(raw.contractHash)) {
     throw new SchedulerError('Expected a contract hash and exactly two workers', 400);
   }
+  if(raw.concurrency!==undefined&&raw.concurrency!==1&&raw.concurrency!==2)throw new SchedulerError('Invalid workflow concurrency',400);
+  if(raw.instance!==undefined&&raw.instance!=='standard-1'&&raw.instance!=='standard-3'&&raw.instance!=='standard-4')throw new SchedulerError('Invalid workflow instance',400);
   const contractPath = canonicalSourcePath(raw.contractPath);
   const workers = raw.workers.map(value => {
-    const {writes, ...worker} = object(value, ['provider','credentialId','instructions','checks','timeoutMs','writes']);
+    const {writes, ...worker} = object(value, ['provider','credentialId','instructions','checks','timeoutMs','writes','model','effort']);
     const {snapshotId: _snapshot, idempotencyKey: _key, ...job} =
       validateJobSpec({...worker, snapshotId:raw.snapshotId, idempotencyKey:raw.idempotencyKey});
     if (!Array.isArray(writes) || writes.length < 1 || writes.length > 32) {
@@ -61,7 +65,9 @@ export function validateWorkflowSpec(value: unknown): WorkflowSpec {
     snapshotId:raw.snapshotId, idempotencyKey:raw.idempotencyKey,
   }).checks[0]!;
   return {snapshotId:raw.snapshotId as string, contractPath, contractHash:raw.contractHash,
-    idempotencyKey:raw.idempotencyKey as string, workers, integration};
+    idempotencyKey:raw.idempotencyKey as string, workers, integration,
+    ...(raw.concurrency!==undefined?{concurrency:raw.concurrency as 1|2}:{}),
+    ...(raw.instance!==undefined?{instance:raw.instance as 'standard-1'|'standard-3'|'standard-4'}:{})};
 }
 export function workflowFingerprint(spec: WorkflowSpec): string {
   return sha256(JSON.stringify(spec));
@@ -129,6 +135,7 @@ export async function advanceWorkflow(
     }
     await artifacts.write(merged);
     const integration = scheduler.enqueueCompute(merged.digest, workflow.spec.integration, now);
+    if(workflow.spec.instance)scheduler.state.jobs[integration.id]!.executionGroup={id:workflow.id,concurrency:workflow.spec.concurrency??2,instance:workflow.spec.instance,dependencyNetwork:true};
     Object.assign(workflow, {status:'INTEGRATING', outputSnapshotId:merged.digest, integrationId:integration.id});
   } else if (workflow.status === 'INTEGRATING') {
     const integration = scheduler.get(workflow.integrationId!);

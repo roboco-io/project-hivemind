@@ -14,9 +14,16 @@ COPY backend/native/namespace-guard.c /build/namespace-guard.c
 RUN gcc -std=c11 -O2 -Wall -Wextra -Werror /build/proc-guard.c -o /build/proc-guard && gcc -std=c11 -O2 -Wall -Wextra -Werror /build/namespace-probe.c -o /build/namespace-probe && gcc -std=c11 -O2 -Wall -Wextra -Werror /build/namespace-guard.c -o /build/namespace-guard
 
 FROM node:24.14.0-bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git curl util-linux bubblewrap socat && rm -rf /var/lib/apt/lists/*
-RUN npm install --global @openai/codex@0.166.0 @anthropic-ai/claude-code@2.1.319 && npm cache clean --force
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git curl util-linux bubblewrap socat python3 build-essential cmake ninja-build clang && rm -rf /var/lib/apt/lists/*
+RUN npm install --global @openai/codex@0.166.0 @anthropic-ai/claude-code@2.1.319 @earendil-works/pi-coding-agent@0.87.1 && npm cache clean --force
 RUN apt-get update && apt-get install -y --no-install-recommends ripgrep && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://github.com/Orange-OpenSource/hurl/releases/download/8.0.1/hurl_8.0.1_amd64.deb -o /tmp/hurl.deb \
+ && echo "e76e6c0957f83f9b761416452871554d0f068384b6cd004bff82dd8795c62225  /tmp/hurl.deb" | sha256sum -c - \
+ && apt-get update && apt-get install -y --no-install-recommends /tmp/hurl.deb \
+ && rm /tmp/hurl.deb && rm -rf /var/lib/apt/lists/*
+COPY --chown=0:0 backend/benchmark/agent/ /opt/hivemind/backend/benchmark/agent/
+COPY --chown=0:0 --chmod=0755 backend/benchmark/pi-shell /opt/hivemind/backend/benchmark/pi-shell
 
 WORKDIR /opt/hivemind
 COPY backend/package.json backend/package-lock.json ./

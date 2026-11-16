@@ -104,7 +104,7 @@ CLI sandbox를 끄거나 비격리 실행을 허용하지 않는다.
 | `GET /v1/jobs/:id/result` | 입력·출력 snapshot과 실제 check 결과 |
 
 작업은 provider, credentialId, snapshotId, instructions, checks, timeoutMs, idempotencyKey를 받는다.
-checks는 1~4개의 `{id, argv, timeoutMs}`다. 서버는 최종 출력 snapshot을 별도 컨테이너에 복원해 실행한다.
+checks는 1-4개의 `{id, argv, timeoutMs}`다. 서버는 최종 출력 snapshot을 별도 컨테이너에 복원해 실행한다.
 argv는 인증된 사용자가 지정하며 셸 문자열로 합치지 않는다.
 
 ## 소스와 결과
@@ -145,3 +145,38 @@ node src/client.ts workflow-result WORKFLOW-ID --out result.json
 초안은 워커를 만들지 않는다. 승인하면 두 작업을 원격 스케줄러에 함께 기록한다. 각 워커는 한 모델 세션에서 최대 3번의 구현·검증을 수행한다. 별도 검증 컨테이너가 해당 라운드의 불변 snapshot을 검사한다. 실패하면 검증 결과를 전달하고 같은 세션을 재개한다. 작업의 시간 제한은 검증 대기까지 포함한다.
 
 두 워커의 검증 성공·인증 회수·컨테이너 종료가 확인되면 허용 경로의 변경을 합친다. 계약 또는 다른 워커의 경로가 변경되거나 통합 테스트가 실패하면 실패 상태를 기록한다. 완료된 결과는 조회용이며 원본 저장소에 대한 적용은 운영자가 결정한다. 승인 이후 진행은 Durable Object의 alarm에서 이루어진다. 로컬 CLI를 종료한 뒤 다른 프로세스로 조회할 수 있다.
+
+## 자원 검증 실험 작업 묶음
+
+운영자 API의 `POST /v1/compute-groups`는 `snapshotId`, `idempotencyKey`, `concurrency`(1·2·4), `instance`(standard-1·standard-3), 네 개의 `checks`와 최종 `integration`을 받아 초안을 만든다. 각 검사는 기존 CheckSpec의 id·argv·timeoutMs 형식을 따른다. `POST /v1/compute-groups/:id/approve` 후 서버가 정한 동시 실행 수로 검사를 실행하고 전부 성공하면 같은 snapshot에서 통합 검사를 수행한다. `GET /v1/compute-groups/:id`는 group과 작업별 job·result를 반환한다. `POST /v1/compute-groups/:id/cancel`은 실행과 후속 통합을 중단한다.
+
+WorkflowSpec은 선택적으로 `concurrency: 1|2`와 `instance`를 받는다. 순차 모드는 앞 워커의 검증까지 끝난 후 다음 워커를 실행한다. 모델 워커의 `model`과 `effort`는 함께 지정하며, Codex는 low·medium·high·xhigh, Claude는 low·medium·high를 받는다. 기존에 선택값을 생략한 작업은 종전 기본 동작을 사용한다.
+
+실험 그룹의 `createdAt`, `approvedAt`, `finishedAt`과 작업의 `createdAt`, `startedAt`, `runningAt`, `finishedAt`을 기록한다. startedAt은 스케줄러가 실행을 배정한 시간이고 runningAt은 런타임 시작을 처음 확인한 시간이다. 실제 명령 구간은 result.process의 시간으로 확인한다. 실험 결과의 `resources`는 cgroup CPU 사용량·스로틀링·메모리 피크를 포함하며, 지원되지 않는 계측값은 생략한다. 모델·effort 필드는 요청 설정이며 실제 제공자 응답의 모델 식별 근거는 별도로 확인한다.
+
+실험 compute 그룹과 instance를 명시한 워크플로는 패키지 설치에 필요한 npm registry·Prisma binary·GitHub 읽기 경로를 사용한다. 모델 워커는 자기 제공자 경로를 추가로 사용한다. 기존 일반 작업의 네트워크 정책과 전역 상한인 agent 2개·compute 4개는 유지한다.
+
+Claude 결과의 `claudeResultMetrics`는 마지막 native result가 보고한
+`duration_ms`, `duration_api_ms`, `num_turns`와 허용된 모델별 숫자 사용량을 보존합니다.
+`coverage: final-result-provider-reported`는 전체 세션 합계를 보장하지 않습니다.
+이 계측에는 원문 출력이나 인증 정보를 저장하지 않으며 Codex의 실제 모델을 추정하지 않습니다.
+
+### 대형 compute 입력과 standard-4 (DuckDB P0)
+
+일반 compute-group은 `standard-1`, `standard-3`, `standard-4`와 1–4개 검사를 받는다. 전역 compute 동시성 상한은 4다. 기존 Carbon/모델 벤치마크의 instance 선택 범위는 바꾸지 않는다.
+
+기존 4MiB·1,000파일 snapshot은 작은 실행 manifest와 runner용으로 유지한다. 큰 입력은 operator가 별도 R2 multipart 객체로 등록한다. `source`는 tar.gz(압축 최대 1GiB, 해제 최대 2GiB·100,000파일), `data`는 최대 8GiB 일반 파일이다. 임의 URL·bucket·경로를 받지 않는다.
+
+```sh
+node scripts/large-artifacts/upload.ts /absolute/duckdb.tar.gz source tar.gz 2147483648 100000 https://BACKEND ../.hivemind/backend-secrets.json
+# data의 마지막 두 숫자는 실제 byte 길이와 1이다.
+node scripts/large-artifacts/upload.ts /absolute/input.db data file 123456789 1 https://BACKEND ../.hivemind/backend-secrets.json
+```
+
+반환된 `ref`를 compute-group의 `artifacts: [ref]`에 넣는다. `/v1/large-artifact-uploads`는 인증된 operator만 사용하며, parts는 8MiB(마지막만 나머지 길이)다. 같은 digest의 완료 객체는 덮어쓰지 않고 같은 선언만 재사용한다. 미완료 upload는 `POST /v1/large-artifact-uploads/<id>/abort`로 정리할 수 있다. uploader는 실패 시 자신의 multipart를 중단한다.
+
+**등록 metadata의 SHA는 선언값이다.** 응답은 `contentHashVerification: runtime-required`로 표시한다. 신뢰된 runtime은 전체 다운로드 길이·SHA-256을 확인하고 안전한 tar 해제를 마친 뒤에만 compute를 실행한다. 링크·장치·경로 탈출·중복 경로·확장 크기 초과는 거부한다. 전송은 job/attempt/입력 digest/deadline에 묶인 read capability를 사용하며 제어 토큰과 모델 인증은 전달하지 않는다. 완료·취소·만료된 작업의 capability는 사용할 수 없다.
+
+workload에는 `HIVEMIND_ARTIFACT_SOURCE`(archive 최상위 디렉터리를 보존한 source 디렉터리)와 `HIVEMIND_ARTIFACT_DATA` 경로만 제공한다. Codex compute sandbox가 runtime 비공개 디렉터리를 deny하고 준비된 입력 subtree를 read로 연다. 쓰기 build·DB temp는 별도 작업 공간에서 수행한다. 같은 UID의 chmod만을 읽기 전용 경계로 신뢰하지 않는다. macOS의 실제 read/write/delete/비공개-read 경계 probe와 unit tests를 수행했으며, 원격 Linux probe도 통과한 뒤 실행 적합성을 주장해야 한다.
+
+큰 입력은 검사 작업들에만 제공하고 최종 integration에는 다시 내려받지 않는다. 통합 검사는 작은 receipt 집계를 맡거나 별도 준비된 검증을 수행해야 한다. 다운로드·검증·해제 시간은 작업 timeout에 포함된다. 성공 결과에는 digest·실제 해제 크기/파일 수·준비 시간을 남기고, capability는 로그·결과에서 제거한다.

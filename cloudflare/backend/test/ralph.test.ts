@@ -9,7 +9,12 @@ import {executeRuntime} from '../src/runtime/run.ts';
 import {createBootstrap} from '../src/runtime/bootstrap.ts';
 import {createSnapshot,sha256} from '../src/snapshot.ts';
 
-for(const resumeFails of [false,true])test(resumeFails?'Ralph preserves the accepted session identity and auth envelope when a resume has no result':'Ralph retries the same Codex session after independent verification rejects a checkpoint',async()=>{
+const cases=[
+ {resumeFails:false,firstTurnDelayMs:0,name:'Ralph retries the same Codex session after independent verification rejects a checkpoint'},
+ {resumeFails:true,firstTurnDelayMs:0,name:'Ralph preserves the accepted session identity and auth envelope when a resume has no result'},
+ {resumeFails:false,firstTurnDelayMs:3500,name:'Ralph accepts a delayed first provider response within the existing eight-second budget'},
+];
+for(const {resumeFails,firstTurnDelayMs,name} of cases)test(name,async()=>{
  const root=await mkdtemp(join(tmpdir(),'hivemind-ralph-'));
  const runtimeDir=join(root,'runtime'),workspace=join(root,'workspace'),home=join(root,'home');
  const script=join(root,'codex');
@@ -18,10 +23,13 @@ for(const resumeFails of [false,true])test(resumeFails?'Ralph preserves the acce
  await writeFile(script,`#!${process.execPath}
  const fs=require('node:fs');
  const resume=process.argv.includes('resume')&&process.argv.includes('${session}');
+ const respond=()=>{
  if(resume&&${resumeFails})process.exit(1);
  fs.writeFileSync('add.mjs',resume?'export const add=(a,b)=>a+b;':'export const add=()=>0;');
  console.log(JSON.stringify({type:'thread.started',thread_id:'${session}'}));
  console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1}}));
+ };
+ if(!resume&&${firstTurnDelayMs}>0)setTimeout(respond,${firstTurnDelayMs});else respond();
  `,{mode:0o700});
  const keys=generateKeyPairSync('rsa',{modulusLength:2048});
  const value='export const add=()=>null;';
@@ -35,15 +43,17 @@ for(const resumeFails of [false,true])test(resumeFails?'Ralph preserves the acce
  const address=server.address();
  if(!address||typeof address==='string')throw new Error('No address');
  const base=`http://127.0.0.1:${address.port}`;
+ let pending:ReturnType<typeof executeRuntime>|undefined;
  try{
   assert.equal((await fetch(base+'/prepare',{method:'POST',body:JSON.stringify(input)})).status,201);
-  const pending=executeRuntime(input,{runtimeDir,workspace,home,commands:{codex:script}});
+  const observationDeadline=Date.now()+input.timeoutMs;
+  pending=executeRuntime(input,{runtimeDir,workspace,home,commands:{codex:script}});
   for(let round=1;round<=(resumeFails?1:2);round++){
    let checkpoint:import('../src/contracts.ts').RalphCheckpoint|undefined;
-   for(let attempt=0;attempt<100;attempt++){
-    const r=await fetch(base+'/ralph/checkpoint',{headers:{'x-hivemind-ralph':token}});
+   while(Date.now()<observationDeadline){
+    const r=await fetch(base+'/ralph/checkpoint',{headers:{'x-hivemind-ralph':token},signal:AbortSignal.timeout(Math.max(1,observationDeadline-Date.now()))});
     if(r.ok){const value=await r.json() as typeof checkpoint;if(value?.round===round){checkpoint=value;break;}}
-    await delay(30);
+    await delay(Math.min(30,Math.max(0,observationDeadline-Date.now())));
    }
    assert.equal(checkpoint?.sessionId,session);
    assert.equal((await fetch(base+'/ralph/checkpoint')).status,403);
@@ -62,7 +72,8 @@ for(const resumeFails of [false,true])test(resumeFails?'Ralph preserves the acce
    return;
   }
   assert.equal(result.process.status,'passed');
+  if(firstTurnDelayMs){assert.ok(result.ralphRounds![0]!.finishedAt-result.ralphRounds![0]!.startedAt>=firstTurnDelayMs);assert.ok(result.process.durationMs<input.timeoutMs);}
   assert.deepEqual(result.ralphRounds?.map(round=>[round.round,round.sessionId,round.accepted]),[[1,session,false],[2,session,true]]);
   assert.equal(await readFile(join(workspace,'add.mjs'),'utf8'),'export const add=(a,b)=>a+b;');
- }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
+ }finally{if(pending){await writeFile(join(runtimeDir,'cancel'),'').catch(()=>{});await pending;}await new Promise<void>(resolve=>server.close(()=>resolve()));await rm(root,{recursive:true,force:true});}
 });

@@ -18,16 +18,23 @@ function digest(value:unknown,name:string):string {const result=string(value,nam
 function now(value:number){return number(value,'time',0,Number.MAX_SAFE_INTEGER-3600000);}
 function objectKey(value:unknown):string {const key=string(value,'credential object key',1024);if(key.startsWith('/')||key.split('/').some(part=>!part||part==='.'||part==='..'))throw new SchedulerError('Invalid credential object key',400);return key;}
 function provider(value:unknown):'codex'|'claude' {if(value!=='codex'&&value!=='claude')throw new SchedulerError('Invalid provider',400);return value;}
-function check(value:unknown):CheckSpec {
+export function validateCheckSpec(value:unknown):CheckSpec {
  const item=object(value,'check');only(item,['id','argv','timeoutMs'],'check');
  if(!Array.isArray(item.argv)||item.argv.length<1||item.argv.length>32)throw new SchedulerError('Invalid check argv',400);
  return {id:id(item.id,'check id'),argv:item.argv.map(arg=>string(arg,'argument',1000)),timeoutMs:number(item.timeoutMs,'check timeout',1000,3600000)};
 }
+export function validateModelSelection(selectedProvider:unknown,model:unknown,effort:unknown):Pick<JobSpec,'model'|'effort'> {
+ if(model===undefined&&effort===undefined)return {};
+ if(typeof model!=='string'||!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$/.test(model)||
+  !['low','medium','high','xhigh'].includes(String(effort))||
+  (selectedProvider==='claude'&&effort==='xhigh'))throw new SchedulerError('Invalid model or effort selection',400);
+ return {model,effort:effort as JobSpec['effort']};
+}
 export function validateJobSpec(value:unknown):JobSpec {
- const item=object(value,'job');only(item,['provider','credentialId','snapshotId','instructions','checks','timeoutMs','idempotencyKey'],'job');
+ const item=object(value,'job');only(item,['provider','credentialId','snapshotId','instructions','checks','timeoutMs','idempotencyKey','model','effort'],'job');
  if(!Array.isArray(item.checks)||item.checks.length<1||item.checks.length>4)throw new SchedulerError('Expected one to four required checks',400);
- const checks=item.checks.map(check);if(new Set(checks.map(value=>value.id)).size!==checks.length)throw new SchedulerError('Duplicate check id',400);
- return {provider:provider(item.provider),credentialId:id(item.credentialId,'credential id'),snapshotId:digest(item.snapshotId,'snapshot id'),instructions:string(item.instructions,'instructions',24000),checks,timeoutMs:number(item.timeoutMs,'job timeout',1000,3600000),idempotencyKey:id(item.idempotencyKey,'idempotency key')};
+ const checks=item.checks.map(validateCheckSpec);if(new Set(checks.map(value=>value.id)).size!==checks.length)throw new SchedulerError('Duplicate check id',400);
+ return {...validateModelSelection(item.provider,item.model,item.effort),provider:provider(item.provider),credentialId:id(item.credentialId,'credential id'),snapshotId:digest(item.snapshotId,'snapshot id'),instructions:string(item.instructions,'instructions',24000),checks,timeoutMs:number(item.timeoutMs,'job timeout',1000,3600000),idempotencyKey:id(item.idempotencyKey,'idempotency key')};
 }
 function agentReceipt(value:AgentOutcome){return fingerprint({success:value.success,containerStopped:value.containerStopped,authGeneration:value.authGeneration,authObjectKey:value.authObjectKey,outputSnapshotId:value.outputSnapshotId??null,errorCode:value.errorCode??null,resultKey:value.resultKey??null});}
 function computeReceipt(value:ComputeOutcome){return fingerprint({success:value.success,containerStopped:value.containerStopped,sourceUnchanged:value.sourceUnchanged,resultKey:value.resultKey??null,errorCode:value.errorCode??null});}
@@ -48,7 +55,7 @@ export class Scheduler {
  get(id:string):JobRecord{return copy(this.record(id));}
  list():JobRecord[]{return Object.values(this.state.jobs).map(copy);}
  enqueueCompute(snapshotId:string, spec:CheckSpec, time:number):JobRecord {
-  now(time);const verified=check(spec);
+  now(time);const verified=validateCheckSpec(spec);
   const job:JobRecord={id:randomUUID(),attempt:randomUUID(),kind:'compute',checkId:verified.id,
    snapshotId:digest(snapshotId,'snapshot id'),argv:verified.argv,timeoutMs:verified.timeoutMs,
    checks:[],childIds:[],status:'QUEUED',createdAt:time,deadline:0,containerStopped:true,authSynced:true};
@@ -70,13 +77,18 @@ export class Scheduler {
   now(time);const spec=validateJobSpec(input),hash=fingerprint(spec),saved=own(this.state.idempotency,spec.idempotencyKey);
   if(saved){if(saved.fingerprint!==hash)throw new SchedulerError('Idempotency key conflicts with another payload');return this.get(saved.jobId);}
   const credential=this.credential(spec.credentialId);if(credential.provider!==spec.provider)throw new SchedulerError('Credential provider does not match job',422);if(credential.quarantined)throw new SchedulerError('Credential is quarantined',422);
-  const job:JobRecord={id:randomUUID(),attempt:randomUUID(),kind:'agent',provider:spec.provider,credentialId:credential.id,snapshotId:spec.snapshotId,status:'QUEUED',instructions:spec.instructions,checks:copy(spec.checks),childIds:[],createdAt:time,deadline:0,timeoutMs:spec.timeoutMs,containerStopped:true,authSynced:false};
+  const job:JobRecord={id:randomUUID(),attempt:randomUUID(),kind:'agent',...validateModelSelection(spec.provider,spec.model,spec.effort),provider:spec.provider,credentialId:credential.id,snapshotId:spec.snapshotId,status:'QUEUED',instructions:spec.instructions,checks:copy(spec.checks),childIds:[],createdAt:time,deadline:0,timeoutMs:spec.timeoutMs,containerStopped:true,authSynced:false};
   this.state.jobs[job.id]=job;this.state.idempotency[spec.idempotencyKey]={fingerprint:hash,jobId:job.id};return copy(job);
  }
  dispatch(time:number):JobRecord[] {
   now(time);this.expire(time);const jobs=Object.values(this.state.jobs);let agents=jobs.filter(j=>j.kind==='agent'&&!j.containerStopped).length,compute=jobs.filter(j=>j.kind==='compute'&&!j.containerStopped).length;const chosen:JobRecord[]=[];
   for(const job of jobs){
    if(job.status!=='QUEUED')continue;
+   if(job.executionGroup){
+    const group=job.executionGroup;
+    const active=jobs.filter(other=>other.id!==job.id&&other.kind===job.kind&&other.executionGroup?.id===group.id&&other.status!=='QUEUED'&&(!terminal(other.status)||!other.containerStopped)).length;
+    if(active>=group.concurrency)continue;
+   }
    if(job.kind==='agent'){
     if(agents>=2)continue;const credential=this.credential(job.credentialId!);if(credential.quarantined||credential.activeJobId)continue;
     credential.activeJobId=job.id;job.credentialGeneration=credential.generation;agents++;
@@ -93,7 +105,7 @@ export class Scheduler {
   now(time);const job=this.attempt(id,attempt);
   if(job.status==='RUNNING'||job.status==='CANCELLING')return copy(job);
   if(job.status!=='STARTING')throw new SchedulerError('Job is not starting');
-  if(job.deadline<=time)this.cancelOne(job,'TIMED_OUT',time);else job.status='RUNNING';return copy(job);
+  if(job.deadline<=time)this.cancelOne(job,'TIMED_OUT',time);else {job.status='RUNNING';job.runningAt??=time;}return copy(job);
  }
  agentFinished(id:string,attempt:string,outcome:AgentOutcome,time:number):JobRecord {
   now(time);const job=this.attempt(id,attempt);if(job.kind!=='agent')throw new SchedulerError('Expected agent job',400);
@@ -124,6 +136,7 @@ export class Scheduler {
     this.settleParent(job.id,time);
    }else for(const required of job.checks){
     const child:JobRecord={id:randomUUID(),attempt:randomUUID(),kind:'compute',parentId:job.id,checkId:required.id,snapshotId:job.outputSnapshotId,argv:copy(required.argv),checks:[],childIds:[],status:'QUEUED',createdAt:time,deadline:0,timeoutMs:required.timeoutMs,containerStopped:true,authSynced:true};
+    if(job.executionGroup)child.executionGroup=copy(job.executionGroup);
     this.state.jobs[child.id]=child;job.childIds.push(child.id);
    }
   }

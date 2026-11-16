@@ -1,10 +1,11 @@
+import {Writable} from 'node:stream';
 import {spawn} from 'node:child_process';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {constants} from 'node:fs';
 import {mkdir,open,type FileHandle} from 'node:fs/promises';
 import {join} from 'node:path';
 import type {ProcessResult} from '../contracts.ts';
-export interface RunOptions {cwd:string;env:NodeJS.ProcessEnv;timeoutMs:number;signal?:AbortSignal;maxBytes?:number;input?:string;captureDirectory?:string}
+export interface RunOptions {cwd:string;env:NodeJS.ProcessEnv;timeoutMs:number;signal?:AbortSignal;maxBytes?:number;input?:string;privateInput?:string;captureDirectory?:string}
 export async function runProcess(argv:string[],options:RunOptions):Promise<ProcessResult> {
  if(!argv.length||argv.some(x=>typeof x!=='string'||!x||x.includes('\0'))||!Number.isSafeInteger(options.timeoutMs)||options.timeoutMs<1)throw new Error('Invalid execution command or deadline');
  const max=options.maxBytes??32768;if(!Number.isSafeInteger(max)||max<1)throw new Error('Invalid output limit');
@@ -18,7 +19,12 @@ export async function runProcess(argv:string[],options:RunOptions):Promise<Proce
   if(options.signal?.aborted)return {status:'error',exitCode:null,stdout:'',stderr:'Execution cancelled',durationMs:0,truncated:false};
  return await new Promise<ProcessResult>(resolve=>{
   let startedAt=Date.now();
-  const child=spawn(argv[0]!,argv.slice(1),{cwd:options.cwd,env:options.env,shell:false,detached:process.platform!=='win32',stdio:files.length?['pipe',files[0]!.fd,files[1]!.fd]:['pipe','pipe','pipe']});
+  const stdio=files.length?['pipe',files[0]!.fd,files[1]!.fd] as const:['pipe','pipe','pipe'] as const;
+  const child=spawn(argv[0]!,argv.slice(1),{cwd:options.cwd,env:options.env,shell:false,detached:process.platform!=='win32',
+   stdio:options.privateInput===undefined?[...stdio]:[...stdio,'pipe']});
+  const privatePipe=child.stdio[3];
+  if(privatePipe instanceof Writable){privatePipe.on('error',()=>undefined);privatePipe.end(options.privateInput);}
+
   child.once('spawn',()=>{startedAt=Date.now();});
   const out:Buffer[]=[],err:Buffer[]=[];let bytes=0,truncated=false,timedOut=false,spawnError=false,cancelled=false,captureError=false,stopping:Promise<void>|undefined,sizeCheck:Promise<void>|undefined;
   const alive=()=>{if(!child.pid)return false;try{process.kill(process.platform==='win32'?child.pid:-child.pid,0);return true;}catch{return false;}};
@@ -39,7 +45,8 @@ export async function runProcess(argv:string[],options:RunOptions):Promise<Proce
    }catch{captureError=true;stdout='';stderr='Output capture is unavailable';}
    options.signal?.removeEventListener('abort',abort);
    const status=timedOut?'timed_out':spawnError||cancelled||term||truncated||captureError?'error':code===0?'passed':'failed';
-   resolve({status,exitCode:code,stdout,stderr:stderr+(spawnError?'\nExecutable could not start':cancelled?'\nExecution cancelled':''),durationMs:finishedAt-startedAt,truncated,startedAt,finishedAt});
+   const terminationReason=timedOut?'timeout':cancelled?'cancelled':spawnError?'spawn-error':truncated?'output-limit':captureError?'capture-error':term?'signal':'exit';
+   resolve({status,exitCode:code,signal:term??null,terminationReason,stdout,stderr:stderr+(spawnError?'\nExecutable could not start':cancelled?'\nExecution cancelled':''),durationMs:finishedAt-startedAt,truncated,startedAt,finishedAt});
   })();});
  });
  }finally{const closed=await Promise.allSettled(files.map(file=>file.close()));if(closed.some(result=>result.status==='rejected'))throw new Error('Output capture could not be closed');}
