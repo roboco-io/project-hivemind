@@ -1,0 +1,62 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net">
+  <diagram id="hivemind" name="HIVEMIND">
+    <mxGraphModel page="1" pageWidth="1200" pageHeight="680" grid="1" gridSize="10">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="User" value="로컬 관제&lt;br&gt;Codex · Claude Code 앱 / CLI" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="30" y="220" width="190" height="72" />
+        </mxCell>
+        <mxCell id="API" value="Cloudflare Worker API" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="285" y="220" width="190" height="72" />
+        </mxCell>
+        <mxCell id="Scheduler" value="Durable Object&lt;br&gt;스케줄링 · 작업 상태" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="80" width="190" height="72" />
+        </mxCell>
+        <mxCell id="R2" value="R2 아티팩트&lt;br&gt;소스 · 데이터 · 결과" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="535" y="380" width="190" height="72" />
+        </mxCell>
+        <mxCell id="Agent" value="격리된 AI 워커&lt;br&gt;Codex · Claude Code" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="820" y="80" width="190" height="72" />
+        </mxCell>
+        <mxCell id="Compute" value="격리된 Compute 워커&lt;br&gt;빌드 · 테스트" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="820" y="380" width="190" height="72" />
+        </mxCell>
+        <mxCell id="e0" value="등록 · 승인 · 조회" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="User" target="API">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="API" target="Scheduler">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e2" value="입력 등록 · 결과 조회" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="API" target="R2">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e3" value="모델 작업" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="Scheduler" target="Agent">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e4" value="검증 · 통합" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="Scheduler" target="Compute">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e5" value="변경 · 검증 요청" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="Agent" target="Scheduler">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="Gateway" value="작업별 입력 게이트웨이" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="675" y="510" width="190" height="72" />
+        </mxCell>
+        <mxCell id="e6" value="입력 읽기" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="R2" target="Gateway">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e7" value="검증된 입력 전달" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="Gateway" target="Compute">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e8" value="검사 결과" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="Compute" target="Scheduler">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+        <mxCell id="e9" value="diff · 검사 결과 저장" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;" edge="1" parent="1" source="Scheduler" target="R2">
+          <mxGeometry as="geometry" relative="1" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

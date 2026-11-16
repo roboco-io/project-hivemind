@@ -14,6 +14,10 @@
 
 ## 다음 구현 단위
 
+[로컬·HIVEMIND 선택 기준](plans/local-resource-validation/selection-criteria.md)으로 작업별 실행 위치와 검증 목표를 정한다. 다음 [실측 계획](plans/local-resource-validation/measurement-plan.md)은 검증 작업 병렬화, 두 기능의 통합 개발, 승인 후 연결 단절을 순서대로 평가한다.
+
+다음 검증 과제로 [로컬 자원 제약 검증](plans/local-resource-validation/experiment.md)을 진행한다. 로컬 관제와 클라우드 병렬 실행 구조에서 통합 완료 시간, 완주당 비용, 사용자 머신 응답성을 비교한다. Cloudflare에서 먼저 검증하고 AWS ECS는 MVP 완료 후 같은 기준으로 검증한다.
+
 1. **P0** 두 앱에서 새 작업의 등록·승인·실행·결과를 검증한다. 실제 저장소의 기준 커밋과 입력 한도를 제출 전에 확인한다.
 2. **P0** [실험 설계](plans/2026-11-11-context-continuity-experiment.md)에 따라 단일 세션·작업 묶음·독립 세션 분할을 비교한다. 제공자가 보고한 캐시·토큰 원본과 가격표 버전을 보존한다.
    [초기 로컬 실험 결과](verification/2026-11-11-context-continuity.md)를 확보했다. 실제 저장소와 원격 환경에서 반복 비교한다.

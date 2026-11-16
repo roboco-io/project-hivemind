@@ -1,0 +1,2410 @@
+{
+  "version": 1,
+  "generatedAt": "2026-11-14T01:06:17.271Z",
+  "baseline": {
+    "nodeP95Ms": 49.982749999999214,
+    "gitP95Ms": 24.10037500000908,
+    "cpuBusyP95Percent": 60.07789678675755,
+    "controllerRssPeakBytes": 91766784,
+    "workloadRssSampledPeakBytes": 0,
+    "swapDeltaBytes": -25165824,
+    "availableMemoryPercentMin": 35
+  },
+  "conditions": [
+    {
+      "condition": "A-local-c1",
+      "expected": 3,
+      "observed": 3,
+      "succeeded": 3,
+      "timedSuccesses": 3,
+      "medianSeconds": 50.694,
+      "minSeconds": 49.649,
+      "maxSeconds": 51.565
+    },
+    {
+      "condition": "A-cloudflare-c2",
+      "expected": 3,
+      "observed": 3,
+      "succeeded": 3,
+      "timedSuccesses": 3,
+      "medianSeconds": 58.699,
+      "minSeconds": 58.43,
+      "maxSeconds": 126.794
+    },
+    {
+      "condition": "A-cloudflare-c1",
+      "expected": 3,
+      "observed": 3,
+      "succeeded": 3,
+      "timedSuccesses": 3,
+      "medianSeconds": 89.472,
+      "minSeconds": 89.339,
+      "maxSeconds": 91.415
+    },
+    {
+      "condition": "A-local-c2",
+      "expected": 3,
+      "observed": 3,
+      "succeeded": 3,
+      "timedSuccesses": 3,
+      "medianSeconds": 39.696,
+      "minSeconds": 38.565,
+      "maxSeconds": 42.875
+    },
+    {
+      "condition": "A-cloudflare-c4",
+      "expected": 3,
+      "observed": 3,
+      "succeeded": 3,
+      "timedSuccesses": 3,
+      "medianSeconds": 46.13,
+      "minSeconds": 46.036,
+      "maxSeconds": 46.465
+    },
+    {
+      "condition": "A-local-c4",
+      "expected": 3,
+      "observed": 3,
+      "succeeded": 3,
+      "timedSuccesses": 3,
+      "medianSeconds": 34.13,
+      "minSeconds": 34.108,
+      "maxSeconds": 36.01
+    },
+    {
+      "condition": "B-local",
+      "expected": 3,
+      "observed": 3,
+      "succeeded": 3,
+      "timedSuccesses": 3,
+      "medianSeconds": 60.102,
+      "minSeconds": 59.035,
+      "maxSeconds": 60.474
+    },
+    {
+      "condition": "B-remote-sequential",
+      "expected": 3,
+      "observed": 3,
+      "succeeded": 3,
+      "timedSuccesses": 3,
+      "medianSeconds": 175.603,
+      "minSeconds": 160.898,
+      "maxSeconds": 224.658
+    },
+    {
+      "condition": "B-remote-parallel",
+      "expected": 3,
+      "observed": 3,
+      "succeeded": 3,
+      "timedSuccesses": 3,
+      "medianSeconds": 109.049,
+      "minSeconds": 108.635,
+      "maxSeconds": 117.724
+    },
+    {
+      "condition": "C-disconnect",
+      "expected": 3,
+      "observed": 3,
+      "succeeded": 3,
+      "timedSuccesses": 3,
+      "medianSeconds": 114.596,
+      "minSeconds": 108.214,
+      "maxSeconds": 120.968
+    }
+  ],
+  "runs": [
+    {
+      "id": "a-b1-local-c1",
+      "condition": "A-local-c1",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 49.649,
+      "host": {
+        "nodeP95Ms": 39.54495799999859,
+        "gitP95Ms": 19.929457999998704,
+        "cpuBusyP95Percent": 69.17874396135267,
+        "controllerRssPeakBytes": 92160000,
+        "workloadRssSampledPeakBytes": 519241728,
+        "swapDeltaBytes": -16777216,
+        "availableMemoryPercentMin": 40
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b1-cloudflare-c2",
+      "condition": "A-cloudflare-c2",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 126.794,
+      "host": {
+        "nodeP95Ms": 51.1236659999995,
+        "gitP95Ms": 23.201459000003524,
+        "cpuBusyP95Percent": 50.095238095238095,
+        "controllerRssPeakBytes": 117145600,
+        "workloadRssSampledPeakBytes": 0,
+        "swapDeltaBytes": -8388608,
+        "availableMemoryPercentMin": 39
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b1-cloudflare-c1",
+      "condition": "A-cloudflare-c1",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 91.415,
+      "host": {
+        "nodeP95Ms": 57.554375000006985,
+        "gitP95Ms": 27.960958000010578,
+        "cpuBusyP95Percent": 64.41005802707932,
+        "controllerRssPeakBytes": 84672512,
+        "workloadRssSampledPeakBytes": 0,
+        "swapDeltaBytes": -58720256,
+        "availableMemoryPercentMin": 32
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b1-local-c2",
+      "condition": "A-local-c2",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 42.875,
+      "host": {
+        "nodeP95Ms": 48.03304200002458,
+        "gitP95Ms": 37.87824999995064,
+        "cpuBusyP95Percent": 90.31639501438158,
+        "controllerRssPeakBytes": 81149952,
+        "workloadRssSampledPeakBytes": 809910272,
+        "swapDeltaBytes": -8388608,
+        "availableMemoryPercentMin": 36
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b1-cloudflare-c4",
+      "condition": "A-cloudflare-c4",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 46.465,
+      "host": {
+        "nodeP95Ms": 45.79516600002535,
+        "gitP95Ms": 29.244459000008646,
+        "cpuBusyP95Percent": 44.32692307692307,
+        "controllerRssPeakBytes": 85131264,
+        "workloadRssSampledPeakBytes": 0,
+        "swapDeltaBytes": -8388608,
+        "availableMemoryPercentMin": 37
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b1-local-c4",
+      "condition": "A-local-c4",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 36.01,
+      "host": {
+        "nodeP95Ms": 62.14716600003885,
+        "gitP95Ms": 43.26170799997635,
+        "cpuBusyP95Percent": 96.5183752417795,
+        "controllerRssPeakBytes": 85016576,
+        "workloadRssSampledPeakBytes": 1323335680,
+        "swapDeltaBytes": 0,
+        "availableMemoryPercentMin": 35
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b2-cloudflare-c1",
+      "condition": "A-cloudflare-c1",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 89.472,
+      "host": {
+        "nodeP95Ms": 42.72437499999069,
+        "gitP95Ms": 19.62145799997961,
+        "cpuBusyP95Percent": 52.785923753665685,
+        "controllerRssPeakBytes": 86474752,
+        "workloadRssSampledPeakBytes": 0,
+        "swapDeltaBytes": -8388608,
+        "availableMemoryPercentMin": 38
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b2-local-c4",
+      "condition": "A-local-c4",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 34.108,
+      "host": {
+        "nodeP95Ms": 105.2824580000015,
+        "gitP95Ms": 42.88537500001257,
+        "cpuBusyP95Percent": 98.67424242424242,
+        "controllerRssPeakBytes": 83460096,
+        "workloadRssSampledPeakBytes": 1758199808,
+        "swapDeltaBytes": 0,
+        "availableMemoryPercentMin": 35
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b2-local-c1",
+      "condition": "A-local-c1",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 50.694,
+      "host": {
+        "nodeP95Ms": 77.27333399991039,
+        "gitP95Ms": 23.878458000021055,
+        "cpuBusyP95Percent": 74.27184466019418,
+        "controllerRssPeakBytes": 80035840,
+        "workloadRssSampledPeakBytes": 508395520,
+        "swapDeltaBytes": 0,
+        "availableMemoryPercentMin": 41
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b2-cloudflare-c2",
+      "condition": "A-cloudflare-c2",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 58.43,
+      "host": {
+        "nodeP95Ms": 40.53791600000113,
+        "gitP95Ms": 22.674541999935172,
+        "cpuBusyP95Percent": 41.72313649564375,
+        "controllerRssPeakBytes": 85639168,
+        "workloadRssSampledPeakBytes": 0,
+        "swapDeltaBytes": 0,
+        "availableMemoryPercentMin": 41
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b2-local-c2",
+      "condition": "A-local-c2",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 39.696,
+      "host": {
+        "nodeP95Ms": 51.98300000000745,
+        "gitP95Ms": 39.10262500005774,
+        "cpuBusyP95Percent": 87.24832214765101,
+        "controllerRssPeakBytes": 83902464,
+        "workloadRssSampledPeakBytes": 980467712,
+        "swapDeltaBytes": -8388608,
+        "availableMemoryPercentMin": 40
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b2-cloudflare-c4",
+      "condition": "A-cloudflare-c4",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 46.13,
+      "host": {
+        "nodeP95Ms": 47.52362499991432,
+        "gitP95Ms": 23.42112499999348,
+        "cpuBusyP95Percent": 43.900096061479346,
+        "controllerRssPeakBytes": 85557248,
+        "workloadRssSampledPeakBytes": 0,
+        "swapDeltaBytes": 0,
+        "availableMemoryPercentMin": 41
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b3-cloudflare-c1",
+      "condition": "A-cloudflare-c1",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 89.339,
+      "host": {
+        "nodeP95Ms": 42.21370800002478,
+        "gitP95Ms": 20.360333000076935,
+        "cpuBusyP95Percent": 43.19695528068506,
+        "controllerRssPeakBytes": 87228416,
+        "workloadRssSampledPeakBytes": 0,
+        "swapDeltaBytes": 0,
+        "availableMemoryPercentMin": 41
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b3-local-c2",
+      "condition": "A-local-c2",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 38.565,
+      "host": {
+        "nodeP95Ms": 51.1502089999849,
+        "gitP95Ms": 38.77933300007135,
+        "cpuBusyP95Percent": 87.00673724735323,
+        "controllerRssPeakBytes": 86491136,
+        "workloadRssSampledPeakBytes": 942866432,
+        "swapDeltaBytes": 0,
+        "availableMemoryPercentMin": 40
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b3-local-c1",
+      "condition": "A-local-c1",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 51.565,
+      "host": {
+        "nodeP95Ms": 53.45233400003053,
+        "gitP95Ms": 39.23683399998117,
+        "cpuBusyP95Percent": 73.31378299120234,
+        "controllerRssPeakBytes": 81952768,
+        "workloadRssSampledPeakBytes": 504889344,
+        "swapDeltaBytes": 0,
+        "availableMemoryPercentMin": 39
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b3-cloudflare-c2",
+      "condition": "A-cloudflare-c2",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 58.699,
+      "host": {
+        "nodeP95Ms": 44.32920799998101,
+        "gitP95Ms": 19.36979100003373,
+        "cpuBusyP95Percent": 46.70542635658915,
+        "controllerRssPeakBytes": 88244224,
+        "workloadRssSampledPeakBytes": 0,
+        "swapDeltaBytes": 0,
+        "availableMemoryPercentMin": 42
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b3-cloudflare-c4",
+      "condition": "A-cloudflare-c4",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 46.036,
+      "host": {
+        "nodeP95Ms": 48.76116600004025,
+        "gitP95Ms": 20.106334000010975,
+        "cpuBusyP95Percent": 43.76199616122841,
+        "controllerRssPeakBytes": 89309184,
+        "workloadRssSampledPeakBytes": 0,
+        "swapDeltaBytes": 0,
+        "availableMemoryPercentMin": 42
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "a-b3-local-c4",
+      "condition": "A-local-c4",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 34.13,
+      "host": {
+        "nodeP95Ms": 64.22291699994821,
+        "gitP95Ms": 49.81416700000409,
+        "cpuBusyP95Percent": 97.60306807286673,
+        "controllerRssPeakBytes": 86474752,
+        "workloadRssSampledPeakBytes": 1713307648,
+        "swapDeltaBytes": -8388608,
+        "availableMemoryPercentMin": 37
+      },
+      "modelTokens": "not-applicable"
+    },
+    {
+      "id": "b-b1-local",
+      "condition": "B-local",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 60.474,
+      "host": {
+        "nodeP95Ms": 50.91324999999779,
+        "gitP95Ms": 28.34625000000233,
+        "cpuBusyP95Percent": 69.48493683187561,
+        "controllerRssPeakBytes": 102596608,
+        "workloadRssSampledPeakBytes": 948551680,
+        "swapDeltaBytes": -8388608,
+        "availableMemoryPercentMin": 32
+      },
+      "workers": [
+        {
+          "provider": "codex",
+          "requestedModel": "gpt-6.1-terra",
+          "providerReportedMetrics": [
+            null
+          ],
+          "observedModels": [
+            "unavailable"
+          ],
+          "effort": "medium",
+          "ralphRounds": 1,
+          "roundTokens": [
+            {
+              "input_tokens": 85963,
+              "cached_input_tokens": 72960,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 1130,
+              "reasoning_output_tokens": 80
+            }
+          ],
+          "tokenCoverage": "Per-round receipt; unavailable entries are not zero."
+        },
+        {
+          "provider": "claude",
+          "requestedModel": "claude-opus-5-5",
+          "providerReportedMetrics": [
+            {
+              "coverage": "final-result-provider-reported",
+              "duration_ms": 27621,
+              "duration_api_ms": 27340,
+              "num_turns": 9,
+              "modelUsage": {
+                "claude-opus-5-5": {
+                  "inputTokens": 10,
+                  "outputTokens": 3412,
+                  "cacheReadInputTokens": 51485,
+                  "cacheCreationInputTokens": 15228,
+                  "webSearchRequests": 0,
+                  "costUSD": 0.200401,
+                  "contextWindow": 1000000,
+                  "maxOutputTokens": 128000
+                }
+              }
+            }
+          ],
+          "observedModels": [
+            "claude-opus-5-5"
+          ],
+          "effort": "medium",
+          "ralphRounds": 1,
+          "roundTokens": [
+            {
+              "input_tokens": 10,
+              "cache_creation_input_tokens": 15228,
+              "cache_read_input_tokens": 51485,
+              "output_tokens": 3412
+            }
+          ],
+          "tokenCoverage": "Per-round receipt; unavailable entries are not zero."
+        }
+      ]
+    },
+    {
+      "id": "b-b1-remote-sequential",
+      "condition": "B-remote-sequential",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 224.658,
+      "host": {
+        "nodeP95Ms": 55.4790829999838,
+        "gitP95Ms": 25.3839169999992,
+        "cpuBusyP95Percent": 44.307400379506646,
+        "controllerRssPeakBytes": 132513792,
+        "workloadRssSampledPeakBytes": 135184384,
+        "swapDeltaBytes": -50331648,
+        "availableMemoryPercentMin": 32
+      },
+      "workers": [
+        {
+          "provider": "codex",
+          "requestedModel": "gpt-6.1-terra",
+          "observedModel": "unavailable",
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 50436,
+            "cached_input_tokens": 38016,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 974,
+            "reasoning_output_tokens": 63
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        },
+        {
+          "provider": "claude",
+          "requestedModel": "claude-opus-5-5",
+          "observedModel": "claude-opus-5-5",
+          "providerReportedMetrics": {
+            "coverage": "final-result-provider-reported",
+            "duration_ms": 38265,
+            "duration_api_ms": 35774,
+            "num_turns": 7,
+            "modelUsage": {
+              "claude-opus-5-5": {
+                "inputTokens": 14,
+                "outputTokens": 4376,
+                "cacheReadInputTokens": 90705,
+                "cacheCreationInputTokens": 14965,
+                "webSearchRequests": 0,
+                "costUSD": 0.22543699999999997,
+                "contextWindow": 1000000,
+                "maxOutputTokens": 128000
+              }
+            }
+          },
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 14,
+            "cache_creation_input_tokens": 14965,
+            "cache_read_input_tokens": 90705,
+            "output_tokens": 4376
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        }
+      ]
+    },
+    {
+      "id": "b-b1-remote-parallel",
+      "condition": "B-remote-parallel",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 108.635,
+      "host": {
+        "nodeP95Ms": 52.916041999997105,
+        "gitP95Ms": 23.82683299999917,
+        "cpuBusyP95Percent": 46.806482364156345,
+        "controllerRssPeakBytes": 132972544,
+        "workloadRssSampledPeakBytes": 136019968,
+        "swapDeltaBytes": -8388608,
+        "availableMemoryPercentMin": 35
+      },
+      "workers": [
+        {
+          "provider": "codex",
+          "requestedModel": "gpt-6.1-terra",
+          "observedModel": "unavailable",
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 50413,
+            "cached_input_tokens": 42496,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 934,
+            "reasoning_output_tokens": 41
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        },
+        {
+          "provider": "claude",
+          "requestedModel": "claude-opus-5-5",
+          "observedModel": "claude-opus-5-5",
+          "providerReportedMetrics": {
+            "coverage": "final-result-provider-reported",
+            "duration_ms": 32973,
+            "duration_api_ms": 30802,
+            "num_turns": 6,
+            "modelUsage": {
+              "claude-opus-5-5": {
+                "inputTokens": 12,
+                "outputTokens": 3721,
+                "cacheReadInputTokens": 65195,
+                "cacheCreationInputTokens": 10911,
+                "webSearchRequests": 0,
+                "costUSD": 0.174795,
+                "contextWindow": 1000000,
+                "maxOutputTokens": 128000
+              }
+            }
+          },
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 12,
+            "cache_creation_input_tokens": 10911,
+            "cache_read_input_tokens": 65195,
+            "output_tokens": 3721
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        }
+      ]
+    },
+    {
+      "id": "b-b2-remote-sequential",
+      "condition": "B-remote-sequential",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 160.898,
+      "host": {
+        "nodeP95Ms": 51.21845900000335,
+        "gitP95Ms": 22.6617499999993,
+        "cpuBusyP95Percent": 39.17624521072797,
+        "controllerRssPeakBytes": 132808704,
+        "workloadRssSampledPeakBytes": 135888896,
+        "swapDeltaBytes": 0,
+        "availableMemoryPercentMin": 34
+      },
+      "workers": [
+        {
+          "provider": "codex",
+          "requestedModel": "gpt-6.1-terra",
+          "observedModel": "unavailable",
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 50363,
+            "cached_input_tokens": 46208,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 906,
+            "reasoning_output_tokens": 37
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        },
+        {
+          "provider": "claude",
+          "requestedModel": "claude-opus-5-5",
+          "observedModel": "claude-opus-5-5",
+          "providerReportedMetrics": {
+            "coverage": "final-result-provider-reported",
+            "duration_ms": 35340,
+            "duration_api_ms": 33472,
+            "num_turns": 5,
+            "modelUsage": {
+              "claude-opus-5-5": {
+                "inputTokens": 10,
+                "outputTokens": 4180,
+                "cacheReadInputTokens": 53470,
+                "cacheCreationInputTokens": 11358,
+                "webSearchRequests": 0,
+                "costUSD": 0.18519799999999997,
+                "contextWindow": 1000000,
+                "maxOutputTokens": 128000
+              }
+            }
+          },
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 10,
+            "cache_creation_input_tokens": 11358,
+            "cache_read_input_tokens": 53470,
+            "output_tokens": 4180
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        }
+      ]
+    },
+    {
+      "id": "b-b2-remote-parallel",
+      "condition": "B-remote-parallel",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 109.049,
+      "host": {
+        "nodeP95Ms": 56.59762499999988,
+        "gitP95Ms": 23.890708000000814,
+        "cpuBusyP95Percent": 40.943396226415096,
+        "controllerRssPeakBytes": 126648320,
+        "workloadRssSampledPeakBytes": 129466368,
+        "swapDeltaBytes": 0,
+        "availableMemoryPercentMin": 33
+      },
+      "workers": [
+        {
+          "provider": "codex",
+          "requestedModel": "gpt-6.1-terra",
+          "observedModel": "unavailable",
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 90510,
+            "cached_input_tokens": 82944,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1504,
+            "reasoning_output_tokens": 98
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        },
+        {
+          "provider": "claude",
+          "requestedModel": "claude-opus-5-5",
+          "observedModel": "claude-opus-5-5",
+          "providerReportedMetrics": {
+            "coverage": "final-result-provider-reported",
+            "duration_ms": 32472,
+            "duration_api_ms": 30584,
+            "num_turns": 5,
+            "modelUsage": {
+              "claude-opus-5-5": {
+                "inputTokens": 10,
+                "outputTokens": 3849,
+                "cacheReadInputTokens": 52647,
+                "cacheCreationInputTokens": 10797,
+                "webSearchRequests": 0,
+                "costUSD": 0.1739254,
+                "contextWindow": 1000000,
+                "maxOutputTokens": 128000
+              }
+            }
+          },
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 10,
+            "cache_creation_input_tokens": 10797,
+            "cache_read_input_tokens": 52647,
+            "output_tokens": 3849
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        }
+      ]
+    },
+    {
+      "id": "b-b2-local",
+      "condition": "B-local",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 60.102,
+      "host": {
+        "nodeP95Ms": 61.18858399999954,
+        "gitP95Ms": 35.65124999999898,
+        "cpuBusyP95Percent": 63.7947725072604,
+        "controllerRssPeakBytes": 104267776,
+        "workloadRssSampledPeakBytes": 889143296,
+        "swapDeltaBytes": 170854973.43999863,
+        "availableMemoryPercentMin": 31
+      },
+      "workers": [
+        {
+          "provider": "codex",
+          "requestedModel": "gpt-6.1-terra",
+          "providerReportedMetrics": [
+            null
+          ],
+          "observedModels": [
+            "unavailable"
+          ],
+          "effort": "medium",
+          "ralphRounds": 1,
+          "roundTokens": [
+            {
+              "input_tokens": 78531,
+              "cached_input_tokens": 68992,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 1037,
+              "reasoning_output_tokens": 80
+            }
+          ],
+          "tokenCoverage": "Per-round receipt; unavailable entries are not zero."
+        },
+        {
+          "provider": "claude",
+          "requestedModel": "claude-opus-5-5",
+          "providerReportedMetrics": [
+            {
+              "coverage": "final-result-provider-reported",
+              "duration_ms": 27462,
+              "duration_api_ms": 27187,
+              "num_turns": 9,
+              "modelUsage": {
+                "claude-opus-5-5": {
+                  "inputTokens": 10,
+                  "outputTokens": 3332,
+                  "cacheReadInputTokens": 52215,
+                  "cacheCreationInputTokens": 14519,
+                  "webSearchRequests": 0,
+                  "costUSD": 0.19327499999999997,
+                  "contextWindow": 1000000,
+                  "maxOutputTokens": 128000
+                }
+              }
+            }
+          ],
+          "observedModels": [
+            "claude-opus-5-5"
+          ],
+          "effort": "medium",
+          "ralphRounds": 1,
+          "roundTokens": [
+            {
+              "input_tokens": 10,
+              "cache_creation_input_tokens": 14519,
+              "cache_read_input_tokens": 52215,
+              "output_tokens": 3332
+            }
+          ],
+          "tokenCoverage": "Per-round receipt; unavailable entries are not zero."
+        }
+      ]
+    },
+    {
+      "id": "b-b3-remote-parallel",
+      "condition": "B-remote-parallel",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 117.724,
+      "host": {
+        "nodeP95Ms": 55.69537499999569,
+        "gitP95Ms": 23.740916999995534,
+        "cpuBusyP95Percent": 40.32411820781697,
+        "controllerRssPeakBytes": 131940352,
+        "workloadRssSampledPeakBytes": 134168576,
+        "swapDeltaBytes": -16777216,
+        "availableMemoryPercentMin": 36
+      },
+      "workers": [
+        {
+          "provider": "codex",
+          "requestedModel": "gpt-6.1-terra",
+          "observedModel": "unavailable",
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 70660,
+            "cached_input_tokens": 62848,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 995,
+            "reasoning_output_tokens": 52
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        },
+        {
+          "provider": "claude",
+          "requestedModel": "claude-opus-5-5",
+          "observedModel": "claude-opus-5-5",
+          "providerReportedMetrics": {
+            "coverage": "final-result-provider-reported",
+            "duration_ms": 35153,
+            "duration_api_ms": 33289,
+            "num_turns": 5,
+            "modelUsage": {
+              "claude-opus-5-5": {
+                "inputTokens": 10,
+                "outputTokens": 4114,
+                "cacheReadInputTokens": 55825,
+                "cacheCreationInputTokens": 12655,
+                "webSearchRequests": 0,
+                "costUSD": 0.194725,
+                "contextWindow": 1000000,
+                "maxOutputTokens": 128000
+              }
+            }
+          },
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 10,
+            "cache_creation_input_tokens": 12655,
+            "cache_read_input_tokens": 55825,
+            "output_tokens": 4114
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        }
+      ]
+    },
+    {
+      "id": "b-b3-local",
+      "condition": "B-local",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 59.035,
+      "host": {
+        "nodeP95Ms": 61.61437500000011,
+        "gitP95Ms": 29.16650000000027,
+        "cpuBusyP95Percent": 55.57710960232784,
+        "controllerRssPeakBytes": 103071744,
+        "workloadRssSampledPeakBytes": 916045824,
+        "swapDeltaBytes": 0,
+        "availableMemoryPercentMin": 35
+      },
+      "workers": [
+        {
+          "provider": "claude",
+          "requestedModel": "claude-opus-5-5",
+          "providerReportedMetrics": [
+            {
+              "coverage": "final-result-provider-reported",
+              "duration_ms": 27882,
+              "duration_api_ms": 27625,
+              "num_turns": 9,
+              "modelUsage": {
+                "claude-opus-5-5": {
+                  "inputTokens": 10,
+                  "outputTokens": 3383,
+                  "cacheReadInputTokens": 52205,
+                  "cacheCreationInputTokens": 14485,
+                  "webSearchRequests": 0,
+                  "costUSD": 0.194021,
+                  "contextWindow": 1000000,
+                  "maxOutputTokens": 128000
+                }
+              }
+            }
+          ],
+          "observedModels": [
+            "claude-opus-5-5"
+          ],
+          "effort": "medium",
+          "ralphRounds": 1,
+          "roundTokens": [
+            {
+              "input_tokens": 10,
+              "cache_creation_input_tokens": 14485,
+              "cache_read_input_tokens": 52205,
+              "output_tokens": 3383
+            }
+          ],
+          "tokenCoverage": "Per-round receipt; unavailable entries are not zero."
+        },
+        {
+          "provider": "codex",
+          "requestedModel": "gpt-6.1-terra",
+          "providerReportedMetrics": [
+            null
+          ],
+          "observedModels": [
+            "unavailable"
+          ],
+          "effort": "medium",
+          "ralphRounds": 1,
+          "roundTokens": [
+            {
+              "input_tokens": 107887,
+              "cached_input_tokens": 96000,
+              "cache_write_input_tokens": 0,
+              "output_tokens": 1211,
+              "reasoning_output_tokens": 90
+            }
+          ],
+          "tokenCoverage": "Per-round receipt; unavailable entries are not zero."
+        }
+      ]
+    },
+    {
+      "id": "b-b3-remote-sequential",
+      "condition": "B-remote-sequential",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 175.603,
+      "host": {
+        "nodeP95Ms": 52.48266599999624,
+        "gitP95Ms": 24.00379200000316,
+        "cpuBusyP95Percent": 44.6480231436837,
+        "controllerRssPeakBytes": 133332992,
+        "workloadRssSampledPeakBytes": 136216576,
+        "swapDeltaBytes": 0,
+        "availableMemoryPercentMin": 37
+      },
+      "workers": [
+        {
+          "provider": "codex",
+          "requestedModel": "gpt-6.1-terra",
+          "observedModel": "unavailable",
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 90625,
+            "cached_input_tokens": 84864,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1539,
+            "reasoning_output_tokens": 66
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        },
+        {
+          "provider": "claude",
+          "requestedModel": "claude-opus-5-5",
+          "observedModel": "claude-opus-5-5",
+          "providerReportedMetrics": {
+            "coverage": "final-result-provider-reported",
+            "duration_ms": 37937,
+            "duration_api_ms": 35434,
+            "num_turns": 7,
+            "modelUsage": {
+              "claude-opus-5-5": {
+                "inputTokens": 14,
+                "outputTokens": 4231,
+                "cacheReadInputTokens": 87842,
+                "cacheCreationInputTokens": 12864,
+                "webSearchRequests": 0,
+                "costUSD": 0.20515640000000002,
+                "contextWindow": 1000000,
+                "maxOutputTokens": 128000
+              }
+            }
+          },
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 14,
+            "cache_creation_input_tokens": 12864,
+            "cache_read_input_tokens": 87842,
+            "output_tokens": 4231
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        }
+      ]
+    },
+    {
+      "id": "c-1",
+      "condition": "C-disconnect",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 114.596,
+      "host": {
+        "nodeP95Ms": 53.56549999999697,
+        "gitP95Ms": 22.96125000000029,
+        "cpuBusyP95Percent": 35.440613026819925,
+        "controllerRssPeakBytes": 133120000,
+        "workloadRssSampledPeakBytes": 231063552,
+        "swapDeltaBytes": -117440512,
+        "availableMemoryPercentMin": 36
+      },
+      "workers": [
+        {
+          "provider": "codex",
+          "requestedModel": "gpt-6.1-terra",
+          "observedModel": "unavailable",
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 69933,
+            "cached_input_tokens": 62848,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1004,
+            "reasoning_output_tokens": 62
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        },
+        {
+          "provider": "claude",
+          "requestedModel": "claude-opus-5-5",
+          "observedModel": "claude-opus-5-5",
+          "providerReportedMetrics": {
+            "coverage": "final-result-provider-reported",
+            "duration_ms": 42401,
+            "duration_api_ms": 39798,
+            "num_turns": 6,
+            "modelUsage": {
+              "claude-opus-5-5": {
+                "inputTokens": 12,
+                "outputTokens": 5143,
+                "cacheReadInputTokens": 70097,
+                "cacheCreationInputTokens": 12306,
+                "webSearchRequests": 0,
+                "costUSD": 0.2153754,
+                "contextWindow": 1000000,
+                "maxOutputTokens": 128000
+              }
+            }
+          },
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 12,
+            "cache_creation_input_tokens": 12306,
+            "cache_read_input_tokens": 70097,
+            "output_tokens": 5143
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        }
+      ],
+      "disconnect": {
+        "verified": true,
+        "integrationCompletedDuringGap": true,
+        "artifactsStable": true,
+        "gapSeconds": 300.011,
+        "workerCompletionsDuringGap": 3
+      }
+    },
+    {
+      "id": "c-2",
+      "condition": "C-disconnect",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 108.214,
+      "host": {
+        "nodeP95Ms": 54.164167000039015,
+        "gitP95Ms": 24.087832999997772,
+        "cpuBusyP95Percent": 31.88405797101449,
+        "controllerRssPeakBytes": 132644864,
+        "workloadRssSampledPeakBytes": 234618880,
+        "swapDeltaBytes": 477102080,
+        "availableMemoryPercentMin": 30
+      },
+      "workers": [
+        {
+          "provider": "codex",
+          "requestedModel": "gpt-6.1-terra",
+          "observedModel": "unavailable",
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 50421,
+            "cached_input_tokens": 44416,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 982,
+            "reasoning_output_tokens": 77
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        },
+        {
+          "provider": "claude",
+          "requestedModel": "claude-opus-5-5",
+          "observedModel": "claude-opus-5-5",
+          "providerReportedMetrics": {
+            "coverage": "final-result-provider-reported",
+            "duration_ms": 35103,
+            "duration_api_ms": 32636,
+            "num_turns": 6,
+            "modelUsage": {
+              "claude-opus-5-5": {
+                "inputTokens": 12,
+                "outputTokens": 3991,
+                "cacheReadInputTokens": 66232,
+                "cacheCreationInputTokens": 11753,
+                "webSearchRequests": 0,
+                "costUSD": 0.18713839999999998,
+                "contextWindow": 1000000,
+                "maxOutputTokens": 128000
+              }
+            }
+          },
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 12,
+            "cache_creation_input_tokens": 11753,
+            "cache_read_input_tokens": 66232,
+            "output_tokens": 3991
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        }
+      ],
+      "disconnect": {
+        "verified": true,
+        "integrationCompletedDuringGap": true,
+        "artifactsStable": true,
+        "gapSeconds": 300.011,
+        "workerCompletionsDuringGap": 3
+      }
+    },
+    {
+      "id": "c-3",
+      "condition": "C-disconnect",
+      "status": "SUCCEEDED",
+      "approvalToIntegrationSeconds": 120.968,
+      "host": {
+        "nodeP95Ms": 52.45958300004713,
+        "gitP95Ms": 22.07745900000009,
+        "cpuBusyP95Percent": 32.291666666666664,
+        "controllerRssPeakBytes": 133562368,
+        "workloadRssSampledPeakBytes": 235061248,
+        "swapDeltaBytes": -25165824,
+        "availableMemoryPercentMin": 37
+      },
+      "workers": [
+        {
+          "provider": "codex",
+          "requestedModel": "gpt-6.1-terra",
+          "observedModel": "unavailable",
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 90597,
+            "cached_input_tokens": 84992,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1534,
+            "reasoning_output_tokens": 85
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        },
+        {
+          "provider": "claude",
+          "requestedModel": "claude-opus-5-5",
+          "observedModel": "claude-opus-5-5",
+          "providerReportedMetrics": {
+            "coverage": "final-result-provider-reported",
+            "duration_ms": 41854,
+            "duration_api_ms": 39675,
+            "num_turns": 6,
+            "modelUsage": {
+              "claude-opus-5-5": {
+                "inputTokens": 12,
+                "outputTokens": 5141,
+                "cacheReadInputTokens": 72091,
+                "cacheCreationInputTokens": 13244,
+                "webSearchRequests": 0,
+                "costUSD": 0.2232382,
+                "contextWindow": 1000000,
+                "maxOutputTokens": 128000
+              }
+            }
+          },
+          "effort": "medium",
+          "ralphRounds": 1,
+          "tokens": {
+            "input_tokens": 12,
+            "cache_creation_input_tokens": 13244,
+            "cache_read_input_tokens": 72091,
+            "output_tokens": 5141
+          },
+          "tokenCoverage": "Persisted result usage; do not infer all Ralph rounds."
+        }
+      ],
+      "disconnect": {
+        "verified": true,
+        "integrationCompletedDuringGap": true,
+        "artifactsStable": true,
+        "gapSeconds": 300.01,
+        "workerCompletionsDuringGap": 3
+      }
+    }
+  ],
+  "budgetSnapshots": [
+    {
+      "goal": "b-b1-remote-parallel",
+      "computeUsd": 0.2621976489600001,
+      "fixedReserveUsd": 1,
+      "nextReservationUsd": 1,
+      "remainingAfterReservation": 7.737802351039999,
+      "kind": "conservative-admission-estimate-not-billing"
+    },
+    {
+      "goal": "b-b1-remote-sequential",
+      "computeUsd": 0.23863154944,
+      "fixedReserveUsd": 1,
+      "nextReservationUsd": 1,
+      "remainingAfterReservation": 7.761368450559999,
+      "kind": "conservative-admission-estimate-not-billing"
+    },
+    {
+      "goal": "b-b2-remote-parallel",
+      "computeUsd": 0.29124278976000006,
+      "fixedReserveUsd": 1,
+      "nextReservationUsd": 1,
+      "remainingAfterReservation": 7.70875721024,
+      "kind": "conservative-admission-estimate-not-billing"
+    },
+    {
+      "goal": "b-b2-remote-sequential",
+      "computeUsd": 0.27540390848000007,
+      "fixedReserveUsd": 1,
+      "nextReservationUsd": 1,
+      "remainingAfterReservation": 7.7245960915200005,
+      "kind": "conservative-admission-estimate-not-billing"
+    },
+    {
+      "goal": "b-b3-remote-parallel",
+      "computeUsd": 0.30537990688000005,
+      "fixedReserveUsd": 1,
+      "nextReservationUsd": 1,
+      "remainingAfterReservation": 7.694620093119999,
+      "kind": "conservative-admission-estimate-not-billing"
+    },
+    {
+      "goal": "b-b3-remote-sequential",
+      "computeUsd": 0.31931282208,
+      "fixedReserveUsd": 1,
+      "nextReservationUsd": 1,
+      "remainingAfterReservation": 7.680687177919999,
+      "kind": "conservative-admission-estimate-not-billing"
+    },
+    {
+      "goal": "c-1",
+      "computeUsd": 0.33672395423999996,
+      "fixedReserveUsd": 1,
+      "nextReservationUsd": 1,
+      "remainingAfterReservation": 7.66327604576,
+      "kind": "conservative-admission-estimate-not-billing"
+    },
+    {
+      "goal": "c-2",
+      "computeUsd": 0.35050205247999994,
+      "fixedReserveUsd": 1,
+      "nextReservationUsd": 1,
+      "remainingAfterReservation": 7.6494979475200005,
+      "kind": "conservative-admission-estimate-not-billing"
+    },
+    {
+      "goal": "c-3",
+      "computeUsd": 0.36387358047999996,
+      "fixedReserveUsd": 1,
+      "nextReservationUsd": 1,
+      "remainingAfterReservation": 7.63612641952,
+      "kind": "conservative-admission-estimate-not-billing"
+    }
+  ],
+  "limitations": [
+    "표본은 조건당 최대 3회이며 미완료 시간은 성공 시간 통계에서 제외한다.",
+    "B 로컬 Claude 도구와 원격 Bash/Agent 구성이 달라 환경만의 인과적 성능 차이를 뜻하지 않는다.",
+    "관측 모델 unavailable은 지정 모델과 일치한다는 증거가 아니다.",
+    "RSS는 표본 합계로 공유 페이지를 중복 집계할 수 있다. 가용 메모리 비율은 OS 메모리 압박 등급이 아니다.",
+    "비용은 예산 통제용 추정이며 실제 청구액이 아니다. 마지막 목표 완료 후 사용량은 사전 예산 스냅샷에 포함되지 않을 수 있다."
+  ],
+  "artifacts": [
+    {
+      "id": "b-b1-local",
+      "inputSnapshotId": "a428cd1c7f636cd80939a57870e254c10629ea2b56ceda7ad7e5e156291ed2ac",
+      "outputSnapshotId": "1dda5f73fb93ca260269dd67eea20a0b015c8b0cf1f4fa6be290010f800f58cc",
+      "changedPaths": [
+        "app/src/routes/articles.ts",
+        "app/src/routes/comments.ts"
+      ],
+      "patchSha256": "5f9e47bfc58ec931a7d659352d848a32b804c64f2393a60b9e1cb55713dc928a",
+      "acceptancePassed": 53,
+      "hurlFiles": 13,
+      "hurlRequests": 154
+    },
+    {
+      "id": "b-b1-remote-parallel",
+      "inputSnapshotId": "a428cd1c7f636cd80939a57870e254c10629ea2b56ceda7ad7e5e156291ed2ac",
+      "outputSnapshotId": "2794cc45699e1397cef82fd0867bccf69bb6e5597b88bdbd2cf71df3dfc7618b",
+      "changedPaths": [
+        "app/src/routes/articles.ts",
+        "app/src/routes/comments.ts"
+      ],
+      "patchSha256": "5bb205cd200278a951654a244e01e39ef8f8b5f9898f27fc476c09531ca72813",
+      "acceptancePassed": 53,
+      "hurlFiles": 13,
+      "hurlRequests": 154
+    },
+    {
+      "id": "b-b1-remote-sequential",
+      "inputSnapshotId": "a428cd1c7f636cd80939a57870e254c10629ea2b56ceda7ad7e5e156291ed2ac",
+      "outputSnapshotId": "8b3cb8d33c0316a9d072dbd06b84d989e0db720334cac9d857d849ba593a81dd",
+      "changedPaths": [
+        "app/src/routes/articles.ts",
+        "app/src/routes/comments.ts"
+      ],
+      "patchSha256": "b4ba33b9a77b1edcbbbd492747feb90ca3bf5158fa56d13f8ce0c673ec915e17",
+      "acceptancePassed": 53,
+      "hurlFiles": 13,
+      "hurlRequests": 154
+    },
+    {
+      "id": "b-b2-local",
+      "inputSnapshotId": "a428cd1c7f636cd80939a57870e254c10629ea2b56ceda7ad7e5e156291ed2ac",
+      "outputSnapshotId": "949f5b3f22b02e15e237268c48045fc6e71b642855d579a23c60df207c0ed6d5",
+      "changedPaths": [
+        "app/src/routes/articles.ts",
+        "app/src/routes/comments.ts"
+      ],
+      "patchSha256": "b7aef870ba11950a90ebc8d0ed0b05a85aa7151dc82b2c6687cef586f70a4d9c",
+      "acceptancePassed": 53,
+      "hurlFiles": 13,
+      "hurlRequests": 154
+    },
+    {
+      "id": "b-b2-remote-parallel",
+      "inputSnapshotId": "a428cd1c7f636cd80939a57870e254c10629ea2b56ceda7ad7e5e156291ed2ac",
+      "outputSnapshotId": "c9a7ae34189a97f5d9045a32c5639258806160ccd3d747e2f14a556467df9b87",
+      "changedPaths": [
+        "app/src/routes/articles.ts",
+        "app/src/routes/comments.ts"
+      ],
+      "patchSha256": "4e7f44aeba7062008bf288f2d1f5f12d2cdb43fa6a6d0491297d5ff7c8e0f462",
+      "acceptancePassed": 53,
+      "hurlFiles": 13,
+      "hurlRequests": 154
+    },
+    {
+      "id": "b-b2-remote-sequential",
+      "inputSnapshotId": "a428cd1c7f636cd80939a57870e254c10629ea2b56ceda7ad7e5e156291ed2ac",
+      "outputSnapshotId": "85cc2af20da2d17fe524c1ff26b0aa8da9c75014af39fe86804a16934ef476bc",
+      "changedPaths": [
+        "app/src/routes/articles.ts",
+        "app/src/routes/comments.ts"
+      ],
+      "patchSha256": "8bd8db7bccbf1f352722529877bb0fb0cba71fe53390618b9577f7320ac9f5b1",
+      "acceptancePassed": 53,
+      "hurlFiles": 13,
+      "hurlRequests": 154
+    },
+    {
+      "id": "b-b3-local",
+      "inputSnapshotId": "a428cd1c7f636cd80939a57870e254c10629ea2b56ceda7ad7e5e156291ed2ac",
+      "outputSnapshotId": "65d8316d44ecc626558d1327a2fc1d8d78d3856a4037eb1c4dbe2212230c5d7f",
+      "changedPaths": [
+        "app/src/routes/articles.ts",
+        "app/src/routes/comments.ts"
+      ],
+      "patchSha256": "56c64ae65497b1b56ba0ba32359a8c90280a3c0b52e6f41032427555bcddf866",
+      "acceptancePassed": 53,
+      "hurlFiles": 13,
+      "hurlRequests": 154
+    },
+    {
+      "id": "b-b3-remote-parallel",
+      "inputSnapshotId": "a428cd1c7f636cd80939a57870e254c10629ea2b56ceda7ad7e5e156291ed2ac",
+      "outputSnapshotId": "387159e2cff958599de09ccf561ee168caec6d56904451290e123f2c14a99507",
+      "changedPaths": [
+        "app/src/routes/articles.ts",
+        "app/src/routes/comments.ts"
+      ],
+      "patchSha256": "ba0caa857b4cddeb62acaf6ed0c3803552327cdebc2e57639221444342b4fd3d",
+      "acceptancePassed": 53,
+      "hurlFiles": 13,
+      "hurlRequests": 154
+    },
+    {
+      "id": "b-b3-remote-sequential",
+      "inputSnapshotId": "a428cd1c7f636cd80939a57870e254c10629ea2b56ceda7ad7e5e156291ed2ac",
+      "outputSnapshotId": "b59ae9252a568538c02bbdc3677f85993755c3e30df016fad4a891aeb7d5f074",
+      "changedPaths": [
+        "app/src/routes/articles.ts",
+        "app/src/routes/comments.ts"
+      ],
+      "patchSha256": "779eb33d01200f8199f99fbf760ba6f9de9a8826ce396906a21bde009043ea7d",
+      "acceptancePassed": 53,
+      "hurlFiles": 13,
+      "hurlRequests": 154
+    },
+    {
+      "id": "c-1",
+      "inputSnapshotId": "a428cd1c7f636cd80939a57870e254c10629ea2b56ceda7ad7e5e156291ed2ac",
+      "outputSnapshotId": "0d47b162d1c68cccf5dbc35dc265c9dc256c98ec0c1bf739b2afb07bf2cd2dbe",
+      "changedPaths": [
+        "app/src/routes/articles.ts",
+        "app/src/routes/comments.ts"
+      ],
+      "patchSha256": "fcde6a17a1d658db3ea742f7c211603d76a142512b3e3ed9ecea04d458de2491",
+      "acceptancePassed": 53,
+      "hurlFiles": 13,
+      "hurlRequests": 154,
+      "disconnect": {
+        "startedAt": 1794617437235,
+        "durationMs": 300000,
+        "observer": {
+          "pid": 39811,
+          "startedAt": 1794617436919,
+          "exitedAt": 1794617437229,
+          "exitCode": 0
+        },
+        "before": [
+          {
+            "id": "78e176d1-52d8-488c-b620-ca52984310a2",
+            "status": "RUNNING",
+            "startedAt": 1794617432902
+          },
+          {
+            "id": "6014595c-523b-40c6-8120-6db8ddaaf083",
+            "status": "RUNNING",
+            "startedAt": 1794617432902
+          }
+        ],
+        "reconnectedAt": 1794617737246,
+        "completedDuringGap": [
+          "78e176d1-52d8-488c-b620-ca52984310a2",
+          "6014595c-523b-40c6-8120-6db8ddaaf083",
+          "d666aa92-b9d8-4e15-9069-70cc421eaf26"
+        ],
+        "firstArtifacts": {
+          "outputSnapshotId": "0d47b162d1c68cccf5dbc35dc265c9dc256c98ec0c1bf739b2afb07bf2cd2dbe",
+          "integrationResultSha256": "cbcc1b090db6e7c38cb9239ef20bbf1ecab7de48e31cc1e238bea4ea42aeb630",
+          "workerResultSha256": [
+            {
+              "id": "78e176d1-52d8-488c-b620-ca52984310a2",
+              "sha256": "0c3d239e079f9351d24d64487bf700d198f1d5b729020ccabaed82a37c7aa94a"
+            },
+            {
+              "id": "6014595c-523b-40c6-8120-6db8ddaaf083",
+              "sha256": "10c58f637578ca42c29f7a0694620a9293b586c9092d76025aecade838a710ee"
+            }
+          ]
+        },
+        "requeriedArtifacts": {
+          "outputSnapshotId": "0d47b162d1c68cccf5dbc35dc265c9dc256c98ec0c1bf739b2afb07bf2cd2dbe",
+          "integrationResultSha256": "cbcc1b090db6e7c38cb9239ef20bbf1ecab7de48e31cc1e238bea4ea42aeb630",
+          "workerResultSha256": [
+            {
+              "id": "78e176d1-52d8-488c-b620-ca52984310a2",
+              "sha256": "0c3d239e079f9351d24d64487bf700d198f1d5b729020ccabaed82a37c7aa94a"
+            },
+            {
+              "id": "6014595c-523b-40c6-8120-6db8ddaaf083",
+              "sha256": "10c58f637578ca42c29f7a0694620a9293b586c9092d76025aecade838a710ee"
+            }
+          ]
+        },
+        "artifactsStable": true,
+        "integrationCompletedDuringGap": true,
+        "verified": true
+      }
+    },
+    {
+      "id": "c-2",
+      "inputSnapshotId": "a428cd1c7f636cd80939a57870e254c10629ea2b56ceda7ad7e5e156291ed2ac",
+      "outputSnapshotId": "898d2f3e05c48bfed76ea10d819084e273368f113b32e7f1ec11e7d8e5b0f640",
+      "changedPaths": [
+        "app/src/routes/articles.ts",
+        "app/src/routes/comments.ts"
+      ],
+      "patchSha256": "15b6e54f53957d7cec37bbad0e69dd1196b6ac9a10b56444b6fd28ef49ac7196",
+      "acceptancePassed": 53,
+      "hurlFiles": 13,
+      "hurlRequests": 154,
+      "disconnect": {
+        "startedAt": 1794617749827,
+        "durationMs": 300000,
+        "observer": {
+          "pid": 48913,
+          "startedAt": 1794617749617,
+          "exitedAt": 1794617749821,
+          "exitCode": 0
+        },
+        "before": [
+          {
+            "id": "b67fe297-f058-42fd-86ae-7172ee8b51d8",
+            "status": "RUNNING",
+            "startedAt": 1794617744370
+          },
+          {
+            "id": "6594ac5e-91bc-4f31-8db2-cd5cc3b9cf11",
+            "status": "RUNNING",
+            "startedAt": 1794617744370
+          }
+        ],
+        "reconnectedAt": 1794618049838,
+        "completedDuringGap": [
+          "b67fe297-f058-42fd-86ae-7172ee8b51d8",
+          "6594ac5e-91bc-4f31-8db2-cd5cc3b9cf11",
+          "478e2e16-d357-40dd-818a-56fa8218007f"
+        ],
+        "firstArtifacts": {
+          "outputSnapshotId": "898d2f3e05c48bfed76ea10d819084e273368f113b32e7f1ec11e7d8e5b0f640",
+          "integrationResultSha256": "b84ab16d063670e0823f181f876e010ded9806755f0183c47b72a8c7d9846e9b",
+          "workerResultSha256": [
+            {
+              "id": "b67fe297-f058-42fd-86ae-7172ee8b51d8",
+              "sha256": "ec16eb7adc7f03ded35f49276ecfbebdf4142b685a312784ff8a6af3c4979ab4"
+            },
+            {
+              "id": "6594ac5e-91bc-4f31-8db2-cd5cc3b9cf11",
+              "sha256": "6d776f05b676d9414638767eb9de4a683620da13c18a6c32caa1c5cc4bea9800"
+            }
+          ]
+        },
+        "requeriedArtifacts": {
+          "outputSnapshotId": "898d2f3e05c48bfed76ea10d819084e273368f113b32e7f1ec11e7d8e5b0f640",
+          "integrationResultSha256": "b84ab16d063670e0823f181f876e010ded9806755f0183c47b72a8c7d9846e9b",
+          "workerResultSha256": [
+            {
+              "id": "b67fe297-f058-42fd-86ae-7172ee8b51d8",
+              "sha256": "ec16eb7adc7f03ded35f49276ecfbebdf4142b685a312784ff8a6af3c4979ab4"
+            },
+            {
+              "id": "6594ac5e-91bc-4f31-8db2-cd5cc3b9cf11",
+              "sha256": "6d776f05b676d9414638767eb9de4a683620da13c18a6c32caa1c5cc4bea9800"
+            }
+          ]
+        },
+        "artifactsStable": true,
+        "integrationCompletedDuringGap": true,
+        "verified": true
+      }
+    },
+    {
+      "id": "c-3",
+      "inputSnapshotId": "a428cd1c7f636cd80939a57870e254c10629ea2b56ceda7ad7e5e156291ed2ac",
+      "outputSnapshotId": "2af28fccc887468b549de849647c549f0b1ed9936a6f358562be0233b28e0a02",
+      "changedPaths": [
+        "app/src/routes/articles.ts",
+        "app/src/routes/comments.ts"
+      ],
+      "patchSha256": "af68dd32df22de90e0a31c8648eaa81ba17e1b7e092caf228354f4e8883c9008",
+      "acceptancePassed": 53,
+      "hurlFiles": 13,
+      "hurlRequests": 154,
+      "disconnect": {
+        "startedAt": 1794618060746,
+        "durationMs": 300000,
+        "observer": {
+          "pid": 57502,
+          "startedAt": 1794618060560,
+          "exitedAt": 1794618060739,
+          "exitCode": 0
+        },
+        "before": [
+          {
+            "id": "e8c2e36a-cf0b-4a02-a15e-09a899385dac",
+            "status": "RUNNING",
+            "startedAt": 1794618056313
+          },
+          {
+            "id": "aaa4f969-78ad-4fbf-bac8-a44e12b3d3b3",
+            "status": "RUNNING",
+            "startedAt": 1794618056313
+          }
+        ],
+        "reconnectedAt": 1794618360756,
+        "completedDuringGap": [
+          "e8c2e36a-cf0b-4a02-a15e-09a899385dac",
+          "aaa4f969-78ad-4fbf-bac8-a44e12b3d3b3",
+          "43536278-c75a-49f7-bd85-74413b756c6c"
+        ],
+        "firstArtifacts": {
+          "outputSnapshotId": "2af28fccc887468b549de849647c549f0b1ed9936a6f358562be0233b28e0a02",
+          "integrationResultSha256": "515e68c6ee4f5c52b5522ca9644a07f571b73773ad81e92aebe89ab3bb49d5eb",
+          "workerResultSha256": [
+            {
+              "id": "e8c2e36a-cf0b-4a02-a15e-09a899385dac",
+              "sha256": "fa1e15c75a1e45fd2f3277b1ac5c24be3eb05798e48f3946867950ffeefcad54"
+            },
+            {
+              "id": "aaa4f969-78ad-4fbf-bac8-a44e12b3d3b3",
+              "sha256": "51d0101d9f146a71dcd78123d2163924499cd9d705538f129c81cf31e048cf97"
+            }
+          ]
+        },
+        "requeriedArtifacts": {
+          "outputSnapshotId": "2af28fccc887468b549de849647c549f0b1ed9936a6f358562be0233b28e0a02",
+          "integrationResultSha256": "515e68c6ee4f5c52b5522ca9644a07f571b73773ad81e92aebe89ab3bb49d5eb",
+          "workerResultSha256": [
+            {
+              "id": "e8c2e36a-cf0b-4a02-a15e-09a899385dac",
+              "sha256": "fa1e15c75a1e45fd2f3277b1ac5c24be3eb05798e48f3946867950ffeefcad54"
+            },
+            {
+              "id": "aaa4f969-78ad-4fbf-bac8-a44e12b3d3b3",
+              "sha256": "51d0101d9f146a71dcd78123d2163924499cd9d705538f129c81cf31e048cf97"
+            }
+          ]
+        },
+        "artifactsStable": true,
+        "integrationCompletedDuringGap": true,
+        "verified": true
+      }
+    }
+  ],
+  "fixedInputs": {
+    "snapshotId": "a428cd1c7f636cd80939a57870e254c10629ea2b56ceda7ad7e5e156291ed2ac",
+    "files": 43,
+    "contractSha256": "83bbbb6be3971bbc21525c240b586b6e1a30e14b27f27d1f2bf06df97ccb333e",
+    "lockfileSha256": "f5bca4d40bbd69e55784fc740254f80fe92ffa1adb01c7dc5f84ca46a5f57828",
+    "versions": {
+      "codex": "codex-cli 0.166.0",
+      "claude": "2.1.319 (Claude Code)",
+      "node": "v24.14.0"
+    },
+    "runtimeDigest": "6462f05a2304fd00a17bb578bfda2cad8141fcd7f52d01f5ecb13ca6f0572d11"
+  },
+  "observedInfrastructureCost": {
+    "kind": "observed-usage-retail-equivalent-before-free-allowance-not-final-bill",
+    "pricingSource": "https://developers.cloudflare.com/containers/platform/pricing/",
+    "queriedAt": "2026-11-14T01:06:18.322Z",
+    "jobCount": 103,
+    "availableJobCount": 103,
+    "complete": true,
+    "retailUsd": 0.16047170178999995,
+    "limitations": [
+      "Missing Analytics is unavailable, never zero.",
+      "Adaptive Analytics may lag and can be sampled; re-query after all containers stop.",
+      "R2, Worker, image storage and other unrelated resources are not included.",
+      "Egress conversion is available only for observed icn location at $0.05/GB.",
+      "This differs from suite conservative admission estimates and is not a final invoice."
+    ]
+  },
+  "costByGroupUsd": {
+    "b03d5396-ff2b-4f37-af0e-d345a5228358": 0.00263202785,
+    "834080e2-6ce7-486e-b19f-e2e0ecaee747": 0.0024629724300000004,
+    "7bcfef51-cd20-4b77-8291-76ec9a43efa9": 0.0030073025300000004,
+    "05ad9464-86d8-44b3-a05e-d6e709ed57e1": 0.0036167250000000003,
+    "a647e858-86b0-4012-b063-093e0a698f76": 0.0029784867100000004,
+    "a394f33d-3d89-4084-a3b2-fbd479ce82da": 0.0027412339300000002,
+    "c4f1fdd4-f89f-4640-8d9b-85d38be1faf4": 0.0034317389200000004,
+    "4ed33d53-f322-4df9-9982-63dbd1a0d620": 0.0025983412800000003,
+    "1a0c5c00-22c8-4696-95f2-1e92bef0b00e": 0.00227583687,
+    "ad634890-291e-4ab6-852e-822fb3621598": 0.0038935042600000006,
+    "d7f19820-d110-485e-bac5-deda5bc6be70": 0.06562433799000002,
+    "42274c7f-1618-40eb-b01a-0171bc6a554b": 0.013215762400000003,
+    "a0b27cff-4637-46c5-a93c-a06585b4f03e": 0.00554232946,
+    "602a7a88-929c-4868-ba69-08dad15bbaba": 0.00547740909,
+    "299f2914-e021-435b-a040-bfdacb7d717c": 0.005267544610000001,
+    "ade6c466-fa27-478b-9b93-507ed79c44f2": 0.005607075920000001,
+    "b72554c1-9c9e-4e97-8cb1-7c15bc6e2218": 0.006203417060000001,
+    "ab5b5205-aa95-455c-8a7b-f9620ea33749": 0.0056602341300000004,
+    "bddc5396-1f70-474c-ae82-5af853167c70": 0.00600761696,
+    "fe311d56-fd7f-48ba-af42-1908f0e5740b": 0.00580651183,
+    "1f5176ec-b9a4-4bdb-b1f4-b2d09a5f590d": 0.006421292560000001
+  },
+  "priorAttempts": {
+    "suite": "local auth error; Codex passed",
+    "suite-v2": "local USER omission; Codex passed",
+    "suite-v3": "old prompt local and remote sequential passed; remote parallel cancelled after tool-network conflict diagnosis",
+    "authProbes": 2
+  },
+  "resourceAndPhaseEvidence": {
+    "aRuns": [
+      {
+        "id": "a-b1-local-c1",
+        "condition": "local-c1",
+        "actualPeakWorkerIntervals": 1,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 17.157,
+          "generate": 10.309,
+          "build": 7.302,
+          "database": 5.663,
+          "hurl": 1.933
+        },
+        "sumCgroupCpuSeconds": null,
+        "sumCgroupThrottledSeconds": null,
+        "maxSingleWorkerCgroupMemoryBytes": null
+      },
+      {
+        "id": "a-b1-cloudflare-c2",
+        "condition": "cloudflare-c2",
+        "actualPeakWorkerIntervals": 2,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 25.879,
+          "generate": 7.423,
+          "build": 11.732,
+          "database": 5.717,
+          "hurl": 2.995
+        },
+        "sumCgroupCpuSeconds": 71.660374,
+        "sumCgroupThrottledSeconds": 0.0,
+        "maxSingleWorkerCgroupMemoryBytes": 1189187584
+      },
+      {
+        "id": "a-b1-cloudflare-c1",
+        "condition": "cloudflare-c1",
+        "actualPeakWorkerIntervals": 1,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 25.364,
+          "generate": 7.416,
+          "build": 11.289,
+          "database": 5.514,
+          "hurl": 2.873
+        },
+        "sumCgroupCpuSeconds": 70.240122,
+        "sumCgroupThrottledSeconds": 0.0,
+        "maxSingleWorkerCgroupMemoryBytes": 1199497216
+      },
+      {
+        "id": "a-b1-local-c2",
+        "condition": "local-c2",
+        "actualPeakWorkerIntervals": 2,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 29.534,
+          "generate": 14.15,
+          "build": 9.065,
+          "database": 6.844,
+          "hurl": 2.0
+        },
+        "sumCgroupCpuSeconds": null,
+        "sumCgroupThrottledSeconds": null,
+        "maxSingleWorkerCgroupMemoryBytes": null
+      },
+      {
+        "id": "a-b1-cloudflare-c4",
+        "condition": "cloudflare-c4",
+        "actualPeakWorkerIntervals": 4,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 25.211,
+          "generate": 7.241,
+          "build": 11.478,
+          "database": 5.737,
+          "hurl": 2.926
+        },
+        "sumCgroupCpuSeconds": 70.64810800000001,
+        "sumCgroupThrottledSeconds": 0.0,
+        "maxSingleWorkerCgroupMemoryBytes": 1199644672
+      },
+      {
+        "id": "a-b1-local-c4",
+        "condition": "local-c4",
+        "actualPeakWorkerIntervals": 4,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 46.976,
+          "generate": 16.422,
+          "build": 16.951,
+          "database": 9.437,
+          "hurl": 2.199
+        },
+        "sumCgroupCpuSeconds": null,
+        "sumCgroupThrottledSeconds": null,
+        "maxSingleWorkerCgroupMemoryBytes": null
+      },
+      {
+        "id": "a-b2-cloudflare-c1",
+        "condition": "cloudflare-c1",
+        "actualPeakWorkerIntervals": 1,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 24.243,
+          "generate": 7.139,
+          "build": 11.121,
+          "database": 5.372,
+          "hurl": 2.89
+        },
+        "sumCgroupCpuSeconds": 67.78374600000001,
+        "sumCgroupThrottledSeconds": 0.0,
+        "maxSingleWorkerCgroupMemoryBytes": 1202118656
+      },
+      {
+        "id": "a-b2-local-c4",
+        "condition": "local-c4",
+        "actualPeakWorkerIntervals": 4,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 50.007,
+          "generate": 17.01,
+          "build": 10.829,
+          "database": 7.94,
+          "hurl": 2.623
+        },
+        "sumCgroupCpuSeconds": null,
+        "sumCgroupThrottledSeconds": null,
+        "maxSingleWorkerCgroupMemoryBytes": null
+      },
+      {
+        "id": "a-b2-local-c1",
+        "condition": "local-c1",
+        "actualPeakWorkerIntervals": 1,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 18.301,
+          "generate": 10.077,
+          "build": 7.778,
+          "database": 5.669,
+          "hurl": 1.9
+        },
+        "sumCgroupCpuSeconds": null,
+        "sumCgroupThrottledSeconds": null,
+        "maxSingleWorkerCgroupMemoryBytes": null
+      },
+      {
+        "id": "a-b2-cloudflare-c2",
+        "condition": "cloudflare-c2",
+        "actualPeakWorkerIntervals": 2,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 24.811,
+          "generate": 7.217,
+          "build": 11.125,
+          "database": 5.411,
+          "hurl": 2.916
+        },
+        "sumCgroupCpuSeconds": 68.885631,
+        "sumCgroupThrottledSeconds": 0.0,
+        "maxSingleWorkerCgroupMemoryBytes": 1198960640
+      },
+      {
+        "id": "a-b2-local-c2",
+        "condition": "local-c2",
+        "actualPeakWorkerIntervals": 2,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 29.074,
+          "generate": 12.769,
+          "build": 8.314,
+          "database": 5.765,
+          "hurl": 2.089
+        },
+        "sumCgroupCpuSeconds": null,
+        "sumCgroupThrottledSeconds": null,
+        "maxSingleWorkerCgroupMemoryBytes": null
+      },
+      {
+        "id": "a-b2-cloudflare-c4",
+        "condition": "cloudflare-c4",
+        "actualPeakWorkerIntervals": 4,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 24.94,
+          "generate": 7.144,
+          "build": 11.139,
+          "database": 5.615,
+          "hurl": 2.953
+        },
+        "sumCgroupCpuSeconds": 68.890222,
+        "sumCgroupThrottledSeconds": 0.0,
+        "maxSingleWorkerCgroupMemoryBytes": 1202180096
+      },
+      {
+        "id": "a-b3-cloudflare-c1",
+        "condition": "cloudflare-c1",
+        "actualPeakWorkerIntervals": 1,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 24.223,
+          "generate": 7.283,
+          "build": 11.071,
+          "database": 5.428,
+          "hurl": 2.912
+        },
+        "sumCgroupCpuSeconds": 67.52364299999999,
+        "sumCgroupThrottledSeconds": 0.0,
+        "maxSingleWorkerCgroupMemoryBytes": 1210429440
+      },
+      {
+        "id": "a-b3-local-c2",
+        "condition": "local-c2",
+        "actualPeakWorkerIntervals": 2,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 28.081,
+          "generate": 13.148,
+          "build": 8.278,
+          "database": 5.784,
+          "hurl": 2.087
+        },
+        "sumCgroupCpuSeconds": null,
+        "sumCgroupThrottledSeconds": null,
+        "maxSingleWorkerCgroupMemoryBytes": null
+      },
+      {
+        "id": "a-b3-local-c1",
+        "condition": "local-c1",
+        "actualPeakWorkerIntervals": 1,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 18.27,
+          "generate": 11.45,
+          "build": 7.488,
+          "database": 5.364,
+          "hurl": 1.906
+        },
+        "sumCgroupCpuSeconds": null,
+        "sumCgroupThrottledSeconds": null,
+        "maxSingleWorkerCgroupMemoryBytes": null
+      },
+      {
+        "id": "a-b3-cloudflare-c2",
+        "condition": "cloudflare-c2",
+        "actualPeakWorkerIntervals": 2,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 24.609,
+          "generate": 7.303,
+          "build": 10.952,
+          "database": 5.312,
+          "hurl": 2.9
+        },
+        "sumCgroupCpuSeconds": 68.369195,
+        "sumCgroupThrottledSeconds": 0.0,
+        "maxSingleWorkerCgroupMemoryBytes": 1202659328
+      },
+      {
+        "id": "a-b3-cloudflare-c4",
+        "condition": "cloudflare-c4",
+        "actualPeakWorkerIntervals": 4,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 24.56,
+          "generate": 7.106,
+          "build": 11.096,
+          "database": 5.378,
+          "hurl": 2.951
+        },
+        "sumCgroupCpuSeconds": 68.220301,
+        "sumCgroupThrottledSeconds": 0.0,
+        "maxSingleWorkerCgroupMemoryBytes": 1205702656
+      },
+      {
+        "id": "a-b3-local-c4",
+        "condition": "local-c4",
+        "actualPeakWorkerIntervals": 4,
+        "sumPhaseSecondsAcrossFiveJobs": {
+          "install": 49.787,
+          "generate": 18.651,
+          "build": 10.258,
+          "database": 7.52,
+          "hurl": 2.362
+        },
+        "sumCgroupCpuSeconds": null,
+        "sumCgroupThrottledSeconds": null,
+        "maxSingleWorkerCgroupMemoryBytes": null
+      }
+    ],
+    "aConditions": [
+      {
+        "condition": "local-c1",
+        "actualPeakWorkerIntervals": [
+          1,
+          1,
+          1
+        ],
+        "medianSumPhaseSeconds": {
+          "install": 18.27,
+          "generate": 10.309,
+          "build": 7.488,
+          "database": 5.663,
+          "hurl": 1.906
+        },
+        "medianSumCgroupCpuSeconds": null,
+        "maxSingleWorkerCgroupMemoryBytes": null,
+        "sumCgroupThrottledSeconds": null
+      },
+      {
+        "condition": "cloudflare-c2",
+        "actualPeakWorkerIntervals": [
+          2,
+          2,
+          2
+        ],
+        "medianSumPhaseSeconds": {
+          "install": 24.811,
+          "generate": 7.303,
+          "build": 11.125,
+          "database": 5.411,
+          "hurl": 2.916
+        },
+        "medianSumCgroupCpuSeconds": 68.885631,
+        "maxSingleWorkerCgroupMemoryBytes": 1202659328,
+        "sumCgroupThrottledSeconds": 0.0
+      },
+      {
+        "condition": "cloudflare-c1",
+        "actualPeakWorkerIntervals": [
+          1,
+          1,
+          1
+        ],
+        "medianSumPhaseSeconds": {
+          "install": 24.243,
+          "generate": 7.283,
+          "build": 11.121,
+          "database": 5.428,
+          "hurl": 2.89
+        },
+        "medianSumCgroupCpuSeconds": 67.78374600000001,
+        "maxSingleWorkerCgroupMemoryBytes": 1210429440,
+        "sumCgroupThrottledSeconds": 0.0
+      },
+      {
+        "condition": "local-c2",
+        "actualPeakWorkerIntervals": [
+          2,
+          2,
+          2
+        ],
+        "medianSumPhaseSeconds": {
+          "install": 29.074,
+          "generate": 13.148,
+          "build": 8.314,
+          "database": 5.784,
+          "hurl": 2.087
+        },
+        "medianSumCgroupCpuSeconds": null,
+        "maxSingleWorkerCgroupMemoryBytes": null,
+        "sumCgroupThrottledSeconds": null
+      },
+      {
+        "condition": "cloudflare-c4",
+        "actualPeakWorkerIntervals": [
+          4,
+          4,
+          4
+        ],
+        "medianSumPhaseSeconds": {
+          "install": 24.94,
+          "generate": 7.144,
+          "build": 11.139,
+          "database": 5.615,
+          "hurl": 2.951
+        },
+        "medianSumCgroupCpuSeconds": 68.890222,
+        "maxSingleWorkerCgroupMemoryBytes": 1205702656,
+        "sumCgroupThrottledSeconds": 0.0
+      },
+      {
+        "condition": "local-c4",
+        "actualPeakWorkerIntervals": [
+          4,
+          4,
+          4
+        ],
+        "medianSumPhaseSeconds": {
+          "install": 49.787,
+          "generate": 17.01,
+          "build": 10.829,
+          "database": 7.94,
+          "hurl": 2.362
+        },
+        "medianSumCgroupCpuSeconds": null,
+        "maxSingleWorkerCgroupMemoryBytes": null,
+        "sumCgroupThrottledSeconds": null
+      }
+    ],
+    "remoteModelRuns": [
+      {
+        "id": "b-b1-remote-parallel",
+        "actualPeakNativeTurns": 2,
+        "workers": [
+          {
+            "provider": "codex",
+            "queueSeconds": 2.0,
+            "startSeconds": 6.236,
+            "nativeSeconds": 24.199,
+            "resources": {
+              "usageUsec": 2208337,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 719179776,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          },
+          {
+            "provider": "claude",
+            "queueSeconds": 2.0,
+            "startSeconds": 6.296,
+            "nativeSeconds": 34.452,
+            "resources": {
+              "usageUsec": 4696075,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 895873024,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          }
+        ]
+      },
+      {
+        "id": "b-b1-remote-sequential",
+        "actualPeakNativeTurns": 1,
+        "workers": [
+          {
+            "provider": "codex",
+            "queueSeconds": 2.0,
+            "startSeconds": 71.883,
+            "nativeSeconds": 23.943,
+            "resources": {
+              "usageUsec": 2154221,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 710230016,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          },
+          {
+            "provider": "claude",
+            "queueSeconds": 123.183,
+            "startSeconds": 5.049,
+            "nativeSeconds": 39.679,
+            "resources": {
+              "usageUsec": 5013492,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 904314880,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          }
+        ]
+      },
+      {
+        "id": "b-b2-remote-parallel",
+        "actualPeakNativeTurns": 2,
+        "workers": [
+          {
+            "provider": "codex",
+            "queueSeconds": 2.0,
+            "startSeconds": 5.979,
+            "nativeSeconds": 35.202,
+            "resources": {
+              "usageUsec": 3229124,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 732057600,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          },
+          {
+            "provider": "claude",
+            "queueSeconds": 2.0,
+            "startSeconds": 6.041,
+            "nativeSeconds": 33.852,
+            "resources": {
+              "usageUsec": 4199777,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 886280192,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          }
+        ]
+      },
+      {
+        "id": "b-b2-remote-sequential",
+        "actualPeakNativeTurns": 1,
+        "workers": [
+          {
+            "provider": "codex",
+            "queueSeconds": 2.0,
+            "startSeconds": 5.098,
+            "nativeSeconds": 22.395,
+            "resources": {
+              "usageUsec": 2410377,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 710156288,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          },
+          {
+            "provider": "claude",
+            "queueSeconds": 58.499,
+            "startSeconds": 4.935,
+            "nativeSeconds": 36.816,
+            "resources": {
+              "usageUsec": 4345490,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 895131648,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          }
+        ]
+      },
+      {
+        "id": "b-b3-remote-parallel",
+        "actualPeakNativeTurns": 2,
+        "workers": [
+          {
+            "provider": "codex",
+            "queueSeconds": 2.0,
+            "startSeconds": 6.032,
+            "nativeSeconds": 26.188,
+            "resources": {
+              "usageUsec": 3127845,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 710975488,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          },
+          {
+            "provider": "claude",
+            "queueSeconds": 2.0,
+            "startSeconds": 6.098,
+            "nativeSeconds": 36.805,
+            "resources": {
+              "usageUsec": 4216923,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 898502656,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          }
+        ]
+      },
+      {
+        "id": "b-b3-remote-sequential",
+        "actualPeakNativeTurns": 1,
+        "workers": [
+          {
+            "provider": "codex",
+            "queueSeconds": 2.0,
+            "startSeconds": 5.133,
+            "nativeSeconds": 37.787,
+            "resources": {
+              "usageUsec": 2927932,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 738258944,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          },
+          {
+            "provider": "claude",
+            "queueSeconds": 71.356,
+            "startSeconds": 5.018,
+            "nativeSeconds": 39.404,
+            "resources": {
+              "usageUsec": 5055092,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 895344640,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          }
+        ]
+      },
+      {
+        "id": "c-1",
+        "actualPeakNativeTurns": 2,
+        "workers": [
+          {
+            "provider": "codex",
+            "queueSeconds": 2.0,
+            "startSeconds": 5.95,
+            "nativeSeconds": 24.749,
+            "resources": {
+              "usageUsec": 2469392,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 714002432,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          },
+          {
+            "provider": "claude",
+            "queueSeconds": 2.0,
+            "startSeconds": 6.015,
+            "nativeSeconds": 43.885,
+            "resources": {
+              "usageUsec": 5839512,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 888786944,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          }
+        ]
+      },
+      {
+        "id": "c-2",
+        "actualPeakNativeTurns": 2,
+        "workers": [
+          {
+            "provider": "codex",
+            "queueSeconds": 2.0,
+            "startSeconds": 7.196,
+            "nativeSeconds": 24.773,
+            "resources": {
+              "usageUsec": 2468094,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 712716288,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          },
+          {
+            "provider": "claude",
+            "queueSeconds": 2.0,
+            "startSeconds": 7.256,
+            "nativeSeconds": 36.608,
+            "resources": {
+              "usageUsec": 4810641,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 895516672,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          }
+        ]
+      },
+      {
+        "id": "c-3",
+        "actualPeakNativeTurns": 2,
+        "workers": [
+          {
+            "provider": "codex",
+            "queueSeconds": 2.0,
+            "startSeconds": 6.176,
+            "nativeSeconds": 37.548,
+            "resources": {
+              "usageUsec": 2816973,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 718118912,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          },
+          {
+            "provider": "claude",
+            "queueSeconds": 2.0,
+            "startSeconds": 6.242,
+            "nativeSeconds": 43.306,
+            "resources": {
+              "usageUsec": 4702433,
+              "throttledUsec": 0,
+              "throttledPeriods": 0,
+              "peakMemoryBytes": 894844928,
+              "memorySource": "cgroup-peak",
+              "memoryLimitBytes": 8589934592
+            }
+          }
+        ]
+      }
+    ],
+    "definitions": [
+      "A phases sum work across four shards and final full suite; they are not parallel critical-path times.",
+      "A overlap uses wrapper start/end locally and running/finished remotely; remote intervals include completion polling.",
+      "B/C overlap uses native Ralph round start/end, excluding verification waiting.",
+      "Remote CPU and memory fields are cgroup measurements. Memory is the maximum single worker, not cluster sum."
+    ],
+    "unmeasured": [
+      "human active preparation time",
+      "local cumulative CPU seconds",
+      "HTTP request count and first token timing",
+      "B acceptance-only dependency phase breakdown"
+    ]
+  }
+}

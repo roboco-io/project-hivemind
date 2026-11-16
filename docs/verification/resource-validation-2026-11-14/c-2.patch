@@ -1,0 +1,237 @@
+--- a/app/src/routes/articles.ts
++++ b/app/src/routes/articles.ts
+@@ -20,9 +20,10 @@
+   return typeof value === 'object' && value !== null && !Array.isArray(value);
+ }
+ 
+-function parsePagination(query: { limit?: string; offset?: string }): {
++function parsePagination(query: { limit?: string; offset?: string; sort?: string }): {
+   limit: number;
+   offset: number;
++  direction: 'asc' | 'desc';
+ } {
+   let limit = 20;
+   let offset = 0;
+@@ -30,7 +31,7 @@
+ 
+   if (query.limit !== undefined) {
+     const parsed = Number(query.limit);
+-    if (!Number.isInteger(parsed) || parsed < 1) {
++    if (typeof query.limit !== 'string' || !/^\d+$/.test(query.limit) || !Number.isSafeInteger(parsed) || parsed < 1 || parsed > 100) {
+       errors.limit = ['is invalid'];
+     } else {
+       limit = parsed;
+@@ -39,18 +40,22 @@
+ 
+   if (query.offset !== undefined) {
+     const parsed = Number(query.offset);
+-    if (!Number.isInteger(parsed) || parsed < 0) {
++    if (typeof query.offset !== 'string' || !/^\d+$/.test(query.offset) || !Number.isSafeInteger(parsed) || parsed < 0) {
+       errors.offset = ['is invalid'];
+     } else {
+       offset = parsed;
+     }
+   }
+ 
++  if (query.sort !== undefined && query.sort !== 'newest' && query.sort !== 'oldest') {
++    errors.sort = ['is invalid'];
++  }
++
+   if (Object.keys(errors).length > 0) {
+     throw validationError(errors);
+   }
+ 
+-  return { limit, offset };
++  return { limit, offset, direction: query.sort === 'oldest' ? 'asc' : 'desc' };
+ }
+ 
+ function validateAndNormalizeTagList(rawTagList: unknown): string[] {
+@@ -93,12 +98,12 @@
+ 
+ export async function articleRoutes(fastify: FastifyInstance): Promise<void> {
+   // GET /api/articles/feed - Feed of articles from followed users (auth required)
+-  fastify.get<{ Querystring: { limit?: string; offset?: string } }>(
++  fastify.get<{ Querystring: { limit?: string; offset?: string; sort?: string } }>(
+     '/api/articles/feed',
+     { preHandler: [fastify.authenticateRequired] },
+     async (request, reply) => {
+       const currentUser = request.currentUser!;
+-      const { limit, offset } = parsePagination(request.query);
++      const { limit, offset, direction } = parsePagination(request.query);
+ 
+       const where: Prisma.ArticleWhereInput = {
+         author: {
+@@ -110,16 +115,14 @@
+         },
+       };
+ 
+-      const [articles, articlesCount] = await Promise.all([
+-        prisma.article.findMany({
++      const articlesCount = await prisma.article.count({ where });
++      const articles = offset >= articlesCount ? [] : await prisma.article.findMany({
+           where,
+-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
++          orderBy: [{ createdAt: direction }, { id: direction }],
+           skip: offset,
+           take: limit,
+           include: articleRelationsInclude(currentUser.id),
+-        }),
+-        prisma.article.count({ where }),
+-      ]);
++        });
+ 
+       return reply.status(200).send({
+         articles: (articles as unknown as ArticleWithRelations[]).map((article) =>
+@@ -138,13 +141,14 @@
+       favorited?: string;
+       limit?: string;
+       offset?: string;
++      sort?: string;
+     };
+   }>(
+     '/api/articles',
+     { preHandler: [fastify.authenticateOptional] },
+     async (request, reply) => {
+       const currentUserId = request.currentUser?.id ?? null;
+-      const { limit, offset } = parsePagination(request.query);
++      const { limit, offset, direction } = parsePagination(request.query);
+       const { tag, author, favorited } = request.query;
+ 
+       const where: Prisma.ArticleWhereInput = {};
+@@ -175,16 +179,14 @@
+         };
+       }
+ 
+-      const [articles, articlesCount] = await Promise.all([
+-        prisma.article.findMany({
++      const articlesCount = await prisma.article.count({ where });
++      const articles = offset >= articlesCount ? [] : await prisma.article.findMany({
+           where,
+-          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
++          orderBy: [{ createdAt: direction }, { id: direction }],
+           skip: offset,
+           take: limit,
+           include: articleRelationsInclude(currentUserId),
+-        }),
+-        prisma.article.count({ where }),
+-      ]);
++        });
+ 
+       return reply.status(200).send({
+         articles: (articles as unknown as ArticleWithRelations[]).map((article) =>
+--- a/app/src/routes/comments.ts
++++ b/app/src/routes/comments.ts
+@@ -1,5 +1,10 @@
+ import type { FastifyInstance } from 'fastify';
+-import { forbiddenError, notFoundError, validationError } from '../lib/errors.js';
++import {
++  type ErrorMap,
++  forbiddenError,
++  notFoundError,
++  validationError,
++} from '../lib/errors.js';
+ import { prisma } from '../lib/prisma.js';
+ import {
+   type CommentWithRelations,
+@@ -11,14 +16,71 @@
+   return typeof value === 'object' && value !== null && !Array.isArray(value);
+ }
+ 
++type CommentListQuery = { limit?: unknown; offset?: unknown; sort?: unknown };
++type CommentSort = 'newest' | 'oldest';
++
++const DECIMAL_INTEGER = /^(0|[1-9][0-9]*)$/;
++
++function parseDecimal(value: unknown): number | null {
++  if (typeof value !== 'string' || !DECIMAL_INTEGER.test(value)) {
++    return null;
++  }
++  const parsed = Number(value);
++  return Number.isSafeInteger(parsed) ? parsed : null;
++}
++
++function parseListQuery(query: CommentListQuery): {
++  limit: number;
++  offset: number;
++  sort: CommentSort;
++} {
++  const errors: ErrorMap = {};
++  let limit = 20;
++  let offset = 0;
++  let sort: CommentSort = 'newest';
++
++  if (query.limit !== undefined) {
++    const parsed = parseDecimal(query.limit);
++    if (parsed === null || parsed < 1 || parsed > 100) {
++      errors.limit = ['is invalid'];
++    } else {
++      limit = parsed;
++    }
++  }
++
++  if (query.offset !== undefined) {
++    const parsed = parseDecimal(query.offset);
++    if (parsed === null) {
++      errors.offset = ['is invalid'];
++    } else {
++      offset = parsed;
++    }
++  }
++
++  if (query.sort !== undefined) {
++    if (query.sort === 'newest' || query.sort === 'oldest') {
++      sort = query.sort;
++    } else {
++      errors.sort = ['is invalid'];
++    }
++  }
++
++  if (Object.keys(errors).length > 0) {
++    throw validationError(errors);
++  }
++
++  return { limit, offset, sort };
++}
++
+ export async function commentRoutes(fastify: FastifyInstance): Promise<void> {
+   // GET /api/articles/:slug/comments - Get comments for an article (auth optional)
+-  fastify.get<{ Params: { slug: string } }>(
++  fastify.get<{ Params: { slug: string }; Querystring: CommentListQuery }>(
+     '/api/articles/:slug/comments',
+     { preHandler: [fastify.authenticateOptional] },
+     async (request, reply) => {
+       const { slug } = request.params;
+       const currentUserId = request.currentUser?.id ?? null;
++      const { limit, offset, sort } = parseListQuery(request.query ?? {});
+ 
+       const article = await prisma.article.findUnique({
+         where: { slug },
+@@ -29,16 +91,23 @@
+         throw notFoundError('article');
+       }
+ 
+-      const comments = await prisma.comment.findMany({
+-        where: { articleId: article.id },
+-        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+-        include: commentRelationsInclude(currentUserId),
+-      });
++      const direction = sort === 'oldest' ? 'asc' : 'desc';
++      const [comments, commentsCount] = await Promise.all([
++        prisma.comment.findMany({
++          where: { articleId: article.id },
++          orderBy: [{ createdAt: direction }, { id: direction }],
++          skip: offset,
++          take: limit,
++          include: commentRelationsInclude(currentUserId),
++        }),
++        prisma.comment.count({ where: { articleId: article.id } }),
++      ]);
+ 
+       return reply.status(200).send({
+         comments: (comments as unknown as CommentWithRelations[]).map((comment) =>
+           serializeComment(comment, currentUserId),
+         ),
++        commentsCount,
+       });
+     },
+   );

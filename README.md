@@ -10,6 +10,24 @@ HIVEMIND는 **한 대의 개발 머신이 가진 CPU·메모리·네트워크 �
 
 현재 실행 백엔드는 Cloudflare이며 AWS ECS는 현재 MVP 검증을 마친 다음 단계다. 작은 RealWorld 과제에서는 로컬 병렬 실행이 더 빨랐다. 관제 조회 프로세스를 종료한 동안에도 원격 통합과 결과 보존이 이어지는 것은 확인했지만, **대규모 작업에서 로컬 자원 한계를 극복한다는 가설과 랄프 반복의 토큰 절감 효과는 아직 입증하지 못했다.** 다음 실험은 더 큰 실제 프로젝트에서 이 조건을 측정한다.
 
+## 아키텍처
+
+```mermaid
+flowchart LR
+    User["로컬 관제<br/>Codex · Claude Code 앱 / CLI"] -->|등록 · 승인 · 조회| API["Cloudflare Worker API"]
+    API --> Scheduler["Durable Object<br/>스케줄링 · 작업 상태"]
+    API -->|입력 등록 · 결과 조회| R2[("R2 아티팩트<br/>소스 · 데이터 · 결과")]
+    Scheduler -->|승인된 모델 작업| Agent["격리된 AI 워커<br/>Codex · Claude Code"]
+    Scheduler -->|검증 · 통합 작업| Compute["격리된 Compute 워커<br/>빌드 · 테스트"]
+    Agent -->|변경 및 검증 요청| Scheduler
+    R2 --> Gateway["작업별 입력 게이트웨이"]
+    Gateway -->|검증된 입력 전달| Compute
+    Compute -->|검사 결과| Scheduler
+    Scheduler -->|diff · 검사 결과 저장| R2
+```
+
+중앙 스케줄러는 승인과 작업 상태를 보존한다. 대형 입력은 compute 작업에 연결하며, 런타임은 해시를 검증한 뒤 읽기 전용으로 제공한다. [아키텍처 상세](docs/architecture.md) · [편집용 Draw.io](docs/hivemind-architecture.drawio)
+
 <p align="center">
   <img src="apps/dashboard/public/brand/hivemind-logo.png" alt="Project HIVEMIND — 심플한 손그림 꿀벌과 손글씨 로고" width="720">
 </p>
@@ -308,6 +326,8 @@ HIVEMIND_WORKER_ID=worker-local-2 npm run worker
 `.env`, `data/`, `node_modules/`, `dist/`는 버전 관리에서 제외한다.
 상태를 초기화할 때는 서버·워커 종료 후 SQLite 파일을 백업하고 해당 상태 파일만 정리한다.
 `data/` 전체를 삭제하지 않는다. 그 아래 보존된 worktree는 위 Git 절차로 별도 정리한다.
+
+2026-11-14 [로컬·Cloudflare 실측](docs/verification/2026-11-14-resource-validation-final.md): A 18회·B 9회·C 3회 최종 검증을 통과했다. 원격 연결 단절 중 통합·결과 보존을 확인했으나, 이번 작은 과제에서는 로컬 병렬 실행이 더 빨랐다. 대규모 작업의 성능 우위는 아직 입증하지 않았다.
 
 ## 프로젝트 구조와 검증
 
