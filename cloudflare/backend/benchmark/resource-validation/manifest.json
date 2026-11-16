@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "sourceSnapshot": "08534edd2d6174e5cd9aaf97eb8c3a20697e86067ae58874f3a0763ce9cc86c2",
+  "files": [
+    {
+      "path": "README.md",
+      "sha256": "17236bf11cd6a5a6309a0a44e9d03b1b4b511f9526b8d6569f456abd63a18dac",
+      "bytes": 2201
+    },
+    {
+      "path": "acceptance.mjs",
+      "sha256": "aaf432efad904c1b926efbf2fd5dff74f6ec735300512da2ed93682076d61a45",
+      "bytes": 5194
+    },
+    {
+      "path": "app/package-lock.json",
+      "sha256": "f5bca4d40bbd69e55784fc740254f80fe92ffa1adb01c7dc5f84ca46a5f57828",
+      "bytes": 63716
+    },
+    {
+      "path": "app/package.json",
+      "sha256": "a7a5b5e20cca696980a9e5101b99fdebcd382af51cc8c1c25e5a273e12f3a90f",
+      "bytes": 1047
+    },
+    {
+      "path": "app/prisma/migrations/20261111150940_init/migration.sql",
+      "sha256": "a87ca95984e1960fe9aecb4b6b52f6788131fd887a48e70574acbf83383554cd",
+      "bytes": 3690
+    },
+    {
+      "path": "app/prisma/migrations/migration_lock.toml",
+      "sha256": "3389dbaf2a3cf4b413275867ac6f550b27f79efe85ee9c12082cdd8c5b8239c4",
+      "bytes": 124
+    },
+    {
+      "path": "app/prisma/schema.prisma",
+      "sha256": "411fa409ad636bdfd5597afd90aac7546fed4da44112d3f4ff4c9757e33126a0",
+      "bytes": 2613
+    },
+    {
+      "path": "app/src/app.ts",
+      "sha256": "503c2612ffa7de5cd9eafa8959cfe84b77cd3ca1d9c6c8f1bafe30e058ef2df4",
+      "bytes": 2168
+    },
+    {
+      "path": "app/src/config.ts",
+      "sha256": "c5b3dedf7ec5e99ed2e62d1a4a34f828fb9c0abff37ef1a63a267432a4489d7c",
+      "bytes": 312
+    },
+    {
+      "path": "app/src/lib/bootstrapDb.ts",
+      "sha256": "4eeeb5b4ca94257fad902e814fb7780c8759f0d55f9ffcd26d43639e528d5fd2",
+      "bytes": 930
+    },
+    {
+      "path": "app/src/lib/errors.ts",
+      "sha256": "67a941b703e1319f0c1f6c1372333e61ecac9487a8962f2427402d1a168c2494",
+      "bytes": 1056
+    },
+    {
+      "path": "app/src/lib/password.ts",
+      "sha256": "37fc9335a2d04727755cd7a4b482aec63c2bdae545d1e3e910933abcb3889684",
+      "bytes": 875
+    },
+    {
+      "path": "app/src/lib/prisma.ts",
+      "sha256": "8308ee3734227e1dab90fae588f5fad22b9217224c9ae540bc02ba199336eaa6",
+      "bytes": 202
+    },
+    {
+      "path": "app/src/lib/slug.ts",
+      "sha256": "e8d268bd634bd1aa3ddb5ef0e2a3c0ddaed1b9284f4991f0cb2698d7a34f59ea",
+      "bytes": 1085
+    },
+    {
+      "path": "app/src/plugins/auth.ts",
+      "sha256": "2fa6ea0e547686ade7e0a798242ff467d62c6e41119e70b4780c635610645c8b",
+      "bytes": 3770
+    },
+    {
+      "path": "app/src/routes/articles.ts",
+      "sha256": "7479b297250f257aeb38f1a525c4f13cfd14d1836d71f90117a4299219d0c211",
+      "bytes": 14478
+    },
+    {
+      "path": "app/src/routes/comments.ts",
+      "sha256": "18b48efb3ff022a4b75835b30ab84e5a579a1b263e44e5cec911c3bf79d7afee",
+      "bytes": 4007
+    },
+    {
+      "path": "app/src/routes/profiles.ts",
+      "sha256": "98243933dde944560864a78b3efda41e4a1aadce9853e0f631cfc6289c23cad5",
+      "bytes": 2965
+    },
+    {
+      "path": "app/src/routes/tags.ts",
+      "sha256": "4194868744eb10de4a47f29950aeb8f8035a897628945817333e134294f2e581",
+      "bytes": 549
+    },
+    {
+      "path": "app/src/routes/users.ts",
+      "sha256": "71ca3d5202162932cc21b41a425eee5e4a993b74831a50ee1edc8dda56dcdff8",
+      "bytes": 8330
+    },
+    {
+      "path": "app/src/serializers.ts",
+      "sha256": "32a2faf53d516b67ccb362ba6f1c5c7664781096431d3a64dd4bfd8672833aa2",
+      "bytes": 4101
+    },
+    {
+      "path": "app/src/server.ts",
+      "sha256": "f3c197b193ac4accd7edb9c029206e600a04b747a9810a8ffcb710b09ea1fe91",
+      "bytes": 1393
+    },
+    {
+      "path": "app/tsconfig.json",
+      "sha256": "f39cd68d73b5bf573b3403a18619dc54978b2f62826943baf6be6c18688c1d27",
+      "bytes": 457
+    },
+    {
+      "path": "build-fixture.mjs",
+      "sha256": "b06c3611fcb10b8141554c47880b9998683150c4b02e5928b96f36db9fd93489",
+      "bytes": 1877
+    },
+    {
+      "path": "contract.md",
+      "sha256": "83bbbb6be3971bbc21525c240b586b6e1a30e14b27f27d1f2bf06df97ccb333e",
+      "bytes": 1826
+    },
+    {
+      "path": "fixture-runtime.mjs",
+      "sha256": "2287bb22da3afbf52d9b09ff1d3d713abf2cba80cd61cdc59242a7003b54e48f",
+      "bytes": 3874
+    },
+    {
+      "path": "hurl/articles.hurl",
+      "sha256": "9fd8dad11a38629dc33770ee34ad60eb1320e3e0f20b04da4f6b71b7778a8e3d",
+      "bytes": 8431
+    },
+    {
+      "path": "hurl/auth.hurl",
+      "sha256": "07f4fc200bc0b6fd05082f98a40731b6c65fce13836dd66920232f17a79ce480",
+      "bytes": 5257
+    },
+    {
+      "path": "hurl/comments.hurl",
+      "sha256": "327e73f67e0e13749db480087bfb690e9360c422bf9776f5ff80862055fd3cdd",
+      "bytes": 3158
+    },
+    {
+      "path": "hurl/errors_articles.hurl",
+      "sha256": "b04e73edf2219f3ffe482483ea34cba2486da478a1fe3e7ed2346116296047e4",
+      "bytes": 3674
+    },
+    {
+      "path": "hurl/errors_auth.hurl",
+      "sha256": "b96c9b7b486ef350b1ba7e2844227fb9ed50642274debbd16b8b85ccb9f73a6c",
+      "bytes": 3952
+    },
+    {
+      "path": "hurl/errors_authorization.hurl",
+      "sha256": "ee6e64b4bff8b253cc8e2189b7abf9f5b4cfe24c5cfdfc8c415567ea928bdb2f",
+      "bytes": 1803
+    },
+    {
+      "path": "hurl/errors_comments.hurl",
+      "sha256": "65872755780cc65bb8b9a6ec087ce2375bed42f4f86046d7714d8de02e87013a",
+      "bytes": 1845
+    },
+    {
+      "path": "hurl/errors_profiles.hurl",
+      "sha256": "1dcd3e85726472d1a118c2b85feb820130d954b2fa890d382e2b2729cb2ccf46",
+      "bytes": 1020
+    },
+    {
+      "path": "hurl/favorites.hurl",
+      "sha256": "ce1fa01173cd34e791610ea91fac465823610de35f8b67634a486d73798ffe68",
+      "bytes": 4471
+    },
+    {
+      "path": "hurl/feed.hurl",
+      "sha256": "d6139d2ae6515f5f55bf940272844b2e9c93c06a0c4995e6310c0c24aa75ce77",
+      "bytes": 3385
+    },
+    {
+      "path": "hurl/pagination.hurl",
+      "sha256": "98840a2bb0ea37a02625f05c8bd16b32bf574d2f81b6b2d170c76b67c3ac3b81",
+      "bytes": 1463
+    },
+    {
+      "path": "hurl/profiles.hurl",
+      "sha256": "8f23c34591c2ca5b643b040e4bf289838c5edf4f1d5cda153973d3cdfe2c2b9f",
+      "bytes": 1735
+    },
+    {
+      "path": "hurl/tags.hurl",
+      "sha256": "0fbefb82fedec23bcc5fda85d3d3dc1cfd3c1fe356df3f9beb3076b514056f89",
+      "bytes": 850
+    },
+    {
+      "path": "integration.mjs",
+      "sha256": "89a36148ab689c5ff5b20641dd935977d66ec6dc454fa7f98f8e44d609ca36a9",
+      "bytes": 636
+    },
+    {
+      "path": "run-shard.mjs",
+      "sha256": "1ea64094327d54a1b02e419034c0c2b234b95f3974c3352a73a6518f19ab0453",
+      "bytes": 1755
+    },
+    {
+      "path": "shards.json",
+      "sha256": "ed88301a946638594bd3659589e8994aed750a50e0905ce25fcac25dc111bdaf",
+      "bytes": 268
+    },
+    {
+      "path": "suite.json",
+      "sha256": "196d7894239190d92ba0ac37f8b5d82c97e5bab10eac9a7eedd4f9e203466a22",
+      "bytes": 247
+    },
+    {
+      "path": "tasks.json",
+      "sha256": "e4bea6a060d1502fa62be36f12ac13288862910f271acc69b6c6b21fc3e84d61",
+      "bytes": 1260
+    }
+  ],
+  "totalBytes": 178050
+}

@@ -1,0 +1,1 @@
+{"version":1,"shards":[["auth.hurl","errors_auth.hurl","errors_authorization.hurl"],["articles.hurl","errors_articles.hurl","pagination.hurl"],["comments.hurl","errors_comments.hurl","tags.hurl"],["profiles.hurl","errors_profiles.hurl","favorites.hurl","feed.hurl"]]}

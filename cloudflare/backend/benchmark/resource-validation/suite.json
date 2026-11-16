@@ -1,0 +1,1 @@
+{"tests":["articles.hurl","auth.hurl","comments.hurl","errors_articles.hurl","errors_auth.hurl","errors_authorization.hurl","errors_comments.hurl","errors_profiles.hurl","favorites.hurl","feed.hurl","pagination.hurl","profiles.hurl","tags.hurl"]}

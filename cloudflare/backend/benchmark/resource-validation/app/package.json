@@ -1,0 +1,30 @@
+{
+  "name": "realworld-fastify-prisma-sqlite",
+  "version": "1.0.0",
+  "description": "RealWorld Conduit backend API built with TypeScript, Fastify, Prisma, and SQLite",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --import tsx src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "db:generate": "DATABASE_URL=${DATABASE_URL:-file:./dev.db} prisma generate",
+    "db:migrate": "DATABASE_URL=${DATABASE_URL:-file:./dev.db} prisma migrate deploy",
+    "db:push": "DATABASE_URL=${DATABASE_URL:-file:./dev.db} prisma db push",
+    "typecheck": "tsc --noEmit",
+    "test": "HOST=http://localhost:${PORT:-3000} ./api/hurl/run-hurl-tests.sh",
+    "postinstall": "DATABASE_URL=${DATABASE_URL:-file:./dev.db} prisma generate"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.0.0",
+    "@fastify/jwt": "^9.0.0",
+    "@prisma/client": "^6.5.0",
+    "fastify": "^5.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.0",
+    "prisma": "^6.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.0"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "contractPath": "contract.md",
+  "workers": [
+    {
+      "id": "articles",
+      "writes": ["app/src/routes/articles.ts"],
+      "instructions": "Read contract.md and implement the articles worker scope. Change only app/src/routes/articles.ts. Preserve the shared contract, dependencies, schema and acceptance scripts. Check the fixed acceptance command node acceptance.mjs articles. Continue fixing the assigned implementation until its required checks pass.",
+      "checks": [{"id": "articles-acceptance", "argv": ["node", "acceptance.mjs", "articles"], "timeoutMs": 600000}]
+    },
+    {
+      "id": "comments",
+      "writes": ["app/src/routes/comments.ts"],
+      "instructions": "Read contract.md and implement the comments worker scope. Change only app/src/routes/comments.ts. Preserve the shared contract, dependencies, schema and acceptance scripts. Check the fixed acceptance command node acceptance.mjs comments. Continue fixing the assigned implementation until its required checks pass.",
+      "checks": [{"id": "comments-acceptance", "argv": ["node", "acceptance.mjs", "comments"], "timeoutMs": 600000}]
+    }
+  ],
+  "integration": {"id": "integrated-realworld", "argv": ["node", "integration.mjs"], "timeoutMs": 600000}
+}

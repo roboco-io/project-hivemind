@@ -1,0 +1,16 @@
+test/sql/projection/coalesce_error.test
+test/sql/projection/coalesce_rowid.test
+test/sql/projection/select_star_exclude.test
+test/sql/projection/select_star_like.test
+test/sql/projection/select_star_rename.test
+test/sql/projection/select_star_replace.test
+test/sql/projection/select_struct_star.test
+test/sql/projection/test_coalesce.test_slow
+test/sql/projection/test_complex_expressions.test
+test/sql/projection/test_many_values.test_slow
+test/sql/projection/test_row_id.test
+test/sql/projection/test_row_id_expression.test
+test/sql/projection/test_scalar_projection.test
+test/sql/projection/test_simple_projection.test
+test/sql/projection/test_table_star.test
+test/sql/projection/test_value_list.test

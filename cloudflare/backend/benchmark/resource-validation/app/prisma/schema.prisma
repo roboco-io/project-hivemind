@@ -1,0 +1,103 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           Int        @id @default(autoincrement())
+  email        String     @unique
+  username     String     @unique
+  passwordHash String
+  bio          String?
+  image        String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  articles     Article[]  @relation("AuthorArticles")
+  comments     Comment[]
+  favorites    Favorite[]
+  following    Follow[]   @relation("Follower")
+  followers    Follow[]   @relation("Following")
+}
+
+model Follow {
+  followerId  Int
+  followingId Int
+  createdAt   DateTime @default(now())
+
+  follower    User     @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@id([followerId, followingId])
+  @@index([followingId])
+}
+
+model Article {
+  id          Int          @id @default(autoincrement())
+  slug        String       @unique
+  title       String
+  description String
+  body        String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime
+
+  authorId    Int
+  author      User         @relation("AuthorArticles", fields: [authorId], references: [id], onDelete: Cascade)
+
+  tags        ArticleTag[]
+  comments    Comment[]
+  favorites   Favorite[]
+
+  @@index([authorId])
+  @@index([createdAt, id])
+}
+
+model Tag {
+  id       Int          @id @default(autoincrement())
+  name     String       @unique
+  articles ArticleTag[]
+}
+
+model ArticleTag {
+  articleId Int
+  tagId     Int
+  position  Int
+
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([articleId, tagId])
+  @@index([tagId])
+}
+
+model Comment {
+  id        Int      @id @default(autoincrement())
+  body      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime
+
+  articleId Int
+  article   Article  @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  authorId  Int
+  author    User     @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([articleId])
+  @@index([authorId])
+}
+
+model Favorite {
+  userId    Int
+  articleId Int
+  createdAt DateTime @default(now())
+
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  article   Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, articleId])
+  @@index([articleId])
+}
