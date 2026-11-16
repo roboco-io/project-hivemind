@@ -344,6 +344,41 @@ npm run check
 공개 저장소: [roboco-io/project-hivemind](https://github.com/roboco-io/project-hivemind).
 클라우드 배포 대상은 설정하지 않았다.
 
+## Subdirectories & System Boundaries
+
+각 디렉터리의 README는 그 디렉터리의 공개 인터페이스, 불변 조건과 부수 효과를 코드 심볼 근거와 함께 적은 계약 문서다.
+`docs/`, `infra/`, `tests/`에는 계약 대상 소스가 없어서 이 색인에 넣지 않았다.
+
+- apps: [apps/README.md](./apps/README.md) - 실행 가능한 프로세스와 운영자 화면. 중앙 관제 HTTP 서버(control-plane), 정적 대시보드(dashboard), 운영자 API를 `hivemind_*` 도구로 감싼 MCP 서버(mcp-server), 로컬 워커(worker)가 있다. 네 앱은 모두 control-plane의 HTTP API를 경계로 삼는다.
+- packages: [packages/README.md](./packages/README.md) - 공통 계약(contracts), 상태 전이와 SQLite 저장을 맡는 중앙 core(core), 로컬 실행 어댑터와 Cloudflare 포트(adapters). core와 adapters는 정적 import로는 각각 contracts만 가져오고 서로 가져오지 않는다. 다만 adapters의 Cloudflare 포트는 `cloudflare/backend/src`의 모듈을 실행 시점에 동적으로 불러온다.
+- scripts: [scripts/README.md](./scripts/README.md) - HIVEMIND MCP 서버를 사용자 프로젝트의 로컬 설정에 등록하는 설치 스크립트 2개와, 세션 분할 방식의 비용을 측정하는 실험 스크립트(experiments).
+- cloudflare: [cloudflare/README.md](./cloudflare/README.md) - 별도 패키지인 Cloudflare 백엔드. Worker API, 스케줄러 Durable Object, 작업별 컨테이너 런타임, 운영자 스크립트와 phase 0 검증 스크립트가 있다.
+
+## Global Invariants
+
+- 승인, 취소, 비용 정책과 상태 전이는 중앙 core가 결정한다. 작업 상태를 바꾸는 `HiveStore`의 연산(`create`, `decision`, `claim`, `result` 등)은 `BEGIN IMMEDIATE` 트랜잭션에서 실행한다. 워커 등록(`register`)은 트랜잭션 없이 `workers` 테이블에 쓴다. `[packages/core/src/store.ts:HiveStore]`
+- 운영자 토큰과 워커 토큰은 비어 있지 않고 서로 달라야 하며, 상수 시간 비교로 검사한다. `[apps/control-plane/src/app.ts:buildApp]`, `[packages/core/src/store.ts:equalSecret]`
+- 워커는 워커 토큰으로 인증하는 HTTP API만 사용하고 중앙 SQLite 파일을 열지 않는다. `[apps/worker/src/worker.ts:runOnce]`
+- MCP 서버의 `hivemind_create_task`는 실행 승인 전 초안만 등록한다. 실행 승인은 별도 도구 호출이다. `[apps/mcp-server/src/server.ts:createHivemindMcpServer]`
+- codex·claude 작업의 `actualCostMicros`는 `null`이다. mock 작업의 diff와 비용은 합성 값이며 실제 실행 근거를 포함할 수 없다. `[packages/core/src/store.ts:HiveStore.result]`, `[packages/adapters/src/index.ts:mock]`
+- lease가 만료된 `running` 작업은 `failed`로 바뀌며 자동 재시도하지 않는다. `[packages/core/src/store.ts:HiveStore.expire]`
+- Cloudflare 제출 데이터에 자격 증명 키가 있으면 거부하고, 저장 전에 Bearer 토큰과 비밀 키의 값을 `[REDACTED]`로 바꾼다. `[packages/core/src/cloudflare-store.ts:assertPrivateSubmission]`, `[packages/core/src/cloudflare-store.ts:safe]`
+- 대시보드는 서버 값을 `textContent`로만 표시한다. `[apps/dashboard/public/app.js:node]`
+
+## Global Side Effects
+
+- SQLite 파일을 만들고 쓴다. `main.ts`의 기본 경로는 `data/hivemind.sqlite`이다. 테이블은 `tasks`, `workers`, `events`, `cloud_tasks`, `cloud_events`, `cloud_metadata`, `cloud_workflows`이다. `[packages/core/src/store.ts:HiveStore]`, `[packages/core/src/cloudflare-store.ts:createCloudControl]`, `[packages/core/src/cloud-workflow-store.ts:createCloudWorkflowControl]`
+- control-plane은 TCP 포트를 연다. 기본값은 `127.0.0.1:4310`이다. `[apps/control-plane/src/main.ts]`
+- codex·claude 어댑터는 `codex` 또는 `claude` CLI를 자식 프로세스로 실행하며, 이때 실제 모델 호출이 일어난다. 실행마다 `git worktree add --detach`로 작업 디렉터리를 만든다. `[packages/adapters/src/codex.ts:createCodexAdapter]`, `[packages/adapters/src/claude.ts:createClaudeAdapter]`, `[packages/adapters/src/workspace.ts:createWorkspace]`
+- Cloudflare 포트는 설정된 백엔드 주소로 HTTPS 요청을 보내고, 원격 출력 스냅샷을 로컬 worktree에 적용한다. `[packages/adapters/src/cloudflare.ts:createCloudPort]`
+- 설치 스크립트는 대상 프로젝트의 `.codex/config.toml`, `.mcp.json`, `.claude/hivemind-mcp.local.json`과 Git `info/exclude`를 만들거나 수정한다. `[scripts/configure-hivemind-mcp.ts:configureHivemindMcp]`, `[scripts/configure-hivemind-claude.ts:configureHivemindClaude]`
+- Cloudflare 백엔드는 Workers, Durable Objects, Containers와 R2를 사용한다. 일부 운영자 스크립트는 유료 원격 컨테이너나 모델 작업을 만든다. 상세는 [cloudflare/README.md](./cloudflare/README.md)에 있다.
+
+## System Verification
+
+- Run: `npm run check` (저장소 루트. 타입 검사 뒤 빌드하고 `node --test dist/tests/*.test.js`를 실행한다.)
+- Run: `npm test` (`cloudflare/`와 `cloudflare/backend/`에서 각각 실행한다.)
+
 ## 라이선스
 
 Copyright 2026 Project HIVEMIND contributors.
