@@ -59,6 +59,19 @@
         </section>
       </div>
     </div>
+    <section class="autonomous-operator" aria-labelledby="autonomous-title">
+      <div class="section-title"><div><p class="context">Cloudflare · 장기 자율 작업</p><h2 id="autonomous-title">실행 범위 검토</h2></div><button id="autonomous-refresh" class="secondary" type="button">목록 새로고침</button></div>
+      <p class="help">등록은 MCP에서 초안으로 진행합니다. 현재 revision의 범위와 자격 증명 reference를 검토한 뒤 명시적으로 승인하세요.</p>
+      <p id="autonomous-error" class="error-banner" role="alert" hidden></p>
+      <div class="autonomous-layout">
+        <aside aria-label="장기 작업 페이지"><p id="autonomous-page" class="quiet">현재 페이지 · 조회 전</p><div id="autonomous-list" class="task-list"></div><div class="actions"><button id="autonomous-first" type="button" class="secondary">첫 페이지</button><button id="autonomous-next" type="button" class="secondary" disabled>다음 페이지</button></div></aside>
+        <section id="autonomous-review" class="panel" aria-label="현재 revision 검토" hidden>
+          <div class="panel-heading"><h3 id="autonomous-current"></h3><span id="autonomous-status" class="pill"></span></div><p id="autonomous-goal" class="instructions"></p>
+          <dl class="repository-facts"><div><dt>고정 모델</dt><dd id="autonomous-model"></dd></div><div><dt>종료 시각</dt><dd id="autonomous-ends"></dd></div><div class="wide"><dt>허용 도구</dt><dd id="autonomous-tools"></dd></div><div class="wide"><dt>웹 호스트 범위</dt><dd id="autonomous-web"></dd></div><div class="wide"><dt>자격 증명 reference · 비밀 값 아님</dt><dd id="autonomous-credentials"></dd></div><div class="wide"><dt>외부 profile · 대상과 상한</dt><dd id="autonomous-profiles"></dd></div><div class="wide"><dt>고정 source snapshot · 검사</dt><dd id="autonomous-source"></dd></div><div><dt>승인 예산</dt><dd id="autonomous-budget"></dd></div><div><dt>예약 상한 · 청구액 아님</dt><dd id="autonomous-reserved"></dd></div><div><dt>원장 확인 비용 · 전체 청구액 아님</dt><dd id="autonomous-spent"></dd></div><div><dt>모델 금액</dt><dd id="autonomous-model-cost"></dd></div><div><dt>토큰 사용량</dt><dd id="autonomous-usage"></dd></div><div><dt>정리 상태</dt><dd id="autonomous-cleanup"></dd></div></dl>
+          <form id="autonomous-decision-form" class="decision-panel"><label for="autonomous-reason">이번 결정 사유 또는 메시지<textarea id="autonomous-reason" maxlength="2000" rows="2" required></textarea></label><div class="actions"><button id="autonomous-approve" type="submit" value="approve">현재 revision 실행 승인</button><button id="autonomous-cancel" class="danger" type="submit" value="cancel">작업 중단</button><button id="autonomous-message" class="secondary" type="submit" value="message">메시지 기록</button><button id="autonomous-resume" class="secondary" type="submit" value="resume">같은 범위 재개</button></div><p class="help">예약·원장 정산은 실제 공급자 청구 확정과 다릅니다. 미확정 금액과 정리 대기는 그대로 보존합니다.</p></form>
+        </section>
+      </div>
+    </section>
   </main>
   <footer><span>Project HIVEMIND · 개발 코드명</span><span>승인은 결과 수락을 기록하며 Git 병합이나 배포를 실행하지 않습니다.</span></footer>
 </body>

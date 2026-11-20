@@ -1,3 +1,4 @@
+import {createAutonomousCloudProxy} from './autonomous-cloud-proxy.js';
 import { buildApp } from './app.js';
 import { configurationGitEnvironment, configurationScope, loadCloudflareConfig, loadCloudWorkflowChecks } from './cloudflare-config.js';
 import { createCloudPort } from '../../../packages/adapters/src/cloudflare.js';
@@ -47,11 +48,12 @@ try {
   const dbPath = process.env.HIVEMIND_DB ?? 'data/hivemind.sqlite';
   const config = loadCloudflareConfig();
   if (config) cloudflare = createCloudControl({ dbPath, policy: config.policy, port: createCloudPort(config), executionScope: configurationScope(config) });
+  const autonomousCloudProxy=config?createAutonomousCloudProxy(config,{localTokens:[operatorToken,workerToken]}):undefined;
   const checks = loadCloudWorkflowChecks(config);
   const workflows = config && checks ? createCloudWorkflowControl(dbPath,
     createHash('sha256').update(JSON.stringify({scope:configurationScope(config),checks})).digest('hex'),
     createCloudWorkflowPort(config,checks)) : undefined;
-  app = buildApp({dbPath,operatorToken,workerToken,repository,cloudflare,workflows});
+  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy});
   const address = await app.listen({host,port});
   console.log(`HIVEMIND control service: ${address}`);
   for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,() => { void app!.close(); });

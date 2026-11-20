@@ -17,6 +17,7 @@
     "test": "npm run build && node --test dist/tests/*.test.js",
     "start": "node --env-file-if-exists=.env dist/apps/control-plane/src/main.js",
     "worker": "node --env-file-if-exists=.env dist/apps/worker/src/main.js",
+    "autonomous:mock": "node --env-file-if-exists=.env dist/apps/worker/src/autonomous-mock.js",
     "worker:once": "npm run worker -- --once",
     "check": "npm run typecheck && npm test",
     "mcp": "node dist/apps/mcp-server/src/main.js",

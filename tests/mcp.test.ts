@@ -9,11 +9,19 @@ import { spawnSync } from 'node:child_process';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { z } from 'zod';
 import { createHivemindMcpServer, loadMcpSettings } from '../apps/mcp-server/src/server.js';
 
 const operatorToken = 'mcp-test-operator-private-sentinel';
 const repo = { id: 'cloudflare', name: 'explicit-target-fixture', baseCommit: 'a'.repeat(40), testProfile: 'default', testCommand: ['node', '--test'] };
 const connection = { status: 'ready', message: null, checkedAt: '2026-11-10T00:00:00Z' };
+const expectedToolNames = [
+  'hivemind_approve_workflow',
+  'hivemind_autonomous_approve', 'hivemind_autonomous_audit', 'hivemind_autonomous_cancel',
+  'hivemind_autonomous_create', 'hivemind_autonomous_get', 'hivemind_autonomous_list', 'hivemind_autonomous_message', 'hivemind_autonomous_record_external_cost',
+  'hivemind_cancel_task', 'hivemind_create_task', 'hivemind_create_workflow', 'hivemind_decide_task',
+  'hivemind_get_result', 'hivemind_get_workflow', 'hivemind_list_tasks', 'hivemind_list_workflows', 'hivemind_status',
+];
 const processEvidence = { status: 'passed', exitCode: 0, durationMs: 1000, stdout: 'unit passed ' + operatorToken, stderr: '', truncated: false, privateKey: 'never-public' };
 const sampleTask = { id: 'cf-mcp-task', title: 'MCP task', instructions: 'safely change fixture', provider: 'codex', runtime: 'cloudflare', budgetMicros: 0, status: 'awaiting_execution_approval', repositoryId: repo.id, baseCommit: repo.baseCommit, testProfile: 'default', createdAt: '2026-11-10T00:00:00Z', updatedAt: '2026-11-10T00:00:00Z', actualCostMicros: null, summary: 'summary ' + operatorToken, diff: '+ actual change\n', diffTruncated: false, execution: null, worktreePath: '/private/review-path', privateSubmission: 'never-public', remote: { phase: 'AWAITING_APPROVAL', jobId: null, inputSnapshotId: 'input', outputSnapshotId: null, containerStopped: false, authSynced: false, agent: processEvidence, checks: [{ id: 'unit', name: 'Unit', status: 'SUCCEEDED', command: ['node', '--test'], process: processEvidence, credentialsAbsent: true, sourceUnchanged: true, credentialId: 'never-public' }], errorCode: null } };
 type Context = { after(fn: () => unknown): void };
@@ -50,12 +58,22 @@ async function session(t: Context, api = fakeApi()) {
   return { server, client, call, api };
 }
 
-test('real SDK handshake lists ten tools with read-only and explicit mutation annotations', async t => {
+test('real SDK handshake lists exactly eighteen named operator tools with explicit annotations', async t => {
   const { client } = await session(t); const { tools } = await client.listTools();
-  assert.deepEqual(tools.map(tool => tool.name).sort(), ['hivemind_approve_workflow', 'hivemind_cancel_task', 'hivemind_create_task', 'hivemind_create_workflow', 'hivemind_decide_task', 'hivemind_get_result', 'hivemind_get_workflow', 'hivemind_list_tasks', 'hivemind_list_workflows', 'hivemind_status']);
-  for (const name of ['hivemind_status', 'hivemind_list_tasks', 'hivemind_get_result']) assert.equal(tools.find(tool => tool.name === name)!.annotations!.readOnlyHint, true);
-  for (const name of ['hivemind_create_task', 'hivemind_decide_task', 'hivemind_cancel_task']) assert.equal(tools.find(tool => tool.name === name)!.annotations!.readOnlyHint, false);
+  assert.equal(tools.length, 18);
+  assert.deepEqual(tools.map(tool => tool.name).sort(), expectedToolNames);
+  for (const name of ['hivemind_status', 'hivemind_list_tasks', 'hivemind_get_result', 'hivemind_autonomous_list', 'hivemind_autonomous_get', 'hivemind_autonomous_audit']) assert.equal(tools.find(tool => tool.name === name)!.annotations!.readOnlyHint, true);
+  for (const name of ['hivemind_create_task', 'hivemind_decide_task', 'hivemind_cancel_task', 'hivemind_autonomous_create', 'hivemind_autonomous_approve', 'hivemind_autonomous_cancel', 'hivemind_autonomous_message', 'hivemind_autonomous_record_external_cost']) assert.equal(tools.find(tool => tool.name === name)!.annotations!.readOnlyHint, false);
   assert.equal(tools.find(tool => tool.name === 'hivemind_cancel_task')!.annotations!.destructiveHint, true);
+  assert.equal(tools.find(tool => tool.name === 'hivemind_autonomous_cancel')!.annotations!.destructiveHint, true);
+});
+
+test('actual SDK retains the finite 512-element guard independently of production Zod limits',async t=>{
+  const {server,client,api}=await session(t);let calls=0;
+  // Test-only tool isolates SDK counting: the schema permits both boundary inputs.
+  server.registerTool('fixture_bounded_input',{inputSchema:z.strictObject({values:z.array(z.string()).max(512)})},async()=>{calls++;return {content:[{type:'text',text:'ok'}]};});
+  assert.equal((await client.callTool({name:'fixture_bounded_input',arguments:{values:Array(511).fill('value')}})).isError,undefined);
+  const denied=await client.callTool({name:'fixture_bounded_input',arguments:{values:Array(512).fill(operatorToken)}});assert.equal(denied.isError,true);assert.equal(calls,1);assert.equal(api.calls.length,0);assert.ok(!JSON.stringify(denied).includes(operatorToken));
 });
 
 test('status names the pinned target and list exposes only bounded Cloudflare task summaries', async t => {
@@ -155,7 +173,8 @@ test('real SDK stdio handshake and calls keep stdout reserved for JSON-RPC', asy
   const transport = new StdioClientTransport({ command: process.execPath, args: [new URL('../apps/mcp-server/src/main.js', import.meta.url).pathname], env: { HIVEMIND_API_URL: 'http://127.0.0.1:' + address.port, HIVEMIND_OPERATOR_TOKEN: operatorToken }, stderr: 'pipe' });
   let stderr = ''; transport.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
   const client = new Client({ name: 'stdio-test', version: '1.0.0' }); t.after(() => client.close());
-  await client.connect(transport); assert.equal((await client.listTools()).tools.length, 10);
+  await client.connect(transport); const tools = (await client.listTools()).tools;
+  assert.equal(tools.length, 18); assert.deepEqual(tools.map(tool => tool.name).sort(), expectedToolNames);
   const result = await client.callTool({ name: 'hivemind_status', arguments: {} });
   assert.ok(JSON.stringify(result).includes(repo.name)); assert.equal(stderr, '');
   assert.equal(api.calls.length, 2);

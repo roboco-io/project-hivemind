@@ -356,3 +356,184 @@ render();
 void refresh();
 setInterval(() => { if (!document.hidden) void refresh(); }, 2000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
+
+// Independent operator state: long-task polling never changes the old task form.
+const autonomousPath = '/api/cloudflare/autonomous-tasks';
+const autonomousStates = { awaiting_approval: '실행 승인 대기', ready: '실행 대기', running: '실행 중', waiting: '예약 대기', awaiting_input: '운영자 입력 대기', stopping: '중단·정리 확인 중', completed: '완료', cancelled: '중단', budget_exceeded: '예산 중단', expired: '기간 만료', failed: '실패' };
+const autonomous = { items: [], selectedId: null, detail: null, cursor: null, nextCursor: null, busy: false, refreshing: false, epoch: 0, error: null };
+function autonomousText(value, max = 16000) {
+  if (typeof value !== 'string') return '';
+  let text = value; const token = $('operator-token').value;
+  if (token) text = text.split(token).join('[REDACTED]');
+  return text.replace(/Bearer\s+[^\s"'<>]+/gi, 'Bearer [REDACTED]').replace(/(?:sk-ant-[A-Za-z0-9_-]+|(?:AKIA|ASIA)[A-Z0-9]{16}|hf_[A-Za-z0-9]+|ghp_[A-Za-z0-9]+)/g, '[REDACTED]').slice(0, max);
+}
+function autonomousError(message) { autonomous.error = message; $('autonomous-error').textContent = message || ''; $('autonomous-error').hidden = !message; }
+async function autonomousApi(path, body) {
+  if (!path.startsWith(autonomousPath)) throw new Error('장기 작업 연결을 사용할 수 없습니다.');
+  const response = await fetch(path, { method: body === undefined ? 'GET' : 'POST', redirect: 'error', headers: { Authorization: 'Bearer ' + $('operator-token').value, ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(10000) });
+  if (!response.ok || response.redirected) { const error = new Error('Cloudflare 장기 작업 연결·권한을 확인하세요.'); error.status = response.status; throw error; }
+  return response.json();
+}
+function autonomousTask(value) {
+  if (!value || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(value.id) || !Number.isSafeInteger(value.revision) || value.revision < 1 || !Object.hasOwn(autonomousStates, value.status) || !value.spec || typeof value.spec.goal !== 'string' || typeof value.spec.model !== 'string') throw new Error('장기 작업 응답을 확인할 수 없습니다.');
+  return value;
+}
+function autonomousProfileHashes(t) {
+  const refs = t.spec.externalProfiles || [], metadata = t.externalProfilesMetadata;
+  if (!refs.length) return {};
+  if (!Array.isArray(metadata) || metadata.length !== refs.length) return null;
+  const entries = refs.map(ref => metadata.find(p => p.id === ref));
+  if (entries.some(p => !p || !/^[a-f0-9]{64}$/.test(p.profileHash))) return null;
+  return Object.fromEntries(entries.map(p => [p.id, p.profileHash]));
+}
+function autonomousApprovedTarget(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const fields = 'accountId' in value ? ['accountId', 'region', 'workloadId'] : 'repository' in value && ('branch' in value) !== ('revision' in value) ? ['repository', 'branch' in value ? 'branch' : 'revision'] : [];
+  if (!fields.length || fields.some(k => typeof value[k] !== 'string' || !value[k].length || value[k].length > 256)) return null;
+  return Object.fromEntries(fields.map(k => [k, autonomousText(value[k], 256)]));
+}
+function autonomousR9Metadata(value) {
+  const output = {}, hex64 = v => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v), oid = v => typeof v === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(v);
+  const safe = v => { const values = typeof v === 'string' ? [v] : Object.entries(v).filter(([key]) => key !== 'kind').map(([,value]) => value); return values.every(value => typeof value !== 'string' || autonomousText(value, 4096) === value); };
+  if (hex64(value.parameterHash) && safe(value.parameterHash)) output.parameterHash = value.parameterHash;
+  const p = value.parametersSubset ?? value.parameters;
+  if (p && typeof p === 'object' && !Array.isArray(p)) {
+    const checks = { lifetimeMs: v => Number.isSafeInteger(v) && v > 0, startActionId: v => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/.test(v), artifactDigest: hex64, expectedHead: oid };
+    const subset = {}, keys = Object.keys(checks).filter(k => Object.hasOwn(p, k));
+    if (keys.length && keys.every(k => checks[k](p[k]))) { for (const k of keys) subset[k] = p[k]; if (safe(subset)) output.parametersSubset = subset; }
+  }
+  const r = value.providerResult;
+  if (r && typeof r === 'object' && !Array.isArray(r)) {
+    if (r.kind === 'aws_instance' && typeof r.id === 'string' && /^i-[a-f0-9]{8,32}$/.test(r.id)) output.providerResult = { kind: r.kind, id: r.id };
+    else if (['hf_commit', 'github_commit'].includes(r.kind) && oid(r.oid)) output.providerResult = { kind: r.kind, oid: r.oid };
+    if (output.providerResult && !safe(output.providerResult)) delete output.providerResult;
+  }
+  return output;
+}
+async function loadAutonomousTask(id) {
+  const path = autonomousPath + '/' + encodeURIComponent(id);
+  const t = autonomousTask(await autonomousApi(path + '?view=summary')), refs = t.spec.externalProfiles || [];
+  t.runs = []; t.runsUnavailable = false;
+  try { const page = await autonomousApi(path + '/history?kind=runs&limit=20'); if (!Array.isArray(page.items) || page.items.length > 20) throw new Error(); t.runs = page.items; t.runsNextCursor = page.nextCursor; }
+  catch { t.runsUnavailable = true; }
+  t.externalActionResources = []; t.externalActionPageCount = null;
+  try {
+    const page = await autonomousApi(path + '/external-actions?limit=20');
+    if (!Array.isArray(page.items) || page.items.length > 20) throw new Error();
+    t.externalActionResources = page.items.filter(a => a && typeof a === 'object' && !Array.isArray(a)).map(a => ({ ...autonomousR9Metadata(a), profileId: autonomousText(a.profileId, 128), approvedTarget: autonomousApprovedTarget(a.approvedTarget), approvedProfileHash: typeof a.approvedProfileHash === 'string' && /^[a-f0-9]{64}$/.test(a.approvedProfileHash) ? a.approvedProfileHash : null, resourceId: autonomousText(a.resourceId, 256), revision: Number.isSafeInteger(a.revision) && a.revision >= 1 ? a.revision : null, requestId: autonomousText(a.requestId, 256), cleanupStatus: ['none', 'pending', 'deleting', 'cleaned'].includes(a.cleanupStatus) ? a.cleanupStatus : 'unknown', billingSource: autonomousText(a.billingSource, 64), evidenceRef: autonomousText(a.evidenceRef, 1000), attestedAt: Number.isSafeInteger(a.attestedAt) && a.attestedAt >= 0 ? a.attestedAt : null, reportedCostMicros: Number.isSafeInteger(a.verifiedCostMicros) && a.verifiedCostMicros >= 0 ? a.verifiedCostMicros : null }));
+    t.externalActionPageCount = page.items.length; t.externalActionsHasNext = typeof page.nextCursor === 'string' && page.nextCursor.length > 0;
+  } catch { /* Resource absence in an unavailable page is not cleanup proof. */ }
+  t.externalProfilesMetadata = [];
+  if (!refs.length) return t;
+  try {
+    const raw = await autonomousApi(autonomousPath + '/' + encodeURIComponent(id) + '/external-profiles');
+    if (refs.length > 3 || new Set(refs).size !== refs.length || raw.available === false || raw.enabled === false || !Array.isArray(raw.profiles) || raw.profiles.length !== refs.length) throw new Error();
+    const profiles = refs.map(ref => {
+      const p = raw.profiles.find(p => p.id === ref);
+      if (!p || p.enabled !== true || !['aws', 'hf', 'github'].includes(p.provider) || !/^[a-f0-9]{64}$/.test(p.profileHash) || !Number.isSafeInteger(p.upperBoundMicros) || p.upperBoundMicros < 0 || !p.target || !Array.isArray(p.operations)) throw new Error();
+      const fields = p.provider === 'aws' ? ['accountId', 'region', 'workloadId'] : p.provider === 'hf' ? ['repository', 'revision'] : ['repository', 'branch'];
+      if (fields.some(k => typeof p.target[k] !== 'string' || !p.target[k])) throw new Error();
+      return { id: ref, provider: p.provider, profileHash: p.profileHash, target: Object.fromEntries(fields.map(k => [k, autonomousText(p.target[k], 200)])), upperBoundMicros: p.upperBoundMicros, operations: p.operations.map(v => autonomousText(v, 128)) };
+    });
+    if (new Set(profiles.map(p => p.provider)).size !== profiles.length) throw new Error();
+    t.externalProfilesMetadata = profiles;
+  } catch { t.externalProfilesMetadata = []; }
+  return t;
+}
+function renderAutonomous() {
+  const list = $('autonomous-list'), existing = new Map(Array.from(list.querySelectorAll('button')).map(b => [b.dataset.taskId, b]));
+  list.querySelectorAll('.empty').forEach(e => e.remove());
+  for (const t of autonomous.items) {
+    let b = existing.get(t.id);
+    if (!b) { b = node('button'); b.type = 'button'; b.dataset.taskId = t.id; b.append(node('strong'), node('span', undefined, 'task-meta')); b.addEventListener('click', () => { void selectAutonomousTask(t.id); }); list.append(b); }
+    existing.delete(t.id); b.firstChild.textContent = autonomousText(t.spec.goal, 140); b.lastChild.textContent = 'revision ' + t.revision + ' · ' + autonomousStates[t.status]; b.className = 'task-choice' + (t.id === autonomous.selectedId ? ' selected' : ''); b.setAttribute('aria-pressed', String(t.id === autonomous.selectedId)); b.disabled = autonomous.busy;
+  }
+  existing.forEach(b => b.remove()); if (!autonomous.items.length) list.append(node('p', '현재 페이지에 장기 작업이 없습니다.', 'empty'));
+  $('autonomous-page').textContent = '현재 페이지 ' + autonomous.items.length + '건' + (autonomous.nextCursor ? ' · 다음 페이지 있음' : ' · 다음 페이지 없음');
+  $('autonomous-next').disabled = autonomous.busy || !autonomous.nextCursor; $('autonomous-first').disabled = autonomous.busy;
+  const t = autonomous.detail; $('autonomous-review').hidden = !t; if (!t) return;
+  const s = t.spec, profiles = Array.isArray(s.externalProfiles) ? s.externalProfiles : [];
+  $('autonomous-current').textContent = autonomousText(t.id, 128) + ' · revision ' + t.revision;
+  $('autonomous-status').textContent = autonomousStates[t.status]; $('autonomous-goal').textContent = autonomousText(s.goal);
+  $('autonomous-model').textContent = autonomousText(s.model, 100) + (s.subagentModel ? ' / 자식 ' + autonomousText(s.subagentModel, 100) : '');
+  $('autonomous-ends').textContent = Number.isSafeInteger(s.endsAt) ? date(s.endsAt) : '미보고';
+  $('autonomous-tools').textContent = (s.tools || []).map(v => autonomousText(v, 128)).join(', ') || '없음';
+  $('autonomous-web').textContent = (s.web?.allowedHosts || []).map(v => autonomousText(v, 253)).join(', ') || '허용 호스트 없음';
+  $('autonomous-credentials').textContent = (s.credentialIds || []).map(v => autonomousText(v, 128)).join(', ') || 'reference 없음';
+  $('autonomous-profiles').textContent = profiles.length ? profiles.map(ref => { const p = t.externalProfilesMetadata?.find(p => p.id === ref); return autonomousText(ref, 128) + (p ? ' — ' + p.provider + ' ' + JSON.stringify(p.target) + '\n허용 ' + p.operations.join(', ') + ' · 행동 상한 ' + usd(p.upperBoundMicros) + '\nprofileHash ' + p.profileHash : ' — 대상·상한 metadata 미확인'); }).join('\n\n') : '외부 profile 없음';
+  $('autonomous-source').textContent = s.execution ? autonomousText(s.execution.snapshotId, 64) + '\n' + (s.execution.checks || []).map(c => autonomousText(c.id, 128) + ': ' + autonomousText(JSON.stringify(c.argv), 2000)).join('\n') : 'snapshot 미보고';
+  $('autonomous-budget').textContent = usd(s.budgetMicros); $('autonomous-reserved').textContent = usd(t.reservedMicros) + ' (예약 상한)';
+  $('autonomous-spent').textContent = usd(t.spentMicros) + ' · 원장 확인분만; 미확정 청구 별도' + ((t.actions || []).some(a => a.status === 'accepted') ? ' · 수락된 행동 청구 미확정' : '');
+  const runs = Array.isArray(t.runs) ? t.runs : [], unknown = runs.some(r => r.costMicros === null);
+  $('autonomous-model-cost').textContent = unknown ? '미확정 (구독 금액 포함)' : runs.length ? '현재 이력 페이지 보고 금액 · 전체 청구 미확정' : '미확정 · 실행 이력 조회 필요';
+  const last = runs.at(-1); $('autonomous-usage').textContent = t.runsUnavailable ? '실행 이력 조회 불가 · 미측정' : last?.usageUnavailable ? '미측정 · placeholder 0은 측정값 아님' : last?.usage ? '현재 페이지 입력 ' + last.usage.inputTokens + ' / 출력 ' + last.usage.outputTokens : '아직 측정 근거 없음';
+  if (t.runsNextCursor) $('autonomous-usage').textContent += ' · 다음 이력 페이지 있음';
+  $('autonomous-cleanup').textContent = t.status === 'stopping' ? '미확정 실행·비용·정리 확인 중' : 'summary만 조회 · 정리 완료를 의미하지 않음';
+  if (Number.isSafeInteger(t.externalActionPageCount) && t.externalActionPageCount >= 0) {
+    const cleanupNames = { none: '활성 또는 정리 미요청', pending: '정리 대기', deleting: '삭제 확인 중', cleaned: '부재 확인됨', unknown: '정리 상태 미보고' };
+    $('autonomous-cleanup').textContent += '\n외부 행동 현재 페이지 ' + t.externalActionPageCount + '건' + (t.externalActionsHasNext ? ' · 다음 페이지 있음' : ' · 다음 페이지 없음');
+    for (const r of t.externalActionResources || []) {
+      $('autonomous-cleanup').textContent += '\n요청 ' + (r.requestId || '미보고') + ' · revision ' + (r.revision === null ? '미보고' : r.revision) + ' · 소유 자원 ' + (r.resourceId || '미보고') + ' · ' + cleanupNames[r.cleanupStatus];
+      $('autonomous-cleanup').textContent += '\nprofile ' + (r.profileId || '미보고') + ' · 승인 당시 대상 ' + (r.approvedTarget ? JSON.stringify(r.approvedTarget) : '미보고') + (r.approvedProfileHash ? ' · 승인 hash ' + r.approvedProfileHash : '');
+      if (r.parameterHash) $('autonomous-cleanup').textContent += '\n파라미터 hash ' + r.parameterHash;
+      if (r.parametersSubset) $('autonomous-cleanup').textContent += '\n제출 파라미터 ' + JSON.stringify(r.parametersSubset);
+      if (r.providerResult) $('autonomous-cleanup').textContent += '\nprovider 결과 ' + JSON.stringify(r.providerResult);
+      if (r.billingSource) $('autonomous-cleanup').textContent += '\n' + (r.billingSource === 'operator_attested' ? '운영자 확인 · provider API 측정 아님' : '보고 출처: ' + r.billingSource + ' · 검증 근거 별도') + ' · 보고 금액 ' + usd(r.reportedCostMicros) + (r.evidenceRef ? ' · 근거 ' + r.evidenceRef : '') + (r.attestedAt !== null ? ' · 확인 시각 ' + date(r.attestedAt) : '');
+    }
+  } else $('autonomous-cleanup').textContent += '\n외부 자원 페이지 조회 불가';
+  $('autonomous-approve').disabled = autonomous.busy || t.status !== 'awaiting_approval' || autonomousProfileHashes(t) === null;
+  $('autonomous-resume').disabled = autonomous.busy || t.status !== 'awaiting_input';
+  $('autonomous-cancel').disabled = autonomous.busy || ['completed', 'cancelled', 'expired', 'failed', 'budget_exceeded'].includes(t.status);
+  $('autonomous-message').disabled = autonomous.busy; $('autonomous-refresh').disabled = autonomous.busy;
+}
+function applyAutonomousDetail(raw) {
+  const t = autonomousTask(raw), prior = autonomous.detail;
+  if (prior && prior.id === t.id && prior.revision !== t.revision) { $('autonomous-reason').value = ''; autonomousError('revision이 바뀌었습니다. 현재 범위를 다시 검토하세요.'); }
+  else if (prior && prior.id === t.id && JSON.stringify(autonomousProfileHashes(prior)) !== JSON.stringify(autonomousProfileHashes(t))) { $('autonomous-reason').value = ''; autonomousError('외부 profile 대상 또는 설정이 바뀌었습니다. 다시 검토하세요.'); }
+  autonomous.detail = t; renderAutonomous();
+}
+async function selectAutonomousTask(id) {
+  if (autonomous.busy) return; const epoch = ++autonomous.epoch; autonomous.selectedId = id; autonomous.detail = null; $('autonomous-reason').value = ''; autonomousError(null); renderAutonomous();
+  try { const t = await loadAutonomousTask(id); if (epoch === autonomous.epoch) applyAutonomousDetail(t); }
+  catch { if (epoch === autonomous.epoch) autonomousError('장기 작업 범위를 조회할 수 없습니다. 연결·권한을 확인하세요.'); }
+}
+async function refreshAutonomous() {
+  if (autonomous.refreshing || autonomous.busy) return; autonomous.refreshing = true; const epoch = autonomous.epoch;
+  try {
+    const page = await autonomousApi(autonomousPath + '?limit=20' + (autonomous.cursor ? '&cursor=' + encodeURIComponent(autonomous.cursor) : ''));
+    if (!Array.isArray(page.items) || page.items.length > 20 || page.nextCursor !== undefined && (typeof page.nextCursor !== 'string' || page.nextCursor.length > 512)) throw new Error();
+    autonomous.items = page.items.map(autonomousTask); autonomous.nextCursor = page.nextCursor || null;
+    if (autonomous.error?.startsWith('Cloudflare')) autonomousError(null); renderAutonomous();
+    const id = autonomous.selectedId; if (id) { const detail = await loadAutonomousTask(id); if (!autonomous.busy && epoch === autonomous.epoch && id === autonomous.selectedId) applyAutonomousDetail(detail); }
+  } catch { autonomousError('Cloudflare 장기 작업 연결을 사용할 수 없습니다. 서버 설정과 권한을 확인하세요.'); }
+  finally { autonomous.refreshing = false; }
+}
+$('autonomous-refresh').addEventListener('click', () => { void refreshAutonomous(); });
+$('autonomous-first').addEventListener('click', async () => { autonomous.cursor = null; await refreshAutonomous(); });
+$('autonomous-next').addEventListener('click', async () => { if (autonomous.nextCursor) { autonomous.cursor = autonomous.nextCursor; await refreshAutonomous(); } });
+$('autonomous-decision-form').addEventListener('submit', async event => {
+  event.preventDefault(); if (autonomous.busy || !autonomous.detail) return;
+  const operation = event.submitter?.value; if (!['approve', 'cancel', 'message', 'resume'].includes(operation)) return;
+  const reviewed = autonomous.detail, revision = reviewed.revision, profileHashes = autonomousProfileHashes(reviewed), reason = $('autonomous-reason').value.trim();
+  if (!reason || reason.length > 2000) { autonomousError('현재 결정의 사유 또는 메시지를 입력하세요.'); return; }
+  autonomous.busy = true; autonomousError(null); renderAutonomous();
+  try {
+    if (operation === 'approve' || operation === 'resume') {
+      const current = await loadAutonomousTask(reviewed.id); applyAutonomousDetail(current);
+      if (current.revision !== revision) { $('autonomous-reason').value = ''; throw new Error(); }
+      if (operation === 'approve' && (current.status !== 'awaiting_approval' || profileHashes === null || JSON.stringify(profileHashes) !== JSON.stringify(autonomousProfileHashes(current)))) { $('autonomous-reason').value = ''; throw new Error(); }
+      if (operation === 'resume' && current.status !== 'awaiting_input') throw new Error();
+    }
+    const body = operation === 'approve' || operation === 'resume' ? { revision, reason, ...(operation === 'approve' && reviewed.spec.externalProfiles?.length ? { externalProfileHashes: profileHashes } : {}) } : operation === 'message' ? { message: reason } : { reason };
+    applyAutonomousDetail(await autonomousApi(autonomousPath + '/' + encodeURIComponent(reviewed.id) + '/' + operation, body)); $('autonomous-reason').value = '';
+  } catch (error) {
+    if (error.status === 409 && (operation === 'approve' || operation === 'resume')) {
+      $('autonomous-reason').value = '';
+      try { applyAutonomousDetail(await loadAutonomousTask(reviewed.id)); } catch { /* Keep the last visible review; never retry approval. */ }
+    }
+    autonomousError('요청을 기록하지 못했습니다. 현재 revision·범위·연결을 다시 확인하세요.');
+  }
+  finally { autonomous.busy = false; renderAutonomous(); }
+});
+void refreshAutonomous();
+setInterval(() => { if (!document.hidden) void refreshAutonomous(); }, 2000);

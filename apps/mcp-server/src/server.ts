@@ -4,6 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { CallToolResult, JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import {registerAutonomousOperatorTools} from './autonomous.js';
 
 export interface McpSettings { apiUrl: string; operatorToken: string }
 export interface HivemindMcpOptions extends McpSettings { fetchImpl?: typeof fetch }
@@ -76,7 +77,7 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
     return value;
   };
   const numeric = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-  const server = new SafeMcpServer({ name: 'hivemind', version: '0.1.0' }, { maxToolInputElements: 128, instructions: 'Cloudflare 작업의 대상 저장소와 고정 커밋을 먼저 확인하세요. 작업 등록은 실행 승인 전 초안만 만듭니다. 실행 승인·결과 수락·반려·중단은 명시적인 사용자 지시에 따라 별도로 호출하세요. 결과 수락은 검토 이력만 기록하며 적용·병합·푸시를 실행하지 않습니다.' });
+  const server = new SafeMcpServer({ name: 'hivemind', version: '0.1.0' }, { maxToolInputElements: 512, instructions: 'Cloudflare 작업의 대상 저장소와 고정 커밋을 먼저 확인하세요. 작업 등록은 실행 승인 전 초안만 만듭니다. 실행 승인·결과 수락·반려·중단은 명시적인 사용자 지시에 따라 별도로 호출하세요. 결과 수락은 검토 이력만 기록하며 적용·병합·푸시를 실행하지 않습니다.' });
   async function api(path: string, signal: AbortSignal, body?: Record<string, unknown>): Promise<Record<string, unknown>> {
     const encoded = body === undefined ? undefined : JSON.stringify(body);
     if (encoded && Buffer.byteLength(encoded) > 64000) throw new Error(toolError);
@@ -213,5 +214,6 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
           truncated:verification.process.truncated,...(includeLogs?{stdout:limit.take(verification.process.stdout),stderr:limit.take(verification.process.stderr)}:{}),
         }}:null},truncated:limit.truncated||result.diffTruncated===true||verification?.process.truncated===true};
     }));
+  registerAutonomousOperatorTools(server,{...settings,fetchImpl,redact});
   return server;
 }

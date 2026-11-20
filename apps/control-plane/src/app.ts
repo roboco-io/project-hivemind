@@ -1,3 +1,7 @@
+import {projectAutonomousCloudResponse,validateAutonomousCloudRequest,type AutonomousCloudProxy} from './autonomous-cloud-proxy.js';
+import {handleAutonomousExternalApi,type AutonomousExternalService} from './autonomous-external-api.js';
+import {createAutonomousStore} from '../../../packages/core/src/autonomous-store.js';
+import {createAutonomousApiService,handleAutonomousApi} from './autonomous-api.js';
 import Fastify, { type FastifyRequest, type FastifyReply } from 'fastify';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -7,7 +11,7 @@ import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js
 
 import type {CloudWorkflowControl} from '../../../packages/contracts/src/workflow.js';
 
-export interface AppOptions { dbPath?: string; operatorToken?: string; workerToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl }
+export interface AppOptions { autonomousCloudProxy?:AutonomousCloudProxy; localExternalService?:AutonomousExternalService; dbPath?: string; operatorToken?: string; workerToken?: string; nativeReporterToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl }
 const string = {type:'string',minLength:1,maxLength:4000};
 const credentials = {workerId:{...string,maxLength:120},leaseToken:{...string,maxLength:120}};
 const body = (properties: Record<string,unknown>, required = Object.keys(properties)) => ({body:{type:'object',additionalProperties:false,required,properties}});
@@ -35,6 +39,66 @@ export function buildApp(options: AppOptions = {}) {
   if (!operatorToken.trim() || !workerToken.trim() || equalSecret(operatorToken,workerToken)) throw new Error('Operator and worker tokens must be nonempty and distinct');
   const app = Fastify({bodyLimit:2000000,logger:false,ajv:{customOptions:{coerceTypes:false,removeAdditional:false}}});
   const store = new HiveStore(options.dbPath ?? ':memory:',options.now,options.repository);
+  const autonomousStore=createAutonomousStore(options.dbPath ?? ':memory:');
+  const autonomousService=createAutonomousApiService(autonomousStore,options.now);
+  app.addHook('onClose',async()=>{autonomousStore.close();});
+  app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});
+  app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks/*',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});
+  async function autonomousGuard(request:FastifyRequest,reply:FastifyReply){
+    const path=new URL(request.url,'http://local').pathname;
+    const workerAction=/^\/v1\/autonomous-tasks\/[^/]+\/(claim|native-start|heartbeat|finish|reserve|settle|worker-state|external-action)\/?$/.test(path);
+    const reporterAction=/^\/v1\/autonomous-tasks\/[^/]+\/(native-ready|native-receipt)\/?$/.test(path);
+    const reporterToken=options.nativeReporterToken;
+    if(reporterAction&&(!reporterToken||/[\s\p{Cc}]/u.test(reporterToken)||equalSecret(reporterToken,operatorToken)||equalSecret(reporterToken,workerToken)))return reply.code(503).send({error:'Reporter authentication unavailable'});
+    if(!equalSecret(request.headers.authorization??'',`Bearer ${reporterAction?reporterToken:workerAction?workerToken:operatorToken}`))return reply.code(401).send({error:'Unauthorized'});
+  }
+  async function autonomous(request:FastifyRequest,reply:FastifyReply){
+    const headers=new Headers();
+    for(const [key,value] of Object.entries(request.headers))if(value!==undefined)headers.set(key,Array.isArray(value)?value.join(','):value);
+    // Fastify parsed the body; shared Web handler owns payload validation.
+    headers.delete('content-length');
+    const webRequest=new Request('http://local'+request.url,{method:request.method,headers,...(request.body===undefined?{}:{body:JSON.stringify(request.body)})});
+    const external=/^\/v1\/autonomous-tasks\/[^/]+\/external-/.test(new URL(webRequest.url).pathname);
+    const service={async execute(operation:Parameters<typeof autonomousService.execute>[0],input:Record<string,unknown>){
+      if(operation==='cancel'||operation==='revise'){
+        if(options.localExternalService){try{await options.localExternalService.beforeCoreMutation(input.id as string,operation);}catch{throw Object.assign(new Error('External bridge unavailable'),{statusCode:503});}}
+        else{const task=await autonomousService.execute('get',{id:input.id}) as {spec:{externalProfiles?:string[]};actions:{tool:string;requestId:string}[]};
+          const revised=input.spec as {externalProfiles?:string[]}|undefined;
+          if(task.spec.externalProfiles?.length||revised?.externalProfiles?.length||task.actions.some(a=>a.tool==='mcp__hivemind__action'||a.requestId.startsWith('external:')))throw Object.assign(new Error('External bridge unavailable'),{statusCode:503});}
+      }
+      if(operation==='approve'){
+        const task=await autonomousService.execute('get',{id:input.id}) as {spec:{externalProfiles?:string[]}};
+        if(task.spec.externalProfiles?.length){
+          const external=options.localExternalService;
+          if(!external?.assertApproval)throw Object.assign(new Error('External bridge unavailable'),{statusCode:503});
+          const hashes=input.externalProfileHashes;
+          if(!hashes||typeof hashes!=='object'||Array.isArray(hashes)||Object.keys(hashes).length!==task.spec.externalProfiles.length||task.spec.externalProfiles.some(id=>!Object.hasOwn(hashes,id)))throw Object.assign(new Error('External approval conflict'),{statusCode:409});
+          try{await external.assertApproval(input.id as string,input.revision as number,hashes as Record<string,string>);}catch(error){const status=(error as {statusCode?:number})?.statusCode;throw Object.assign(new Error('External approval unavailable'),{statusCode:status&&[400,403,404,409,422,503].includes(status)?status:503});}
+          const approved=await autonomousService.execute(operation,input);
+          try{await external.approve(input.id as string);}catch(error){const status=(error as {statusCode?:number})?.statusCode;throw Object.assign(new Error('External approval unavailable'),{statusCode:status&&[400,403,404,409,422,503].includes(status)?status:503});}
+          return approved;
+        }
+      }
+      return autonomousService.execute(operation,input);
+    }};
+    const response=external?await handleAutonomousExternalApi(webRequest,options.localExternalService?{operatorToken,workerToken,service:options.localExternalService}:undefined):await handleAutonomousApi(webRequest,{operatorToken,workerToken,reporterToken:options.nativeReporterToken,service});
+    response.headers.forEach((value,key)=>reply.header(key,value));
+    return reply.code(response.status).send(await response.text());
+  }
+  const cloudPrefix='/api/cloudflare/autonomous-tasks';
+  async function cloudOperator(request:FastifyRequest,reply:FastifyReply){
+    if(!equalSecret(request.headers.authorization??'',`Bearer ${operatorToken}`))return reply.code(401).send({error:'Unauthorized'});
+    try{validateAutonomousCloudRequest(new Request('http://local'+request.url,{method:request.method}));}catch(error){const status=(error as {statusCode?:number})?.statusCode;return reply.code(status===400?400:404).send({error:'Invalid autonomous cloud request'});}
+  }
+  async function autonomousCloud(request:FastifyRequest,reply:FastifyReply){
+    if(!options.autonomousCloudProxy)return reply.code(503).send({error:'Cloudflare autonomous request unavailable'});
+    try{
+      const response=await options.autonomousCloudProxy.forward(new Request('http://local'+request.url,{method:request.method,...(request.body===undefined?{}:{headers:{'content-type':'application/json'},body:JSON.stringify(request.body)})}));
+      const safe=await projectAutonomousCloudResponse(response,[operatorToken,workerToken,...(options.nativeReporterToken?[options.nativeReporterToken]:[])]);
+      return reply.type('application/json').code(safe.status).send(await safe.text());
+    }catch{return reply.code(503).send({error:'Cloudflare autonomous request unavailable'});}
+  }
+  for(const url of [cloudPrefix,cloudPrefix+'/*'])app.route({method:['GET','POST','PUT','DELETE','PATCH'],url,bodyLimit:65536,onRequest:cloudOperator,handler:autonomousCloud});
   if (options.cloudflare) app.addHook('onReady', async () => options.cloudflare!.start());
   app.addHook('onClose', async () => { try { await options.cloudflare?.close(); } finally { try { options.workflows?.close(); } finally { store.close(); } } });
   app.addHook('onRequest',async (_request,reply) => {
@@ -43,6 +107,10 @@ export function buildApp(options: AppOptions = {}) {
     reply.header('content-security-policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   });
   app.setErrorHandler((error,request,reply) => {
+    const path=new URL(request.url,'http://local').pathname;
+    if ((path==='/v1/autonomous-tasks'||path.startsWith('/v1/autonomous-tasks/')||path===cloudPrefix||path.startsWith(cloudPrefix+'/')) && error instanceof Error && 'statusCode' in error && typeof error.statusCode==='number' && error.statusCode>=400 && error.statusCode<500) {
+      return reply.code(error.statusCode).send({error:error.statusCode===413?'Autonomous request too large':'Invalid autonomous request'});
+    }
     if (error instanceof DomainError) return reply.code(error.statusCode).send({error:error.message});
     if (error instanceof Error && 'statusCode' in error && typeof error.statusCode === 'number' && error.statusCode < 500) return reply.code(error.statusCode).send({error:error.message});
     request.log.error(error); return reply.code(500).send({error:'Internal server error'});
