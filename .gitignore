@@ -8,3 +8,9 @@ coverage/
 
 .hivemind
 .playwright-mcp/
+
+.superlite/
+
+.handoff.md
+
+__pycache__/
