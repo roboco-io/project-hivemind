@@ -48,3 +48,10 @@ test('Bash that claude-bash-hook would reject (NUL byte, sandbox override) is re
  await h.run({hook_event_name:'PreToolUse',tool_use_id:'n3',tool_name:'Agent',tool_input:{subagent_type:'other'}});
  assert.deepEqual(foldToolAuditSpool(h.lines.join('\n')+'\n').records.map(r=>r.outcome),['denied','denied','denied']);
 });
+test('real Agent payload with run_in_background false is recorded as allowed; true is denied',async()=>{
+ const h=harness({policy:{...policy,tools:['Bash','WebFetch','Agent']}});
+ const input={description:'Check counter value',prompt:'Read /workspace/counter.txt with `cat /workspace/counter.txt` and report its exact contents. Do not modify anything.',run_in_background:false,subagent_type:'worker'};
+ await h.run({hook_event_name:'PreToolUse',tool_use_id:'ag1',tool_name:'Agent',tool_input:input});
+ await h.run({hook_event_name:'PreToolUse',tool_use_id:'ag2',tool_name:'Agent',tool_input:{...input,run_in_background:true}});
+ assert.deepEqual(foldToolAuditSpool(h.lines.join('\n')+'\n').records.map(r=>r.outcome),['allowed','denied']);
+});

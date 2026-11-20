@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "d12d69147d678363d0b483862d0411618faa155e6f8aac1834b5b2c865f3705e",
+  "digest": "89984a58a160a7c8bf4a0258a188d7726eaa2bb10bf339e8ebd064dbe51cc92c",
   "files": {
     ".dockerignore": "de83695a16eda0fca3d47bb8bb7250569cf0d8b88bc736ccf7dffcc5bfde8a53",
     "backend/Dockerfile": "18bb8783cbd8826cacb1bd99d49410730f30cc99739c03b5fdf31dbe1f04a5c5",
@@ -52,7 +52,7 @@
     "backend/src/runtime/autonomous-quota.ts": "6440df1bd945b72523da519237cea4dc7bafb74286f2615ed46830d44c2f307e",
     "backend/src/runtime/autonomous-reporter.ts": "683a59be7d1ad8bf59ba409e2eb36e213b0074d364a56ab23aaa3f6f16c33244",
     "backend/src/runtime/autonomous-session.ts": "9ef7316bf4e143655579ad7af26784de6f508932bc583b029c3835010a97be6c",
-    "backend/src/runtime/autonomous-tool-hook.ts": "814916db6e3c4950c972d7ec88dbef1ab790d4ddc188fd095681283f03b9e54a",
+    "backend/src/runtime/autonomous-tool-hook.ts": "014dbe2b61175a9faa9bf9935960b8b342c76ea4dbc5f9d2333a1b575b2eb8d8",
     "backend/src/runtime/autonomous-web-transport.ts": "295cab976d76dafbe927f32dd27c1fbe194cc79d8995ef5fe8ed4779df994524",
     "backend/src/runtime/autonomous-web.ts": "a82af63298721e6af758165b60cf6486276bc98377fd78080f5851d8ae492460",
     "backend/src/runtime/bash-diagnostic.ts": "66ec7d0b083dc5a4e032e26d84829e30b77ab48cd16ac2c660a37db375738e94",
