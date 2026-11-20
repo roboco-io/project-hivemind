@@ -12,6 +12,7 @@ import {Guard,parseVm,profile,validateMemoryOptions} from './metrics.ts';
 import {selectMacSdk} from './sdk.ts';
 import {validateBuildBatch,executeBatch} from './batch.ts';
 import {validateMemoryBatch,shardScript} from './memory-batch.ts';
+import {LOCAL_CCACHE_VERSION,localCcachePaths,parseCcacheStats,prepareLocalCcache,verifyLocalCcache,type CacheCondition} from './local-ccache.ts';
 const HERE=dirname(fileURLToPath(import.meta.url));
 export const COMMIT='68d7555f68bd25c1a251ccca2e6338949c33986a';
 const archiveUrl=`https://codeload.github.com/duckdb/duckdb/tar.gz/${COMMIT}`;
@@ -111,29 +112,56 @@ async function build(root:string,id:string,config:string,jobs:number){
   return {buildDirectory:build,config,jobs,actualMacSdk:actualSdk??null,testInventorySha256:createHash('sha256').update(list).digest('hex'),testInventoryLines:list.split('\n').length,ninjaActions:actions.length};
  });
 }
-async function buildBatch(root:string,id:string,configs:string[],concurrency:number,jobs:number){
+async function buildBatch(root:string,id:string,configs:string[],concurrency:number,jobs:number,cacheCondition?:CacheCondition){
  if(!/^[a-z0-9][a-z0-9-]{0,80}$/.test(id))throw Error('Invalid run ID');
  const settings=validateBuildBatch(configs,concurrency,jobs),sdk=await selectMacSdk(process.env.DUCKDB_PILOT_OSX_SYSROOT);
- const source=join(root,'source'),batchRoot=join(root,'builds',id),environment=await readJson(join(root,'environment.json'));
+ const cacheLayout=cacheCondition?localCcachePaths(root,'c3'):undefined;
+ const source=join(root,'source'),batchRoot=cacheLayout?join(cacheLayout.work,'build'):join(root,'builds',id),environment=await readJson(join(root,'environment.json'));
  return measured(root,id,async c=>{
-  await mkdir(join(root,'builds'),{recursive:true});
+  if(cacheLayout){
+   if(platform()!=='darwin'||!sdk||process.env.DUCKDB_SKIP_JEMALLOC!=='1')throw Error('Pilot ccache requires Darwin, an explicit SDK and jemalloc off');
+   await verifyLocalCcache(root);
+   if(cacheCondition==='seed')await mkdir(cacheLayout.seeds,{mode:0o700,recursive:true});
+   if(cacheCondition==='seed'&&(await readdir(cacheLayout.seeds)).length)throw Error('Pilot ccache seed already exists');
+   await rm(cacheLayout.work,{recursive:true,force:true});
+   await mkdir(cacheLayout.work,{mode:0o700,recursive:true});
+  }else await mkdir(join(root,'builds'),{recursive:true});
   await mkdir(batchRoot,{mode:0o700});
-  await atomicJson(join(c.run,'batch-settings.json'),{sourceCommit:COMMIT,...settings,requestedMacSdk:sdk??null,purpose:'P0 capacity gate; not the main comparison'});
+  await atomicJson(join(c.run,'batch-settings.json'),{sourceCommit:COMMIT,...settings,requestedMacSdk:sdk??null,purpose:cacheCondition?'ccache comparison':'P0 capacity gate; not the main comparison',cacheCondition});
   await atomicJson(join(c.run,'environment.json'),{...environment,requestedMacSdk:sdk??null});
   const manifest=join(HERE,'projection-tests.txt');
   const expected=(await readFile(manifest,'utf8')).trim().split('\n');
   const records=await executeBatch(settings.profiles,concurrency,async p=>{
    const prefix=p.config.toLowerCase(),build=join(batchRoot,prefix);await mkdir(build,{mode:0o700});
-   const args=['-S',source,'-B',build,'-G','Ninja','-DCMAKE_MAKE_PROGRAM='+join(root,'tools','bin','ninja'),'-DCMAKE_BUILD_TYPE=Release','-DENABLE_SANITIZER=OFF','-DENABLE_UBSAN=OFF','-DBUILD_UNITTESTS=ON','-DBUILD_SHELL=ON','-DBUILD_EXTENSIONS=tpch','-DTREAT_WARNINGS_AS_ERRORS=OFF','-DDISABLE_UNITY='+(p.disableUnity?'ON':'OFF'),'-DFORCE_ASSERT='+(p.forceAssert?'ON':'OFF'),'-DCMAKE_C_COMPILER_LAUNCHER=','-DCMAKE_CXX_COMPILER_LAUNCHER=','-DOVERRIDE_GIT_DESCRIBE=v1.4.2-0-g68d7555f68','-DDUCKDB_EXPLICIT_VERSION=v1.4.2'];
+   const ccache=cacheCondition?localCcachePaths(root,prefix):undefined;
+   let seed: {sha256:string;bytes:number;hashMs:number}|undefined;
+   if(ccache){
+    await mkdir(ccache.cache,{mode:0o700,recursive:true});
+    if(cacheCondition==='reuse'){
+     const hashStarted=Date.now(),actualSha=await fileHash(ccache.archive);
+     const receipt=await readJson(ccache.archive+'.json');
+     if(actualSha!==receipt.sha256||(await stat(ccache.archive)).size!==receipt.bytes)throw Error('Pilot ccache seed digest differs');
+     seed={sha256:actualSha,bytes:receipt.bytes,hashMs:Date.now()-hashStarted};
+     await c.stage(prefix+'-cache-restore',['/usr/bin/tar','-xzf',ccache.archive,'-C',ccache.cache],source,120000);
+    }
+   }
+   const buildCommand=(commandArgs:string[])=>ccache?['/usr/bin/env',...ccache.settings,...commandArgs]:commandArgs;
+   const args=['-S',source,'-B',build,'-G','Ninja','-DCMAKE_MAKE_PROGRAM='+join(root,'tools','bin','ninja'),'-DCMAKE_BUILD_TYPE=Release','-DENABLE_SANITIZER=OFF','-DENABLE_UBSAN=OFF','-DBUILD_UNITTESTS=ON','-DBUILD_SHELL=ON','-DBUILD_EXTENSIONS=tpch','-DTREAT_WARNINGS_AS_ERRORS=OFF','-DDISABLE_UNITY='+(p.disableUnity?'ON':'OFF'),'-DFORCE_ASSERT='+(p.forceAssert?'ON':'OFF'),'-DCMAKE_C_COMPILER_LAUNCHER='+(ccache?.executable??''),'-DCMAKE_CXX_COMPILER_LAUNCHER='+(ccache?.executable??''),'-DOVERRIDE_GIT_DESCRIBE=v1.4.2-0-g68d7555f68','-DDUCKDB_EXPLICIT_VERSION=v1.4.2'];
    if(process.env.DUCKDB_SKIP_JEMALLOC==='1')args.push('-DSKIP_EXTENSIONS=jemalloc');
    if(sdk)args.push('-DCMAKE_OSX_SYSROOT='+sdk.path);
    await atomicJson(join(c.run,prefix+'-build-settings.json'),{sourceCommit:COMMIT,config:p.config,jobs,configure:args,requestedMacSdk:sdk??null});
-   await c.stage(prefix+'-configure',[join(root,'tools','bin','cmake'),...args],source,120000);
+   await c.stage(prefix+'-configure',buildCommand([join(root,'tools','bin','cmake'),...args]),source,120000);
    const cache=await readFile(join(build,'CMakeCache.txt'),'utf8'),cacheSdk=/^CMAKE_OSX_SYSROOT:[^=]+=([^\r\n]*)$/m.exec(cache)?.[1];
    const actualSdk=cacheSdk&&platform()==='darwin'?await selectMacSdk(cacheSdk):undefined;
    if(sdk&&actualSdk?.path!==sdk.path)throw Error('Pilot configured SDK differs from selected SDK');
    await atomicJson(join(c.run,prefix+'-environment.json'),{...environment,requestedMacSdk:sdk??null,actualMacSdk:actualSdk??null});
-   await c.stage(prefix+'-build',[join(root,'tools','bin','cmake'),'--build',build,'--parallel',String(jobs)],source,3600000);
+   if(ccache)await command('/usr/bin/env',[...ccache.settings,ccache.executable,'--zero-stats']);
+   await c.stage(prefix+'-build',buildCommand([join(root,'tools','bin','cmake'),'--build',build,'--parallel',String(jobs)]),source,3600000);
+   if(ccache){
+    const stats=parseCcacheStats(await command('/usr/bin/env',[...ccache.settings,ccache.executable,'--print-stats']));
+    await atomicJson(join(c.run,prefix+'-ccache.json'),{condition:cacheCondition,version:LOCAL_CCACHE_VERSION,seed:seed??null,...stats});
+    if(stats.hitRate===null)throw Error('Pilot build did not report cacheable compiler calls');
+   }
    await c.stage(prefix+'-test-inventory',['python3',join(HERE,'inventory.py'),join(build,'test','unittest'),'[projection]',source,join(c.run,prefix+'-inventory-tmp')],source,30000);
    const list=(await readFile(join(c.run,prefix+'-test-inventory.stdout.log'),'utf8')).trim();if(!list||/No test cases matched/i.test(list))throw Error('Pilot test inventory is empty');
    if(JSON.stringify(list.split('\n').sort())!==JSON.stringify(expected))throw Error('Projection manifest differs');
@@ -142,7 +170,17 @@ async function buildBatch(root:string,id:string,configs:string[],concurrency:num
    const ninja=await readFile(join(build,'.ninja_log'),'utf8');const actions=ninja.split('\n').slice(1).flatMap(line=>{const a=line.split('\t');return a.length>=5?[{startMs:Number(a[0]),finishMs:Number(a[1]),output:a[3]}]:[];});await atomicJson(join(c.run,prefix+'-ninja-actions.json'),actions);
    return {buildDirectory:build,config:p.config,jobs,actualMacSdk:actualSdk??null,testInventorySha256:createHash('sha256').update(list).digest('hex'),testInventoryLines:list.split('\n').length,ninjaActions:actions.length};
   },reason=>c.requestStop(reason),records=>atomicJson(join(c.run,'batch-state.json'),{records}),c.isStopped);
-  return {purpose:'P0 capacity gate',sourceCommit:COMMIT,concurrency,jobs,profiles:configs,records,passed:records.every(r=>r.status==='SUCCEEDED')};
+  if(cacheCondition==='seed'&&records.every(r=>r.status==='SUCCEEDED')){
+   for(const prefix of ['c3','c4']){
+    const paths=localCcachePaths(root,prefix);
+    const partial=paths.archive+'.partial';
+    await c.stage(prefix+'-cache-save',['/usr/bin/tar','--no-xattrs','-czf',partial,'-C',paths.cache,'.'],source,120000);
+    const sha256=await fileHash(partial),bytes=(await stat(partial)).size;
+    await rename(partial,paths.archive);
+    await atomicJson(paths.archive+'.json',{sha256,bytes,runId:id});
+   }
+  }
+  return {purpose:cacheCondition?'ccache comparison':'P0 capacity gate',cacheCondition,sourceCommit:COMMIT,concurrency,jobs,profiles:configs,records,passed:records.every(r=>r.status==='SUCCEEDED')};
  });
 }
 async function memory(root:string,id:string,buildId:string,sf:number,memoryGiB:number,threads:number,queryIds:number[],concurrency:number){
@@ -209,11 +247,18 @@ async function memoryBatch(root:string,id:string,buildId:string,sf:number,memory
  });
 }
 export async function main(args:string[]){
- const [mode,directory,...rest]=args;if(!directory)throw Error('Usage: pilot.ts prepare ROOT | baseline ROOT ID SECONDS | build ROOT ID C1..C4 JOBS | build-batch ROOT ID C1,C2,.. CONCURRENCY JOBS | memory ROOT ID BUILD_ID SF MEM_GIB THREADS QUERY_IDS CONCURRENCY | memory-batch ROOT ID BUILD_ID SF MEM_GIB THREADS CONCURRENCY');const root=resolve(directory);
+ const [mode,directory,...rest]=args;if(!directory)throw Error('Usage: pilot.ts prepare ROOT | prepare-local-ccache ROOT | baseline ROOT ID SECONDS | build ROOT ID C1..C4 JOBS | build-batch ROOT ID C1,C2,.. CONCURRENCY JOBS | build-ccache-batch ROOT ID cold|seed|reuse | memory ROOT ID BUILD_ID SF MEM_GIB THREADS QUERY_IDS CONCURRENCY | memory-batch ROOT ID BUILD_ID SF MEM_GIB THREADS CONCURRENCY');const root=resolve(directory);
  if(mode==='prepare')return prepare(root);
+ if(mode==='prepare-local-ccache')return prepareLocalCcache(root);
  if(!await exists(join(root,'environment.json')))throw Error('Run prepare first');
  if(mode==='baseline'){const [id='baseline',seconds='600']=rest;const duration=Number(seconds);if(!Number.isInteger(duration)||duration<1||duration>600)throw Error('Invalid baseline duration');return measured(root,id,async c=>{const until=Date.now()+duration*1000;while(Date.now()<until){if(await exists(c.stopFile))throw Error('Pilot resource guard stopped baseline');await sleep(500);}return {durationSeconds:duration};});}
  if(mode==='build')return build(root,rest[0]!,rest[1]!,Number(rest[2]));
+ if(mode==='build-ccache-batch'){
+  if(rest.length!==2||!['cold','seed','reuse'].includes(rest[1]!))throw Error('Invalid ccache batch arguments');
+  const result=await buildBatch(root,rest[0]!,['C3','C4'],2,4,rest[1] as CacheCondition);
+  if(!result.outcome.passed)throw Error('Pilot ccache batch failed');
+  return result;
+ }
  if(mode==='build-batch'){if(rest.length!==4)throw Error('Invalid build batch arguments');return buildBatch(root,rest[0]!,rest[1]!.split(','),Number(rest[2]),Number(rest[3]));}
  if(mode==='memory-batch'){if(rest.length!==6)throw Error('Invalid memory batch arguments');return memoryBatch(root,rest[0]!,rest[1]!,Number(rest[2]),Number(rest[3]),Number(rest[4]),Number(rest[5]));}
  if(mode==='memory')return memory(root,rest[0]!,rest[1]!,Number(rest[2]),Number(rest[3]),Number(rest[4]),rest[5]!.split(',').map(Number),Number(rest[6]));

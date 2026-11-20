@@ -29,6 +29,18 @@ function receipt(result:any){
  }catch{return undefined;}
 }
 function stopped(state:any){return [...(state.jobs??[]),...(state.integration?[state.integration]:[])].every((x:any)=>terminal(x.job.status)&&x.job.containerStopped===true);}
+const cacheModes={ 'ccache-seed':'seed','ccache-cold':'cold','ccache-warm':'warm' } as const;
+type CacheMode=typeof cacheModes[keyof typeof cacheModes];
+function validCache(mode:CacheMode,stats:any,evidence:any):boolean {
+ const digest=(value:unknown)=>typeof value==='string'&&/^[a-f0-9]{64}$/.test(value);
+ const count=(value:number)=>Number.isSafeInteger(value)&&value>=0;
+ if(stats?.version!=='4.14.3'||![stats.hits,stats.directHits,stats.preprocessedHits,stats.misses,stats.uncacheable,stats.filesInCache,stats.sizeKiB].every(count)||
+   stats.hits!==stats.directHits+stats.preprocessedHits||stats.hits+stats.misses===0||evidence?.mode!==mode||!count(evidence.restoreMs))return false;
+ if(mode==='warm')return digest(evidence.restoredSha256)&&count(evidence.restoredBytes)&&evidence.restoredBytes>0&&evidence.published===undefined;
+ if(evidence.restoredSha256!==undefined||evidence.restoredBytes!==undefined)return false;
+ if(mode==='cold')return evidence.published===undefined;
+ return digest(evidence.published?.sha256)&&count(evidence.published.sizeBytes)&&evidence.published.sizeBytes>0&&count(evidence.published.durationMs);
+}
 async function withLock(root:string,fn:()=>Promise<void>){
  const path=join(root,'operator.lock');let handle;
  try{handle=await open(path,'wx',0o600);}catch{
@@ -40,14 +52,17 @@ async function withLock(root:string,fn:()=>Promise<void>){
 }
 export async function remotePilot(args:string[]){
  const [requestedPhase,directory,sourceRefPath,dataRefPath,origin,secrets,parallel]=args;
- const controlled=requestedPhase==='jemalloc-off';
+ const cacheMode=requestedPhase&&Object.hasOwn(cacheModes,requestedPhase)?cacheModes[requestedPhase as keyof typeof cacheModes]:undefined;
+ const cacheCampaign=cacheMode?process.env.DUCKDB_CACHE_CAMPAIGN:undefined;
+ if(cacheCampaign!==undefined&&!/^[a-z0-9-]{1,40}$/.test(cacheCampaign))throw Error('Pilot cache campaign is invalid');
+ const controlled=requestedPhase==='jemalloc-off'||cacheMode!==undefined;
  const matrix=requestedPhase==='matrix'||controlled;
  const profiles=controlled?['C3','C4']:['C1','C2','C3','C4'];
- const concurrency=matrix?Number(parallel):1;
+ const concurrency=cacheMode?2:matrix?Number(parallel):1;
  if(![1,2,4].includes(concurrency))throw Error('Invalid pilot concurrency');
  const inlineBoundary=requestedPhase==='boundary-then-build';
  const phase=inlineBoundary||matrix?'build':requestedPhase;
- if(!['boundary','build'].includes(phase??'')||!directory||!sourceRefPath||!dataRefPath||!origin||!secrets)throw Error('Usage: remote.ts boundary|build|boundary-then-build|matrix|jemalloc-off OUTPUT_ROOT SOURCE_REF_JSON DATA_REF_JSON_OR_- ORIGIN PRIVATE_CONTROL_JSON [CONCURRENCY]');
+ if(!['boundary','build'].includes(phase??'')||!directory||!sourceRefPath||!dataRefPath||!origin||!secrets)throw Error('Usage: remote.ts boundary|build|boundary-then-build|matrix|jemalloc-off|ccache-seed|ccache-cold|ccache-warm OUTPUT_ROOT SOURCE_REF_JSON DATA_REF_JSON_OR_- ORIGIN PRIVATE_CONTROL_JSON [CONCURRENCY]');
  const out=resolve(directory),root=join(out,phase!);await mkdir(root,{recursive:true,mode:0o700});
  await withLock(root,async()=>{
   const completed=await optional(join(root,'result.json'));if(completed){console.log(JSON.stringify({phase,status:completed.group?.status,verified:completed.validation?.passed===true,reused:true}));if(!completed.validation?.passed)throw Error('Existing pilot failed; preserve evidence and use a new run root');return;}
@@ -68,12 +83,12 @@ export async function remotePilot(args:string[]){
   await writeFile(join(snapshotDir,'toolchain.ts'),await readFile(join(HERE,'remote','toolchain.ts')),{mode:0o600});
   await writeFile(join(snapshotDir,'probe-policy.ts'),await readFile(join(HERE,'remote','probe-policy.ts')),{mode:0o600});
   await writeFile(join(snapshotDir,'projection-tests.txt'),await readFile(join(HERE,'projection-tests.txt')),{mode:0o600});
-  for(const name of ['build-evidence.mjs','install-build-tools.py','build-cpu.py'])await writeFile(join(snapshotDir,name),await readFile(join(HERE,'remote',name)),{mode:0o600});
+  for(const name of ['build-evidence.mjs','install-build-tools.py','build-cpu.py','cache-stats.ts'])await writeFile(join(snapshotDir,name),await readFile(join(HERE,'remote',name)),{mode:0o600});
   await writeFile(join(snapshotDir,'inventory.py'),await readFile(join(HERE,'inventory.py')),{mode:0o600});
-  await writeFile(join(snapshotDir,'runner-config.json'),JSON.stringify({phase,commit:COMMIT,...(controlled?{jemallocOff:true}:{})}),{mode:0o600});
+  await writeFile(join(snapshotDir,'runner-config.json'),JSON.stringify({phase,commit:COMMIT,...(controlled?{jemallocOff:true}:{}),...(cacheMode?{ccache:true,cacheCampaign}:{})}),{mode:0o600});
   await writeFile(join(snapshotDir,'integration.mjs'),'console.log(JSON.stringify({passed:true,kind:"lifecycle-aggregation",rebuild:false}));\n',{mode:0o600});
   const snapshot=await readSnapshot(snapshotDir);
-  const spec={snapshotId:snapshot.digest,idempotencyKey:'duckdb-p0-'+phase+'-'+hash(root).slice(0,40),concurrency,instance:'standard-4',artifacts:refs,checks:matrix?profiles.map(id=>({id,argv:['node','runner.mjs',id],timeoutMs:3600000})):[{id:phase,argv:['node','runner.mjs'],timeoutMs:phase==='build'?3600000:600000}],integration:{id:'aggregate',argv:['node','integration.mjs'],timeoutMs:120000}};
+  const spec={snapshotId:snapshot.digest,idempotencyKey:'duckdb-p0-'+phase+'-'+hash(cacheMode?JSON.stringify([root,snapshot.digest,cacheMode,binding.runtimeRevision]):root).slice(0,40),concurrency,instance:'standard-4',artifacts:refs,checks:matrix?profiles.map(id=>({id,argv:cacheMode?['node','runner.mjs',id,cacheMode]:['node','runner.mjs',id],timeoutMs:3600000})):[{id:phase,argv:['node','runner.mjs'],timeoutMs:phase==='build'?3600000:600000}],integration:{id:'aggregate',argv:['node','integration.mjs'],timeoutMs:120000}};
   const specSha256=hash(JSON.stringify(spec)),plan={binding,spec,specSha256};
   const oldPlan=await optional(join(root,'plan.json'));if(oldPlan&&JSON.stringify(oldPlan)!==JSON.stringify(plan))throw Error('Pilot input changed since submission');
   if(!oldPlan)await atomicJson(join(root,'plan.json'),plan);
@@ -108,7 +123,8 @@ export async function remotePilot(args:string[]){
      required.every(name=>r.boundaries.checks.some((check:any)=>check.name===name&&validBoundaryCheck(check)))&&
      r.test?.passed===true&&r.test.inventoryCount===16&&r.toolchain?.compiler?.id==='Clang'&&
      (!controlled||(validDataPostcondition(r.boundaries.data,refs[1]!)&&input?.receipts?.[1]?.sha256===refs[1]!.sha256&&
-      r.buildCpu?.usageUsec>0&&typeof r.ninja?.data==='string'&&r.toolchain.cmakeVersion==='3.31.6'&&r.toolchain.ninjaVersion?.split('.git.')[0]==='1.13.0'));
+      r.buildCpu?.usageUsec>0&&typeof r.ninja?.data==='string'&&r.toolchain.cmakeVersion==='3.31.6'&&r.toolchain.ninjaVersion?.split('.git.')[0]==='1.13.0'))&&
+     (!cacheMode||validCache(cacheMode,r.cacheStats,item.result?.buildCache));
     return {profile:item.job.checkId,verified,receipt:r};
    });
    const passed=state.group.status==='SUCCEEDED'&&stopped(state)&&receipt(state.integration?.result)?.passed===true&&
