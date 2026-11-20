@@ -5,7 +5,14 @@ import type {AutonomousLease,AutonomousSpec,AutonomousTask,AutonomousAction} fro
 import type {ExternalAction,ExternalActionRequest,ExternalProfileRegistry,ExternalApproval,ExternalProfile,ExternalTarget} from '../../../packages/contracts/src/autonomous-external.js';
 import type {ExternalBroker} from '../../../packages/core/src/autonomous-external.js';
 import type {ExternalDurableStore,ExternalJournal,ExternalJournalQuery} from '../../../packages/core/src/autonomous-external-sql.js';
+import {validateExternalS3InspectParameters,validateExternalS3Parameters} from '../../../packages/core/src/autonomous-external-s3.ts';
+import {assertHfLfsAllowed,hfVisibilityDisplay} from '../../../packages/adapters/src/autonomous-external-hf-visibility.ts';
+import type {ExternalLargeLimits,ExternalLargeManifest} from '../../../packages/contracts/src/autonomous-external-large.js';
+import type {ExternalLargeStore} from '../../../packages/adapters/src/autonomous-external-large-store.ts';
+import {handleExternalLargeApi,type ExternalLargeAuthority} from './autonomous-external-large-api.ts';
 
+/** Operator-visible part of a profile target. S3 shows bucket and prefix, not size or retention limits. */
+export type ApprovedExternalTarget=Exclude<ExternalTarget,{bucket:string}>|{accountId:string;region:string;bucket:string;prefix:string};
 type CanonicalTask=AutonomousTask & {spec:AutonomousSpec & {externalProfiles?:string[]}};
 export interface ExternalWorkerRequest {lease:AutonomousLease;runtimeId:string;request:Omit<ExternalActionRequest,'taskId'|'revision'>}
 export interface ExternalArtifactRequest {lease:AutonomousLease;runtimeId:string;profileId:string;artifact:ExternalArtifact}
@@ -14,23 +21,33 @@ export interface ExternalBridgeOptions {
  knownSecretValues?:()=>readonly string[];
  /** Trusted migration/fixture escape hatch only. Default closed. */
  allowPreseededArtifacts?:boolean;
+ /** Persists the canonical large manifest under its digest. Without it, large manifests are refused. */
+ manifestStore?:{save(manifest:ExternalLargeManifest,manifestDigest:string):Promise<void>};
+ /** Cancels every large upload of a task revision when the task is cancelled or revised. */
+ largeStore?:Pick<ExternalLargeStore,'abortOwner'>;
  core:AutonomousApiService;broker:Pick<ExternalBroker,'serverApprove'|'execute'|'cancel'|'recover'|'getAction'|'listPending'|'reconcile'|'cleanup'>;
  registry:ExternalProfileRegistry;store:ExternalDurableStore;configurationFingerprint?:string;
 }
 export interface ExternalBillingAttestation {actualCostMicros:number;evidenceRef:string;reason:string;revision?:number}
 export interface ExternalPublicAction {
- profileId?:string;approvedTarget?:ExternalTarget;approvedProfileHash?:string;
- parameterHash?:string;parameters?:{lifetimeMs:number}|{startActionId:string}|{artifactDigest:string}|{artifactDigest:string;expectedHead:string};
+ profileId?:string;approvedTarget?:ApprovedExternalTarget;approvedProfileHash?:string;
+ parameterHash?:string;parameters?:{lifetimeMs:number}|{startActionId:string}|{artifactDigest:string}|{artifactDigest:string;expectedHead:string}|{manifestDigest:string}|{keySuffix:string;artifactDigest:string}|{putActionId:string};
  providerResult?:{kind:'aws_instance';id:string}|{kind:'hf_commit'|'github_commit';oid:string};
  revision:number;billingSource?:'provider_verified'|'operator_attested';evidenceRef?:string;attestedAt?:number;
  billingEvidence?:'undispatched_intent';recoveryIssue?:ExternalJournal['recoveryIssue'];resourceId?:string;requestId:string;phase:ExternalJournal['phase'];actionId?:string;status?:ExternalAction['status'];
  operation?:ExternalAction['operation'];effect?:ExternalAction['effect'];cleanupStatus?:ExternalAction['cleanupStatus'];
  verifiedCostMicros?:number|null;billingFinal?:boolean;upperBoundMicros?:number;reservedMicros?:number;
 }
-export interface ExternalProfileMetadata {accounting?:'upper_bound_not_invoice';id:string;enabled:boolean;profileHash:string;provider?:string;target?:unknown;credentialRef?:string;operations?:string[];maxLifetimeMs?:number;upperBoundMicros?:number;maxActiveActions?:number}
+/** Visible to the operator at approval so a public Hugging Face commit is explicit. */
+export interface ExternalHfVisibilityDisplay {visibility:'private'|'public';publicEffect:boolean;notice:string}
+export interface ExternalProfileMetadata {hfVisibilityDisplay?:ExternalHfVisibilityDisplay;accounting?:'upper_bound_not_invoice';id:string;enabled:boolean;profileHash:string;provider?:string;target?:unknown;credentialRef?:string;operations?:string[];maxLifetimeMs?:number;upperBoundMicros?:number;maxActiveActions?:number}
 export interface ExternalActionPage {items:ExternalPublicAction[];nextCursor?:string}
 export interface AutonomousExternalService {
  publishArtifact(taskId:string,body:ExternalArtifactRequest):Promise<{artifactDigest:string}>;
+ /** Authority for large uploads: lease, running task, approved hf.model.lfs_commit profile. */
+ largeAuthority?(taskId:string,body:{lease:AutonomousLease;runtimeId:string;profileId:string}):Promise<ExternalLargeAuthority>;
+ /** Binds a validated large manifest to a grant of the approved profile. */
+ saveLargeManifest?(manifest:ExternalLargeManifest,manifestDigest:string):Promise<void>;
  profiles(taskId:string):Promise<ExternalProfileMetadata[]>;
  assertApproval(taskId:string,revision:number,hashes:Record<string,string>):Promise<void>;
  execute(taskId:string,body:ExternalWorkerRequest):Promise<ExternalPublicAction>;
@@ -68,6 +85,9 @@ function workerBody(value:unknown,id:string):ExternalWorkerRequest{
   case 'aws.spot.start':{const p=obj(r.parameters,['lifetimeMs']);int(p.lifetimeMs,1);break;}
   case 'aws.spot.inspect':{const p=obj(r.parameters,['startActionId']);text(p.startActionId);break;}
   case 'hf.model.commit':{const p=obj(r.parameters,['artifactDigest','message']);text(p.artifactDigest,/^[a-f0-9]{64}$/);text(p.message,/^[^\p{Cc}]{1,200}$/u);break;}
+  case 'hf.model.lfs_commit':{const p=obj(r.parameters,['manifestDigest','message']);text(p.manifestDigest,/^[a-f0-9]{64}$/);text(p.message,/^[^\p{Cc}]{1,200}$/u);break;}
+  case 'aws.s3.put':{try{validateExternalS3Parameters(r.parameters);}catch{deny();}obj(r.parameters,['keySuffix','artifactDigest']);break;}
+  case 'aws.s3.inspect':{try{validateExternalS3InspectParameters(r.parameters);}catch{deny();}obj(r.parameters,['putActionId']);break;}
   case 'github.branch.push':{const p=obj(r.parameters,['artifactDigest','expectedHead']);text(p.artifactDigest,/^[a-f0-9]{64}$/);text(p.expectedHead,/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);break;}
   default:deny();
  }
@@ -89,10 +109,11 @@ function publicAction(j:ExternalJournal,a?:ExternalAction,audit:Pick<ExternalPub
 }
 type ApprovalMap=Record<string,ExternalApproval>;
 interface AuditSnapshot {approvals:ApprovalMap;actions:Record<string,ExternalAction>}
-function approvedTarget(profile:ExternalProfile):ExternalTarget{
- let target:ExternalTarget;
+function approvedTarget(profile:ExternalProfile):ApprovedExternalTarget{
+ let target:ApprovedExternalTarget;
  if(profile.provider==='aws')target={accountId:profile.target.accountId,region:profile.target.region,workloadId:profile.target.workloadId};
- else if(profile.provider==='hf')target={repository:profile.target.repository,revision:profile.target.revision};
+ else if(profile.provider==='s3')target={accountId:profile.target.accountId,region:profile.target.region,bucket:profile.target.bucket,prefix:profile.target.prefix};
+ else if(profile.provider==='hf')target={repository:profile.target.repository,revision:profile.target.revision,...(profile.target.visibility!==undefined?{visibility:profile.target.visibility}:{})};
  else if(profile.provider==='github')target={repository:profile.target.repository,branch:profile.target.branch};
  else return deny(503);
  if(Object.values(target).some(value=>typeof value!=='string'||!value.length||value.length>256||/[\p{Cc}]/u.test(value)))deny(503);
@@ -105,6 +126,9 @@ function actionReferences(a:ExternalAction,provider:ExternalProfile['provider'])
  if(a.operation==='aws.spot.start'&&typeof p.lifetimeMs==='number'&&Number.isSafeInteger(p.lifetimeMs)&&p.lifetimeMs>0)result.parameters={lifetimeMs:p.lifetimeMs};
  else if(a.operation==='aws.spot.inspect'&&typeof p.startActionId==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(p.startActionId))result.parameters={startActionId:p.startActionId};
  else if(a.operation==='hf.model.commit'&&hex(p.artifactDigest,64))result.parameters={artifactDigest:p.artifactDigest as string};
+ else if(a.operation==='hf.model.lfs_commit'&&hex(p.manifestDigest,64))result.parameters={manifestDigest:p.manifestDigest as string};
+ else if(a.operation==='aws.s3.put'&&hex(p.artifactDigest,64)&&typeof p.keySuffix==='string'&&p.keySuffix.length<=240&&/^[A-Za-z0-9_][A-Za-z0-9_./-]*$/.test(p.keySuffix))result.parameters={keySuffix:p.keySuffix,artifactDigest:p.artifactDigest as string};
+ else if(a.operation==='aws.s3.inspect'&&typeof p.putActionId==='string'&&/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(p.putActionId))result.parameters={putActionId:p.putActionId};
  else if(a.operation==='github.branch.push'&&hex(p.artifactDigest,64)&&(hex(p.expectedHead,40)||hex(p.expectedHead,64)))result.parameters={artifactDigest:p.artifactDigest as string,expectedHead:p.expectedHead as string};
  const evidence=a.providerReceipt?.evidenceId;
  if(typeof evidence==='string'){
@@ -121,6 +145,7 @@ function actionReferences(a:ExternalAction,provider:ExternalProfile['provider'])
 export function createAutonomousExternalService(options:ExternalBridgeOptions):AutonomousExternalService {
  const {core,broker,registry,store}=options;
  const fingerprint=options.configurationFingerprint??digest({mode:'standalone-external'});if(!/^[a-f0-9]{64}$/.test(fingerprint))deny(503);
+ const hfDisplay=(target:unknown):ExternalHfVisibilityDisplay=>{try{return hfVisibilityDisplay(target);}catch{return deny(503);}};
  const approvalHash=(profile:unknown)=>digest({profile,configurationFingerprint:fingerprint});
  function stopAdmission(t:CanonicalTask){
   const revisions=new Set([t.revision,...store.listJournal(t.id).map(j=>j.revision)]);
@@ -208,12 +233,15 @@ export function createAutonomousExternalService(options:ExternalBridgeOptions):A
   else if(main.actualCostMicros!==a.verifiedCostMicros)deny(409);
   j={...j,phase:a.cleanupStatus==='cleaned'?'cleaned':'settled'};store.putJournal(j);return present(j,a,approvals);
  }
- async function artifactAuthority(id:string,body:Pick<ExternalArtifactRequest,'lease'|'runtimeId'|'profileId'>){
+ type Authority=Pick<ExternalArtifactRequest,'lease'|'runtimeId'|'profileId'>;
+ const artifactOperation:Record<string,string>={hf:'hf.model.commit',github:'github.branch.push',s3:'aws.s3.put'};
+ /** Shared lease, approval and fingerprint check for artifact publication and large uploads. */
+ async function artifactAuthority(id:string,body:Authority,operation?:'hf.model.lfs_commit'){
   const auth=await core.execute('nativeStart',{id,lease:body.lease,runtimeId:body.runtimeId}) as {taskId:string;spec:AutonomousSpec};
   const t=await task(id),p=profile(t,body.profileId);
   if(auth.taskId!==id||digest(auth.spec)!==digest(t.spec)||t.approvedAt===undefined||t.status!=='running'||store.isTaskBlocked(id,t.revision))deny(409);
-  if(p.provider!=='hf'&&p.provider!=='github')deny(403);
-  if(!(p.operations as string[]).includes(p.provider==='hf'?'hf.model.commit':'github.branch.push'))deny(403);
+  if(operation==='hf.model.lfs_commit'){if(p.provider!=='hf'||!(p.operations as string[]).includes(operation))deny(403);try{assertHfLfsAllowed(p.target.visibility);}catch{deny(403);}}
+  else{if(p.provider!=='hf'&&p.provider!=='github'&&p.provider!=='s3')deny(403);if(!(p.operations as string[]).includes(artifactOperation[p.provider]!))deny(403);}
   const approved=store.transaction(s=>Object.values(s.approvals).some(a=>a.taskId===id&&a.revision===t.revision&&a.profileId===p.id&&a.profileHash===digest(p)&&a.stoppedAt===undefined));
   if(!approved||store.approvalFingerprint(id,t.revision,p.id)!==fingerprint)deny(403);
   return {taskId:id,revision:t.revision,profileId:p.id,profileHash:digest(p),configurationFingerprint:fingerprint};
@@ -232,9 +260,25 @@ export function createAutonomousExternalService(options:ExternalBridgeOptions):A
    if(result.artifactDigest!==artifactDigest)deny(409);
    await revalidate();store.bindArtifactGrant(grant);return {artifactDigest};
   },
+  async largeAuthority(id,raw){
+   const a=await artifactAuthority(id,raw,'hf.model.lfs_commit');
+   return {taskId:a.taskId,revision:a.revision,profileId:a.profileId};
+  },
+  async saveLargeManifest(manifest,manifestDigest){
+   if(!options.manifestStore)deny(503);
+   const t=await task(manifest.taskId),p=profile(t,manifest.profileId);
+   if(t.revision!==manifest.revision||p.provider!=='hf'||!(p.operations as string[]).includes('hf.model.lfs_commit')||store.isTaskBlocked(t.id,t.revision))deny(409);
+   try{assertHfLfsAllowed(p.target.visibility);}catch{deny(403);}
+   const grant={taskId:t.id,revision:t.revision,profileId:p.id,manifestDigest,profileHash:digest(p),configurationFingerprint:fingerprint,files:manifest.files.length,bytes:manifest.files.reduce((sum,f)=>sum+f.size,0)};
+   if(store.approvalFingerprint(t.id,t.revision,p.id)!==fingerprint)deny(403);
+   store.reserveManifestGrant(grant);
+   await options.manifestStore.save(manifest,manifestDigest);
+   if(store.isTaskBlocked(t.id,t.revision))deny(409);
+   store.bindManifestGrant(grant);
+  },
   async profiles(id){const t=await task(id);return (t.spec.externalProfiles??[]).map(id=>{
    const p=registry.get(id);if(!p)return {id,enabled:false,profileHash:approvalHash({id,enabled:false})};
-   return {id,accounting:'upper_bound_not_invoice' as const,enabled:p.enabled===true,profileHash:approvalHash(p),provider:p.provider,target:structuredClone(p.target),credentialRef:p.credentialRef,operations:[...p.operations],maxLifetimeMs:p.maxLifetimeMs,upperBoundMicros:p.upperBoundMicros,maxActiveActions:p.maxActiveActions};
+   return {id,accounting:'upper_bound_not_invoice' as const,enabled:p.enabled===true,profileHash:approvalHash(p),provider:p.provider,target:structuredClone(p.target),credentialRef:p.credentialRef,operations:[...p.operations],maxLifetimeMs:p.maxLifetimeMs,upperBoundMicros:p.upperBoundMicros,maxActiveActions:p.maxActiveActions,...(p.provider==='hf'?{hfVisibilityDisplay:hfDisplay(p.target)}:{})};
   });},
   async assertApproval(id,revision,hashes){
    const t=await task(id);if(t.revision!==revision||store.isTaskBlocked(id,revision))deny(409);const selected=profiles(t),ids=selected.map(p=>p.id);obj(hashes,ids);
@@ -259,7 +303,11 @@ export function createAutonomousExternalService(options:ExternalBridgeOptions):A
    if(body.request.operation==='aws.spot.start'&&Number((body.request.parameters as {lifetimeMs:number}).lifetimeMs)>p.maxLifetimeMs)deny(403);
    const approved=store.transaction(s=>Object.values(s.approvals).some(a=>a.taskId===id&&a.revision===t.revision&&a.profileId===p.id&&a.profileHash===digest(p)&&a.stoppedAt===undefined));
    if(!approved||store.approvalFingerprint(id,t.revision,p.id)!==fingerprint)deny(403);
-   if((p.provider==='hf'||p.provider==='github')&&options.allowPreseededArtifacts!==true){
+   if(body.request.operation==='hf.model.lfs_commit'){
+    try{assertHfLfsAllowed((p.target as {visibility?:unknown}).visibility);}catch{deny(403);}
+    const grant=store.getManifestGrant(id,t.revision,p.id,(body.request.parameters as {manifestDigest:string}).manifestDigest);
+    if(!grant||grant.published!==true||grant.profileHash!==digest(p)||grant.configurationFingerprint!==fingerprint)deny(403);
+   }else if((p.provider==='hf'||p.provider==='github'||body.request.operation==='aws.s3.put')&&options.allowPreseededArtifacts!==true){
     const artifactDigest=(body.request.parameters as {artifactDigest:string}).artifactDigest;
     const grant=store.getArtifactGrant(id,t.revision,p.id,artifactDigest);
     if(!grant||grant.published!==true||grant.profileHash!==digest(p)||grant.configurationFingerprint!==fingerprint)deny(403);
@@ -306,6 +354,10 @@ export function createAutonomousExternalService(options:ExternalBridgeOptions):A
    // The tombstone survives a crash between admission stop and canonical mutation.
    store.blockTask(id,t.revision);broker.cancel(id,t.revision,'Canonical '+operation);
    for(const revision of new Set(store.listJournal(id).map(j=>j.revision)))if(revision!==t.revision)broker.cancel(id,revision,'Canonical '+operation);
+   if(options.largeStore){
+    // Cancelling uploads is part of stopping admission. A failure keeps the core mutation from running.
+    for(const revision of new Set([t.revision,...store.listJournal(id).map(j=>j.revision)]))await options.largeStore.abortOwner(id,revision);
+   }
   },
   async recover(){
    // Only mark durable dispatches here. Provider I/O is deferred to bounded cleanupDue.
@@ -314,7 +366,9 @@ export function createAutonomousExternalService(options:ExternalBridgeOptions):A
  };
  return service;
 }
-export interface ExternalApiOptions {operatorToken:string;workerToken:string;service:AutonomousExternalService}
+export interface ExternalApiOptions {operatorToken:string;workerToken:string;service:AutonomousExternalService;
+ /** Large upload wiring. Without it, external-large routes answer 503. */
+ large?:{store:Pick<ExternalLargeStore,'begin'|'part'|'complete'|'abort'|'open'>;limits:ExternalLargeLimits;partBytes?:number;ttlMs?:number;now?:()=>number}}
 async function body(request:Request,max=65536){
  const length=request.headers.get('content-length');if(length!==null&&(!/^\d+$/.test(length)||Number(length)>max))deny(413);
  const reader=request.body?.getReader();if(!reader)deny();let bytes=0;const chunks:Uint8Array[]=[];
@@ -326,7 +380,14 @@ const equal=(a:string,b:string)=>{let difference=a.length^b.length;for(let i=0;i
 export async function handleAutonomousExternalApi(request:Request,options?:ExternalApiOptions):Promise<Response>{
  const json=(data:unknown,status=200)=>Response.json(data,{status,headers:{'cache-control':'no-store'}});
  try{
-  const url=new URL(request.url),match=url.pathname.match(/^\/v1\/autonomous-tasks\/([^/]+)\/(external-artifact|external-action|external-approval|external-actions|external-cancel|external-profiles)(?:\/([^/]+)\/(reconcile|cleanup|billing))?$/);
+  const url=new URL(request.url);
+  if(/^\/v1\/autonomous-tasks\/[^/]+\/external-large(?:\/|$)/.test(url.pathname)){
+   const {service,large}=options??{} as Partial<ExternalApiOptions>;
+   if(!options||!large||!service?.largeAuthority||!service.saveLargeManifest||!options.operatorToken||!options.workerToken||options.operatorToken===options.workerToken)return json({error:'External bridge unavailable'},503);
+   const authorize=service.largeAuthority.bind(service),saveManifest=(m:ExternalLargeManifest,d:string)=>service.saveLargeManifest!(m,d);
+   return await handleExternalLargeApi(request,{workerToken:options.workerToken,store:large.store,limits:large.limits,authorize,saveManifest,...(large.partBytes!==undefined?{partBytes:large.partBytes}:{}),...(large.ttlMs!==undefined?{ttlMs:large.ttlMs}:{}),...(large.now?{now:large.now}:{})})??json({error:'Not found'},404);
+  }
+  const match=url.pathname.match(/^\/v1\/autonomous-tasks\/([^/]+)\/(external-artifact|external-action|external-approval|external-actions|external-cancel|external-profiles)(?:\/([^/]+)\/(reconcile|cleanup|billing))?$/);
   if(!match)return json({error:'Not found'},404);if(!options)return json({error:'External bridge unavailable'},503);
   const worker=match[2]==='external-action'||match[2]==='external-artifact',expected=worker?options.workerToken:options.operatorToken;
   if(!options.operatorToken||!options.workerToken||options.operatorToken===options.workerToken)return json({error:'External bridge unavailable'},503);

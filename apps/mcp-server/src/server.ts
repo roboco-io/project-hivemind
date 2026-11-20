@@ -5,6 +5,7 @@ import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { CallToolResult, JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import {registerAutonomousOperatorTools} from './autonomous.js';
+import {registerToolAuditTool} from './autonomous-tool-audit.js';
 
 export interface McpSettings { apiUrl: string; operatorToken: string }
 export interface HivemindMcpOptions extends McpSettings { fetchImpl?: typeof fetch }
@@ -215,5 +216,6 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
         }}:null},truncated:limit.truncated||result.diffTruncated===true||verification?.process.truncated===true};
     }));
   registerAutonomousOperatorTools(server,{...settings,fetchImpl,redact});
+  registerToolAuditTool(server,{...settings,fetchImpl,redact});
   return server;
 }

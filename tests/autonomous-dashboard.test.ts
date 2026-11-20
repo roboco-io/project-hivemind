@@ -45,15 +45,16 @@ class Element {
 const spec={goal:'<img src=x onerror=alert(1)>',provider:'claude',model:'fixture-model-only',endsAt:1900000000000,budgetMicros:500,tools:['Bash','WebFetch'],web:{allowedHosts:['example.com']},systems:[],credentialIds:['subscription-ref'],externalProfiles:[],maxRunMs:10000,maxIterations:2};
 const draft=()=>({id:'autonomous-1',spec:structuredClone(spec),revision:3,status:'awaiting_approval',spentMicros:0,reservedMicros:100,iteration:0,runs:[],actions:[],resources:[],interventions:[]});
 async function operatorDashboard(){
-  const [html,script]=await Promise.all(['index.html','app.js'].map(name=>readFile(new URL('../apps/dashboard/public/'+name,import.meta.url).pathname.replace('/dist/','/'),'utf8')));
+  const [html,script,auditScript]=await Promise.all(['index.html','app.js','tool-audit.js'].map(name=>readFile(new URL('../apps/dashboard/public/'+name,import.meta.url).pathname.replace('/dist/','/'),'utf8')));
   const elements=new Map<string,Element>();for(const match of html!.matchAll(/<(\w+)[^>]*\bid="([^"]+)"/g))elements.set(match[2]!,new Element(match[1]!,match[2]!));
   const get=(id:string)=>{const e=elements.get(id);assert.ok(e,id);return e;};get('operator-token').value='OPERATOR_CANARY';get('task-provider').append(Object.assign(new Element('option'),{value:'mock'}));get('task-runtime').append(Object.assign(new Element('option'),{value:'local'}));
-  const calls:{path:string;body:any}[]=[];let current:any=draft(),unavailable=false,profiles:any={profiles:[]},approvalConflict:any=null,externalActions:any[]=[];const intervals:(()=>unknown)[]=[];
+  const calls:{path:string;body:any}[]=[];let toolCalls:any={source:'worker_report',items:[],totals:{recorded:0,denied:0,errors:0,droppedByWorker:0,droppedByStore:0}},current:any=draft(),unavailable=false,profiles:any={profiles:[]},approvalConflict:any=null,externalActions:any[]=[];const intervals:(()=>unknown)[]=[];
   const context=createContext({document:{getElementById:get,createElement:(tag:string)=>new Element(tag),addEventListener(){},hidden:false},AbortSignal,setInterval:(fn:()=>unknown)=>{intervals.push(fn);},fetch:async(path:string,options:any)=>{
     calls.push({path,body:options.body?JSON.parse(options.body):undefined});
     if(path.startsWith('/api/cloudflare/autonomous-tasks')){
       if(unavailable)return {ok:false,status:503,json:async()=>({error:'OPERATOR_CANARY'})};
       if(options.body&&path.endsWith('/approve')&&approvalConflict){profiles=approvalConflict;approvalConflict=null;return {ok:false,status:409,json:async()=>({error:'OPERATOR_CANARY'})};}
+      if(path.includes('/tool-calls'))return {ok:true,json:async()=>toolCalls};
       if(path.endsWith('/external-profiles'))return {ok:true,json:async()=>profiles};
       if(path.includes('/external-actions?'))return {ok:true,json:async()=>({items:externalActions,nextCursor:'more-actions'})};
       if(path.includes('/history?'))return {ok:true,json:async()=>({items:current.runs,nextCursor:'next-runs'})};
@@ -61,8 +62,8 @@ async function operatorDashboard(){
       return {ok:true,json:async()=>path.includes('?limit=')?{items:[current],nextCursor:'next-page'}:path.endsWith('/external-actions')?[]:current};
     }
     return {ok:true,json:async()=>path==='/api/state'?{tasks:[],workers:[],events:[]}:{providers:['mock'],repository:null}};
-  }});runInContext(script!,context);await new Promise(r=>setImmediate(r));
-  return {get,calls,run:(text:string)=>runInContext(text,context),refresh:async()=>{await runInContext('refreshAutonomous()',context);},select:async()=>{await runInContext("selectAutonomousTask('autonomous-1')",context);},setTask:(t:any)=>{current=t;},setProfiles:(v:any)=>{profiles=v;},setExternalActions:(v:any[])=>{externalActions=v;},rejectApproval:(v:any)=>{approvalConflict=v;},unavailable:()=>{unavailable=true;},poll:async()=>{for(const fn of intervals)fn();await new Promise(r=>setImmediate(r));}};
+  }});runInContext(auditScript!,context);runInContext(script!,context);await new Promise(r=>setImmediate(r));
+  return {get,calls,run:(text:string)=>runInContext(text,context),refresh:async()=>{await runInContext('refreshAutonomous()',context);},select:async()=>{await runInContext("selectAutonomousTask('autonomous-1')",context);},setTask:(t:any)=>{current=t;},setProfiles:(v:any)=>{profiles=v;},setToolCalls:(v:any)=>{toolCalls=v;},setExternalActions:(v:any[])=>{externalActions=v;},rejectApproval:(v:any)=>{approvalConflict=v;},unavailable:()=>{unavailable=true;},poll:async()=>{for(const fn of intervals)fn();await new Promise(r=>setImmediate(r));}};
 }
 test('shipped dashboard renders review scopes and preserves list buttons while polling',async()=>{
   const ui=await operatorDashboard();assert.ok(ui.get('autonomous-list').textContent.includes('<img'));const button=ui.get('autonomous-list').querySelectorAll('button')[0];await ui.refresh();assert.equal(ui.get('autonomous-list').querySelectorAll('button')[0],button);
@@ -145,3 +146,29 @@ test('R9 dashboard shows exact published artifact and commit as text without pro
   ui.setExternalActions([{requestId:'invalid',parameterHash:'bad',parametersSubset:{artifactDigest:'NEVER_DIGEST'},providerResult:{kind:'aws_instance',id:'NEVER_ID'}}]);await ui.select();assert.ok(!ui.get('autonomous-cleanup').textContent.includes('NEVER_'));
 });
 
+
+test('dashboard loads tool-audit.js before app.js and labels worker tool calls as a worker report',async()=>{
+  const html=await readFile(new URL('../apps/dashboard/public/index.html',import.meta.url).pathname.replace('/dist/','/'),'utf8');
+  assert.ok(html.indexOf('/tool-audit.js')>0&&html.indexOf('/tool-audit.js')<html.indexOf('/app.js'));
+  const ui=await operatorDashboard();
+  ui.setToolCalls({source:'worker_report',items:[{sequence:1,tool:'<b>Bash</b>',inputDigest:'a'.repeat(64),inputSummary:'<img src=x onerror=alert(1)>',inputTruncated:false,outcome:'denied',startedAt:5,durationMs:null,runId:'r',iteration:1,receivedAt:9,source:'worker_report'}],totals:{recorded:1,denied:1,errors:0,droppedByWorker:2,droppedByStore:0}});
+  await ui.select();await new Promise(r=>setImmediate(r));
+  const call=ui.calls.find(c=>c.path.includes('/tool-calls'));assert.ok(call);assert.match(call!.path,/^\/api\/cloudflare\/autonomous-tasks\/autonomous-1\/tool-calls\?limit=20$/);
+  const panel=ui.get('autonomous-tool-audit-body').textContent;
+  assert.ok(panel.includes('<img src=x onerror=alert(1)>')&&panel.includes('<b>Bash</b>'));assert.match(panel,/독립 증명이 아닙니다/);assert.match(panel,/워커가 버린 기록 2건/);
+  assert.match(html,/id="autonomous-tool-audit"[\s\S]*워커 도구 호출 기록[\s\S]*독립 증명 아님/);
+});
+test('tool-call load failure shows an error in the panel and keeps the review usable',async()=>{
+  const ui=await operatorDashboard();ui.setToolCalls({nope:1});await ui.select();await new Promise(r=>setImmediate(r));
+  assert.match(ui.get('autonomous-tool-audit-body').textContent,/불러오지 못했습니다/);assert.match(ui.get('autonomous-model').textContent,/fixture-model-only/);
+});
+test('profile metadata shows a public Hugging Face notice and s3 bucket and prefix; unverifiable public target is not shown as approved metadata',async()=>{
+  const ui=await operatorDashboard(),current=draft();current.spec.externalProfiles=['hf-ref','s3-ref'] as never;ui.setTask(current);
+  const base={enabled:true,upperBoundMicros:100};
+  ui.setProfiles({profiles:[{...base,id:'hf-ref',profileHash:'b'.repeat(64),provider:'hf',target:{repository:'owner/model',revision:'main',visibility:'public'},operations:['hf.model.commit'],hfVisibilityDisplay:{visibility:'public',publicEffect:true,notice:'공개 저장소: 이 커밋의 파일은 누구나 읽을 수 있다.'}},{...base,id:'s3-ref',profileHash:'c'.repeat(64),provider:'s3',target:{accountId:'123456789012',region:'ap-northeast-2',bucket:'my-bucket',prefix:'runs/',maxObjectBytes:1024,retentionDays:30},operations:['aws.s3.put']}]});
+  await ui.select();const text=ui.get('autonomous-profiles').textContent;
+  assert.match(text,/\[공개 커밋\]/);assert.match(text,/누구나 읽을 수 있다/);assert.match(text,/"visibility":"public"/);assert.match(text,/"bucket":"my-bucket"/);assert.match(text,/"prefix":"runs\/"/);
+  const hidden=await operatorDashboard(),again=draft();again.spec.externalProfiles=['hf-ref'] as never;hidden.setTask(again);
+  hidden.setProfiles({profiles:[{...base,id:'hf-ref',profileHash:'b'.repeat(64),provider:'hf',target:{repository:'owner/model',revision:'main',visibility:'public'},operations:['hf.model.commit']}]});
+  await hidden.select();assert.match(hidden.get('autonomous-profiles').textContent,/미확인/);assert.equal(hidden.get('autonomous-approve').disabled,true);
+});

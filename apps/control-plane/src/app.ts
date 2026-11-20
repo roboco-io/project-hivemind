@@ -2,6 +2,10 @@ import {projectAutonomousCloudResponse,validateAutonomousCloudRequest,type Auton
 import {handleAutonomousExternalApi,type AutonomousExternalService} from './autonomous-external-api.js';
 import {createAutonomousStore} from '../../../packages/core/src/autonomous-store.js';
 import {createAutonomousApiService,handleAutonomousApi} from './autonomous-api.js';
+import {handleToolAuditApi} from './autonomous-tool-audit-api.js';
+import {createToolAuditStore} from '../../../packages/core/src/autonomous-tool-audit-sql.ts';
+import {createHash} from 'node:crypto';
+import {DatabaseSync} from 'node:sqlite';
 import Fastify, { type FastifyRequest, type FastifyReply } from 'fastify';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -41,12 +45,17 @@ export function buildApp(options: AppOptions = {}) {
   const store = new HiveStore(options.dbPath ?? ':memory:',options.now,options.repository);
   const autonomousStore=createAutonomousStore(options.dbPath ?? ':memory:');
   const autonomousService=createAutonomousApiService(autonomousStore,options.now);
-  app.addHook('onClose',async()=>{autonomousStore.close();});
+  // Worker-reported tool calls live in their own file so they never touch the task store's locks.
+  const toolAuditDb=new DatabaseSync(options.dbPath&&options.dbPath!==':memory:'?options.dbPath+'.tool-audit':':memory:');
+  const toolAuditStore=createToolAuditStore({exec:(query,...binds)=>toolAuditDb.prepare(query).all(...binds) as Record<string,unknown>[],transactionSync:fn=>{toolAuditDb.exec('BEGIN IMMEDIATE');try{const result=fn();toolAuditDb.exec('COMMIT');return result;}catch(error){toolAuditDb.exec('ROLLBACK');throw error;}}},createHash('sha256').update('hivemind-tool-audit-cursor\n'+operatorToken).digest('hex'));
+  app.addHook('onClose',async()=>{autonomousStore.close();toolAuditDb.close();});
   app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});
   app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks/*',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});
   async function autonomousGuard(request:FastifyRequest,reply:FastifyReply){
     const path=new URL(request.url,'http://local').pathname;
     const workerAction=/^\/v1\/autonomous-tasks\/[^/]+\/(claim|native-start|heartbeat|finish|reserve|settle|worker-state|external-action)\/?$/.test(path);
+    // Tool-call audit authenticates inside its own handler: operator reads, reporter writes.
+    if(/^\/v1\/autonomous-tasks\/[^/]+\/tool-calls\/?$/.test(path))return;
     const reporterAction=/^\/v1\/autonomous-tasks\/[^/]+\/(native-ready|native-receipt)\/?$/.test(path);
     const reporterToken=options.nativeReporterToken;
     if(reporterAction&&(!reporterToken||/[\s\p{Cc}]/u.test(reporterToken)||equalSecret(reporterToken,operatorToken)||equalSecret(reporterToken,workerToken)))return reply.code(503).send({error:'Reporter authentication unavailable'});
@@ -81,7 +90,8 @@ export function buildApp(options: AppOptions = {}) {
       }
       return autonomousService.execute(operation,input);
     }};
-    const response=external?await handleAutonomousExternalApi(webRequest,options.localExternalService?{operatorToken,workerToken,service:options.localExternalService}:undefined):await handleAutonomousApi(webRequest,{operatorToken,workerToken,reporterToken:options.nativeReporterToken,service});
+    const toolAudit=await handleToolAuditApi(webRequest,{operatorToken,reporterToken:options.nativeReporterToken,store:toolAuditStore,authorize:lease=>autonomousService.execute('toolAuditScope',{id:lease.taskId,lease}) as Promise<{taskId:string;runId:string;iteration:number}>});
+    const response=toolAudit??(external?await handleAutonomousExternalApi(webRequest,options.localExternalService?{operatorToken,workerToken,service:options.localExternalService}:undefined):await handleAutonomousApi(webRequest,{operatorToken,workerToken,reporterToken:options.nativeReporterToken,service}));
     response.headers.forEach((value,key)=>reply.header(key,value));
     return reply.code(response.status).send(await response.text());
   }
@@ -122,7 +132,7 @@ export function buildApp(options: AppOptions = {}) {
   app.get('/health',async () => ({status:'ok',mode:options.cloudflare ? (options.repository ? 'hybrid-workers' : 'cloudflare-bridge') : options.repository ? 'local-workers' : 'mock-local'}));
   app.get('/favicon.ico',async (_request,reply) => reply.code(204).send());
   const staticRoot = new URL('../../../../apps/dashboard/public/',import.meta.url);
-  for (const [route,file,mime] of [['/','index.html','text/html'],['/app.js','app.js','application/javascript'],['/styles.css','styles.css','text/css'],['/brand/hivemind-logo.png','brand/hivemind-logo.png','image/png'],['/brand/hivemind-bee.png','brand/hivemind-bee.png','image/png']] as const) {
+  for (const [route,file,mime] of [['/','index.html','text/html'],['/app.js','app.js','application/javascript'],['/tool-audit.js','tool-audit.js','application/javascript'],['/styles.css','styles.css','text/css'],['/brand/hivemind-logo.png','brand/hivemind-logo.png','image/png'],['/brand/hivemind-bee.png','brand/hivemind-bee.png','image/png']] as const) {
     app.get(route,async (_request,reply) => reply.type(mime.startsWith('image/') ? mime : mime+'; charset=utf-8').send(await readFile(fileURLToPath(new URL(file,staticRoot)))));
   }
   app.get('/api/capabilities',{preHandler:operator},async () => ({providers:options.repository ? ['mock','codex','claude'] : ['mock'],repository:options.repository ?? null,...(options.cloudflare ? {cloudflare:{...options.cloudflare.capabilities(),...(options.workflows?{workflows:true}:{})}} : {})}));

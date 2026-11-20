@@ -3,7 +3,8 @@ import {validateAutonomousCapabilities} from '../../../packages/contracts/src/au
 import type { AutonomousEngine } from '../../../packages/core/src/autonomous.js';
 import type { AutonomousSpec, AutonomousLease, AutonomousRunResult, AutonomousActionRequest, AutonomousNativeReceipt, AutonomousTask } from '../../../packages/contracts/src/autonomous.js';
 
-export type AutonomousOperation = 'acceptExternal'|'settleExternal'|'cleanedExternal'|'getSummary'|'historyPage'|'create'|'list'|'listPage'|'get'|'approve'|'revise'|'cancel'|'message'|'cleaned'|'claim'|'nativeStart'|'nativeReady'|'recordNativeReceipt'|'workerState'|'heartbeat'|'finish'|'reserve'|'settle'|'reconcile'|'resume'|'reconcileRun'|'tick'|'claimCloud'|'finishCloud'|'abandonCloud'|'finishUnstartedCloud';
+export type AutonomousOperation = 'acceptExternal'|'settleExternal'|'cleanedExternal'|'getSummary'|'historyPage'|'create'|'list'|'listPage'|'get'|'approve'|'revise'|'cancel'|'message'|'cleaned'|'claim'|'nativeStart'|'nativeReady'|'recordNativeReceipt'|'workerState'|'heartbeat'|'finish'|'reserve'|'settle'|'reconcile'|'resume'|'reconcileRun'|'tick'|'claimCloud'|'finishCloud'|'abandonCloud'|'finishUnstartedCloud'|'stopExternalBudget'|'toolAuditScope';
+/** Operations with no HTTP route: they are reached only through the service. */
 export interface AutonomousApiService { execute(operation: AutonomousOperation, input: Record<string, unknown>): Promise<unknown> }
 export interface AutonomousTransactionalStore { transaction<T>(fn: (engine: AutonomousEngine) => T, operation?:AutonomousOperation): T }
 type Body = Record<string, unknown>;
@@ -178,6 +179,8 @@ export function executeAutonomousOperation(engine:AutonomousEngine,operation:Aut
   case 'reconcile':return engine.reconcile(id,input.actionId as string,input.actualCostMicros as number,input.success as boolean,input.resource as {id:string;system:string;cleanupOperation:string}|undefined,input.reason as string,now);
   case 'resume':return engine.resume(id,input.revision as number,input.reason as string,now);
   case 'reconcileRun':return engine.reconcileRun(id,input.runId as string,input.actualCostMicros as number,input.reason as string,now);
+  case 'stopExternalBudget':return engine.stopExternalBudget(id,input.reason as string,now);
+  case 'toolAuditScope':return engine.toolAuditScope(l,now);
   case 'tick':return undefined;
  }
 }
