@@ -79,3 +79,9 @@ Cloudflare 작업 (`cloudflare-store.ts`):
 ## Verification
 
 - Run: `npm run check` (저장소 루트에서 실행한다. `tsc --noEmit` 다음에 `npm test`를 실행한다. 테스트는 루트의 `tests/` 디렉터리에 있다.)
+
+## 장기 자율 작업 정책
+
+`autonomous.ts`의 AutonomousEngine은 주입한 시각으로 승인·기간·예산·lease·대기·정리를 검사한다. `autonomous-store.ts`는 별도 SQLite 테이블의 트랜잭션으로 상태를 보존한다. 비공개 snapshot은 공개 응답에 쓰지 않는다. 원격 상태는 Cloudflare Durable Object에만 보존하며 기존 모델 스케줄러에 자동 제출하지 않는다. [실행 경계와 API](../../../docs/autonomous-tasks.md)를 참고한다.
+
+`nativeStart`는 유효한 native lease를 runtime 하나에 결속하고 정규 정책·체크포인트·deadline을 반환한다. 같은 lease를 다른 runtime에서 시작할 수 없다. native 작업 간 credential ID가 겹치면 lease 또는 미대사 실행이 남은 동안 claim을 차단한다. 비용이 null인 계속 실행 결과는 비용 대사 후 명시적으로 재개해야 한다. complete·failed는 stopping에서 종료 의도를 보존하고 비용·행동·정리 대사 후 추가 실행 없이 종료한다.

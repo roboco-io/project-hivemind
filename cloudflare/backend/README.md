@@ -180,3 +180,71 @@ node scripts/large-artifacts/upload.ts /absolute/input.db data file 123456789 1 
 workload에는 `HIVEMIND_ARTIFACT_SOURCE`(archive 최상위 디렉터리를 보존한 source 디렉터리)와 `HIVEMIND_ARTIFACT_DATA` 경로만 제공한다. Codex compute sandbox가 runtime 비공개 디렉터리를 deny하고 준비된 입력 subtree를 read로 연다. 쓰기 build·DB temp는 별도 작업 공간에서 수행한다. 같은 UID의 chmod만을 읽기 전용 경계로 신뢰하지 않는다. macOS의 실제 read/write/delete/비공개-read 경계 probe와 unit tests를 수행했으며, 원격 Linux probe도 통과한 뒤 실행 적합성을 주장해야 한다.
 
 큰 입력은 검사 작업들에만 제공하고 최종 integration에는 다시 내려받지 않는다. 통합 검사는 작은 receipt 집계를 맡거나 별도 준비된 검증을 수행해야 한다. 다운로드·검증·해제 시간은 작업 timeout에 포함된다. 성공 결과에는 digest·실제 해제 크기/파일 수·준비 시간을 남기고, capability는 로그·결과에서 제거한다.
+
+## Interface
+
+아래 절은 하위 폴더의 계약을 색인한다. 현재 코드가 정의한 내용이며 원격 검증 상태는 위 절과 검증 문서를 따른다.
+
+### 하위 폴더
+
+- [src](./src/README.md) - 공유 계약, 스케줄러, snapshot, workflow, compute group, 벤치마크 게이트웨이, 운영자 CLI.
+  - [src/cloudflare](./src/cloudflare/README.md) - Worker, `SchedulerDO`, `RunnerDO`, outbound 진입점과 HTTP 경로.
+  - [src/runtime](./src/runtime/README.md) - 컨테이너 안의 런타임 서버와 CLI 실행, 실행 경계, 큰 입력과 캐시 준비.
+- [scripts](./scripts/README.md) - 런타임 빌드 버전 기록, 인증 등록, 원격 수용 검사와 실험 도구.
+- [benchmark](./benchmark/README.md) - pi용 셸 래퍼와 설정, RealWorld 고정 과제.
+- `native/` - 컨테이너 이미지에 넣는 C 실행 파일과 bubblewrap 빌드 스크립트. 계약은 아래에 기록한다.
+- `config/`, `test/` - 설정 JSON과 테스트. 별도 계약 문서가 없다.
+
+### native
+
+`native/`에는 README를 두지 않는다. `scripts/runtime-build.ts`가 `backend/native`의 `.md` 파일을 런타임 빌드 버전에 포함하므로, 그 폴더에 문서를 추가하면 `runtime-build.json`의 `digest`가 달라지기 때문이다.
+
+- `[native/namespace-guard.c:main]` - 인자는 `namespace-guard -- CMD [ARGS...]`다. 권한 상태를 확인하고 seccomp 필터를 설치한 뒤 `CMD`를 실행한다. 실패하면 종료 코드 125다.
+- `[native/proc-guard.c:main]` - 인자는 `proc-guard -- CMD [ARGS...]`다. Landlock 파일 시스템 규칙을 적용하고 fd 3 이상을 닫은 뒤 `CMD`를 실행한다. 실패하면 종료 코드 125다.
+- `[native/namespace-probe.c:main]` - 인자가 없다. namespace 생성 시도가 거부되는지를 JSON 한 줄로 출력한다. 통과하면 종료 코드 0, 아니면 1이다.
+- `native/build-bubblewrap-compat.sh` - 인자는 `[BUILD_ROOT] [OUTPUT_ROOT] [INPUT_ROOT]`다. Debian bubblewrap source에 `bubblewrap-nested-proc.patch`를 적용해 `bwrap`와 source 묶음을 만든다.
+
+## Invariants
+
+- 실행 소스나 빌드 입력을 바꾸면 `runtime-build.json`이 저장된 값과 달라진다. `npm run runtime:check`가 실패하면 `npm run runtime:stamp`로 갱신한다. `[scripts/runtime-build.ts:checkRuntimeManifest]`
+- 동시에 실행하는 agent 작업은 최대 2개, compute 작업은 최대 4개다. 인증 하나는 한 번에 agent 작업 하나에만 배정한다. `[src/scheduler.ts:Scheduler.dispatch]`
+- 컨테이너가 보고한 런타임 버전이 일치하기 전에는 인증을 전달하지 않는다. `[src/cloudflare/worker.ts:RunnerDO.prepare]`
+- `/v1/` 경로는 bearer 검사를 통과해야 한다. `[src/cloudflare/api.ts:authorize]`
+- 런타임은 Linux에서 모든 capability가 0이고 `NoNewPrivs`가 1일 때만 agent와 compute 작업을 실행한다. `[src/runtime/run.ts:checkRuntimeBoundary]`
+- `namespace-guard`와 `proc-guard`는 uid 1000, `no_new_privs` 1, capability 0을 요구한다. `[native/namespace-guard.c:require_process_boundary]`, `[native/proc-guard.c:require_process_boundary]`
+- `namespace-guard`의 seccomp 필터는 `unshare`, `setns`, `mount`, `umount2`, `pivot_root` 등 namespace·mount syscall에 `EPERM`을 반환하고, namespace 플래그를 가진 `clone`을 거부한다. `clone3`은 `EPERM`이 아니라 `ENOSYS`를 반환한다. `[native/namespace-guard.c:install_filter]`
+- `proc-guard`는 Landlock ABI 3 이상을 요구한다. 쓰기는 `/workspace`, `/tmp`, `/var/tmp`와 `/dev/null`에만 허용한다. `[native/proc-guard.c:main]`, `[native/proc-guard.c:allow_dev_null_write]`
+- 두 guard는 `CMD`를 실행하기 전에 제공자 키, 운영자 토큰, `NODE_OPTIONS`, `LD_PRELOAD` 등의 환경 변수를 제거한다. `[native/namespace-guard.c:prepare_environment]`, `[native/proc-guard.c:scrub_environment]`
+- bubblewrap 빌드는 고정한 Debian source 버전만 받는다. 버전이 다르면 실패한다. `native/build-bubblewrap-compat.sh`
+
+## Side Effects
+
+- R2 버킷 두 개(소스·결과용 `ARTIFACTS`, 인증용 `CREDENTIALS`), Durable Object storage와 alarm, Cloudflare Container를 사용한다. `[src/cloudflare/worker.ts:SchedulerDO]`, `[src/cloudflare/worker.ts:RunnerDO]`
+- 컨테이너의 외부 통신은 outbound 진입점이 허용한 호스트로만 전달한다. `[src/cloudflare/worker.ts:CodexOutbound]`, `[src/cloudflare/worker.ts:ClaudeOutbound]`, `[src/cloudflare/worker.ts:ComputeOutbound]`
+- agent 작업은 사용자 구독 인증으로 실제 모델을 호출한다. 벤치마크 경로는 Worker secret으로 모델 게이트웨이를 호출한다. `[src/runtime/run.ts:executeRuntime]`, `[src/carbon-gateway.ts:handleCarbonGateway]`, `[src/terra-gateway.ts:handleTerraGateway]`
+- `scripts/`의 운영자 스크립트 일부는 원격 백엔드를 호출해 비용이 드는 컨테이너나 모델 작업을 만든다. 항목별 내용은 [scripts](./scripts/README.md)에 있다.
+- `native/build-bubblewrap-compat.sh`는 이미지 빌드 중 `apt-get source`로 Debian source를 내려받는다.
+
+## Verification
+
+- Run: `npm test` (`node --test test/*.test.ts`)
+- Run: `npm run typecheck` (`tsc --noEmit`)
+- Run: `npm run runtime:check` (`node scripts/runtime-build.ts --check`)
+- 세 명령은 `cloudflare/backend/`에서 실행한다. `npm run deploy`와 원격 검사는 이 목록에 포함하지 않는다.
+
+## Cloudflare 자율 실행 배포 후보
+
+기본 feature는 비활성 상태를 유지한다. 기존 Scheduler·Runner와 credential lane을 재사용하는 연결의 승인 범위와 rollback은 [자율 작업 운영 절차](../../docs/autonomous-tasks.md#cloudflare-자율-실행-후보와-승인-경계)를 따른다. 새 자율 profile은 운영자가 고정한 source snapshot과 검사 명령만 사용한다. local 워커 없이 alarm이 실행을 이어가며, 실제 컨테이너 종료·인증 세대 반영·compute 검사가 확인돼야 다음 반복으로 진행한다.
+
+이번 후보 준비에는 배포·secret 변경·모델 호출이 포함되지 않는다. 작성자와 검토자가 동결된 뒤 coordinator가 source hash·runtime manifest를 확정하고 build·smoke·dry-run 근거를 기록한다. 그 전에는 `runtime:stamp`를 실행하지 않는다. 기존 manifest를 새 후보 검증 근거로 표시하지 않는다. 실제 Docker 무모델 probe·fake 플랫폼 테스트·GET metadata·배포 dry-run·실제 원격 실행은 각각 구분한다.
+
+사용자 승인 후 기존 Worker의 실제 Claude 구독 CLI 두 반복을 완료했다. 세션 복원·파일1→2·별도 compute 검사·컨테이너 종료·인증 세대23→24→25를 확인했다. [실증 기록](../../docs/plans/2026-11-19-autonomous-cloud.report.md)을 따른다. 로컬 기본 feature는false이며 승인된 원격 배포에는true를 적용했다. 실제24시간·AWS/HF·대규모 운영과 비용 절감은 미검증이다.
+
+
+### 이슈 #1 후속 구현과 실제 프로젝트 검증
+
+사용자는 실제24시간·외부 제공자·Fable 실증을 실제 프로젝트로 넘겼다. [구현 마감 기록](../../docs/plans/2026-11-20-issue1-implementation-closeout.md)에서 구현·로컬 검사·실제 미검증을 구분한다.
+
+운영자 전용 `POST /v1/boundary-diagnostics`는 빈 body와 길이8..80의 `idempotency-key`를 받는다. 모델·구독 인증 없이 현재 이미지의 기존 native 격리 gate를 검사하고 정리한다. 같은 key는 재실행하지 않는다. 기능 비활성 상태에서도 호출할 수 있지만 실제 컨테이너 실행이므로 운영자가 해당 검사를 지시했을 때만 사용한다. 이 경로의 로컬 회귀 통과는 원격 격리 통과가 아니다.
+
+워커의 `POST /v1/autonomous-tasks/:id/external-artifact`는 현재 lease·runtime·승인 프로필로 작은 산출물을 등록한다. 서버는 task/revision/profile에 결속된 digest만 외부 action에 허용한다. inline 한도·불변 저장·비밀 검사·실패 예약까지 포함한 revision 할당량은 [게시 계약](../../docs/plans/2026-11-20-autonomous-artifact-publication.md)에 명시한다.

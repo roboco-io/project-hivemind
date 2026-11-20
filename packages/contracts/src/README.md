@@ -58,3 +58,9 @@
 ## Verification
 
 - Run: `npm run check` (저장소 루트에서 실행한다. `tsc --noEmit` 다음에 `npm test`를 실행한다. 테스트는 루트의 `tests/` 디렉터리에 있다.)
+
+## 장기 자율 작업 계약
+
+`autonomous.ts`는 장기 작업, 승인 범위, 짧은 lease, 체크포인트 참조, 반복 사용량, 행동 예약과 자원 원장의 타입을 정의한다. 실제 인증과 세션 본문은 포함하지 않는다. [실행 경계와 API](../../../docs/autonomous-tasks.md)를 참고한다.
+
+`autonomous-native.ts`는 native snapshot·Claude 요청/응답·private runtime 포트의 타입을 정의한다. 요청은 중앙 작업 ID와 현재 `executionLease`, 비공개 세션·구독 인증을 포함한다. 응답은 검증된 경계·반복별 사용량·복원 bundle을 담는다. 이 wire는 인증된 private 전송 전용이며 공개 작업 상태에 넣지 않는다.
