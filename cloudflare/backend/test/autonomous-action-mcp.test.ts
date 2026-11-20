@@ -192,7 +192,7 @@ test('published schema requires exact discriminated operations and rejects unkno
   const schema=(await client.listTools()).tools[0]!.inputSchema;
   assert.equal(schema.additionalProperties,false);
   const branches=schema.oneOf as {additionalProperties:boolean;properties:{operation:{const:string};parameters:{additionalProperties:boolean}}}[];
-  assert.equal(branches.length,4);assert.deepEqual(branches.map(b=>b.properties.operation.const),['aws.spot.start','aws.spot.inspect','hf.model.commit','github.branch.push']);
+  assert.equal(branches.length,7);assert.deepEqual(branches.map(b=>b.properties.operation.const),['aws.spot.start','aws.spot.inspect','hf.model.commit','hf.model.lfs_commit','aws.s3.put','aws.s3.inspect','github.branch.push']);
   for(const branch of branches){assert.equal(branch.additionalProperties,false);assert.equal(branch.properties.parameters.additionalProperties,false);}
 });
 

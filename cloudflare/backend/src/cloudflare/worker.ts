@@ -12,6 +12,8 @@ import {EncryptedSessionStore} from '../../../../packages/adapters/src/autonomou
 import {R2PrivateBlobStore} from '../autonomous-session-objects.ts';
 import {AutonomousService} from '../autonomous-service.ts';
 import {handleAutonomousApi} from './autonomous-api.ts';
+import {handleToolAuditApi} from '../../../../apps/control-plane/src/autonomous-tool-audit-api.ts';
+import {createToolAuditStore,type ToolAuditStore} from '../../../../packages/core/src/autonomous-tool-audit-sql.ts';
 import type {AutonomousTaskSummary} from '../../../../packages/core/src/autonomous-repository.ts';
 import type {AutonomousTask} from '../../../../packages/contracts/src/autonomous.ts';
 import {duckdbCacheIdentity,duckdbCacheOrigin,duckdbCachePath,duckdbCacheMaxBytes,validateDuckdbCacheEvidence} from '../duckdb-build-cache.ts';
@@ -20,7 +22,7 @@ import {largeArtifactKey,authorizeArtifactRead,type LargeArtifactRef,type Artifa
 import {validateClaudeResultMetrics} from '../claude-result-metrics.ts';
 import {advanceComputeGroup,assignGroup,type ComputeGroupSpec,type ComputeGroupRecord} from '../compute-group.ts';
 import {ensureSchedulerAlarm} from './scheduler-alarm.ts';
-import {randomBytes,randomUUID} from 'node:crypto';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {DurableObject,WorkerEntrypoint} from 'cloudflare:workers';
 import type {CredentialRecord,JobRecord,JobSpec,RuntimeInput,RuntimeResult,Snapshot,RalphCheckpoint,RalphFeedback} from '../contracts.ts';
 import {terminal} from '../contracts.ts';
@@ -401,6 +403,7 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
  private schedulerStorage=createSchedulerStorage(this.ctx.storage);
  private autonomy=new AutonomousService(this.ctx.storage);
  private external?:AutonomousExternalRuntime;
+ private toolAudit?:ToolAuditStore;
  private externalReady:Promise<void>;
  private externalCleanupWake?:number;
  private extraSecretValues(){return [this.env.CONTROL_TOKEN,this.env.AUTH_STORAGE_KEY,this.env.AUTH_RETURN_PRIVATE_KEY,this.env.AUTONOMOUS_SESSION_KEY,this.env.AUTONOMOUS_WORKER_TOKEN,this.env.AUTONOMOUS_REPORTER_TOKEN,this.env.GEMINI_BENCHMARK_KEY,this.env.TERRA_BENCHMARK_AUTH,terraCredential(this.env.TERRA_BENCHMARK_AUTH)?.access,...externalConfiguredSecretValues(this.env)].filter((v):v is string=>!!v);}
@@ -413,6 +416,15 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
  private async syncCanonicalExternalStop(id:string){
   let task:AutonomousTaskSummary;try{task=await this.autonomy.execute('getSummary',{id}) as AutonomousTaskSummary;}catch{return;}
   if(task.spec.externalProfiles?.length&&(task.stopReason||['completed','cancelled','expired','failed','budget_exceeded'].includes(task.status)))await this.stopExternalAdmission(task,'finish');
+ }
+ /** Worker-reported tool calls are overlaid at the view only: the engine rejects stored unknown count fields. */
+ private withWorkerToolCalls(value:unknown):unknown{
+  const store=this.toolAudit;if(!store||!value||typeof value!=='object')return value;
+  if(Array.isArray(value))return value.map(item=>this.withWorkerToolCalls(item));
+  const record=value as {id?:unknown;counts?:unknown;items?:unknown};
+  if(Array.isArray(record.items))return {...record,items:record.items.map(item=>this.withWorkerToolCalls(item))};
+  if(typeof record.id==='string'&&record.counts&&typeof record.counts==='object'&&!Array.isArray(record.counts))return {...record,counts:{...record.counts,workerToolCalls:store.totals(record.id).recorded}};
+  return value;
  }
  private async executeAutonomous(operation:AutonomousOperation,input:Record<string,unknown>):Promise<unknown>{
   const id=(input.id??(input.lease as {taskId?:string}|undefined)?.taskId) as string|undefined;
@@ -504,6 +516,11 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
  constructor(ctx:DurableObjectState,env:Env){super(ctx,env);this.externalReady=ctx.blockConcurrencyWhile(async()=>{
   const state=await this.schedulerStorage.load();this.scheduler=new Scheduler(state,{exclusiveOwnership:true});
   this.externalCleanupWake=await this.ctx.storage.get<number>('externalCleanupWake');
+  // Tool audit has its own table set. A failure here never disables external actions, and the reverse also holds.
+  try{
+   const cursorSecret=this.env.AUTONOMOUS_SESSION_KEY??this.env.CONTROL_TOKEN;
+   if(this.ctx.storage.sql&&typeof this.ctx.storage.transactionSync==='function'&&cursorSecret)this.toolAudit=createToolAuditStore({exec:(query,...bindings)=>this.ctx.storage.sql.exec(query,...bindings),transactionSync:fn=>this.ctx.storage.transactionSync(fn)},createHash('sha256').update('hivemind-tool-audit-cursor-v1\n'+cursorSecret).digest('hex'));
+  }catch{this.toolAudit=undefined;}
   // Durable Object startup is the ownership barrier: recover once, never per request.
   try{
    if(this.ctx.storage.sql&&typeof this.ctx.storage.transactionSync==='function'){
@@ -519,11 +536,22 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
  private async schedule(){if(Object.values(this.scheduler.state.computeGroups??{}).some(g=>g.status==='RUNNING'||g.status==='INTEGRATING')||Object.values(this.scheduler.state.workflows??{}).some(w=>w.status==='RUNNING'||w.status==='INTEGRATING')||Object.values(this.scheduler.state.carbonCampaigns??{}).some(c=>c.phase!=='done')||Object.values(this.scheduler.state.jobs).some(job=>job.status==='QUEUED'||!job.containerStopped||!terminal(job.status)))await ensureSchedulerAlarm(this.ctx.storage);}
  async fetch(request:Request){
   const externalPath=new URL(request.url).pathname;
-  if(/^\/v1\/autonomous-tasks\/[^/]+\/external-(?:action|profiles|actions|approval|cancel|artifact)(?:\/[^/]+\/(?:reconcile|cleanup|billing))?$/.test(externalPath)){
+  if(/^\/v1\/autonomous-tasks\/[^/]+\/tool-calls\/?$/.test(externalPath)){
+   const denied=authorizeAutonomousRoute(request,this.env.CONTROL_TOKEN,this.env.AUTONOMOUS_WORKER_TOKEN,this.env.AUTONOMOUS_REPORTER_TOKEN);if(denied)return denied;
+   await this.externalReady;
+   if(!this.toolAudit)return json({error:'Tool audit unavailable'},503);
+   // Lease check is read-only (toolAuditScope). Storage is synchronous SQL, so no blockConcurrencyWhile is needed.
+   const response=await handleToolAuditApi(request,{operatorToken:this.env.CONTROL_TOKEN??'',reporterToken:this.env.AUTONOMOUS_REPORTER_TOKEN,authorize:lease=>this.autonomy.execute('toolAuditScope',{lease}) as Promise<{taskId:string;runId:string;iteration:number}>,store:this.toolAudit});
+   return response??json({error:'Not found'},404);
+  }
+  const largePath=/^\/v1\/autonomous-tasks\/[^/]+\/external-large\/(?:begin|part|complete|abort|manifest)$/.test(externalPath);
+  if(largePath||/^\/v1\/autonomous-tasks\/[^/]+\/external-(?:action|profiles|actions|approval|cancel|artifact)(?:\/[^/]+\/(?:reconcile|cleanup|billing))?$/.test(externalPath)){
    const denied=authorizeAutonomousRoute(request,this.env.CONTROL_TOKEN,this.env.AUTONOMOUS_WORKER_TOKEN,this.env.AUTONOMOUS_REPORTER_TOKEN);if(denied)return denied;
    await this.externalReady;
    // Provider I/O must not hold blockConcurrencyWhile: cancellation remains available.
-   const response=await handleAutonomousExternalApi(request,this.external?{operatorToken:this.env.CONTROL_TOKEN??'',workerToken:this.env.AUTONOMOUS_WORKER_TOKEN??'',service:this.external.service}:undefined);
+   const response=await handleAutonomousExternalApi(request,this.external?{operatorToken:this.env.CONTROL_TOKEN??'',workerToken:this.env.AUTONOMOUS_WORKER_TOKEN??'',service:this.external.service,...(this.external.large?{large:this.external.large}:{})}:undefined);
+   // Large uploads send many parts. They change no canonical state, so they skip the stop sync and wake scheduling.
+   if(largePath)return response;
    await this.syncCanonicalExternalStop(decodeURIComponent(externalPath.split('/')[3]!));
    if(response.ok&&request.method==='POST'){await this.scheduleExternalWake(Date.now()+2000);await this.scheduleAutonomy();}
    return response;
@@ -553,7 +581,7 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
     if(task.spec.execution&&((task.spec.execution.mode==='long_running'&&!this.longRunningReady())||!cloudReadiness(this.env).ready||!await this.nativeSourceReady(task.spec.execution.snapshotId)))return json({error:'Cloud execution is not ready'},503);
    }
    const response=await handleAutonomousApi(request,{operatorToken:this.env.CONTROL_TOKEN??'',workerToken:this.env.AUTONOMOUS_WORKER_TOKEN??'',reporterToken:this.env.AUTONOMOUS_REPORTER_TOKEN,service:{execute:async(operation,input)=>{
-    return this.executeAutonomous(operation,input);
+    return this.withWorkerToolCalls(await this.executeAutonomous(operation,input));
    }}});
    if(response.ok&&request.method==='POST'&&/\/(approve|resume)$/.test(path)){
     const task=await this.autonomy.execute('get',{id:path.split('/')[3]}) as AutonomousTask;
@@ -1182,9 +1210,16 @@ async function diagnoseCarbon(env:Env):Promise<Response>{
    inputTokenLimit:value.inputTokenLimit,outputTokenLimit:value.outputTokenLimit,thinking:value.thinking===true});
  }catch{return json({http:response.status,modelAvailable:false,category:'INVALID_METADATA'});}
 }
+/** Workers gives a bodiless POST a non-null empty stream, so emptiness is decided by reading at most one chunk. */
+async function emptyBody(request:Request):Promise<boolean>{
+ const length=request.headers.get('content-length');if(length!==null&&length!=='0')return false;
+ if(request.body===null)return true;
+ const reader=request.body.getReader();
+ try{for(let i=0;i<8;i++){const next=await reader.read();if(next.done)return true;if(next.value.byteLength>0){await reader.cancel().catch(()=>{});return false;}}await reader.cancel().catch(()=>{});return false;}catch{return false;}finally{reader.releaseLock();}
+}
 export default {async fetch(request:Request,env:Env){const path=new URL(request.url).pathname;if(path==='/health'&&request.method==='GET')return json({ok:true,service:'hivemind-cloudflare',workerVersion:env.CF_VERSION_METADATA?.id,expectedRuntimeRevision:runtimeBuild.digest});if(!path.startsWith('/v1/'))return json({error:'Not found'},404);const denied=isAutonomousPath(path)?authorizeAutonomousRoute(request,env.CONTROL_TOKEN,env.AUTONOMOUS_WORKER_TOKEN,env.AUTONOMOUS_REPORTER_TOKEN):authorize(request,env.CONTROL_TOKEN);if(denied)return denied;if(path==='/v1/boundary-diagnostics'){
  if(request.method!=='POST')return json({error:'Method not allowed'},405);
  const key=request.headers.get('idempotency-key');
- if(!key||! /^[A-Za-z0-9_-]{8,80}$/.test(key)||new URL(request.url).search||request.body!==null)return json({error:'Empty body and bounded idempotency-key required'},400);
+ if(!key||! /^[A-Za-z0-9_-]{8,80}$/.test(key)||new URL(request.url).search||!await emptyBody(request))return json({error:'Empty body and bounded idempotency-key required'},400);
  try{return json(await env.RUNNER.getByName('boundary-diagnostic:'+runtimeBuild.digest+':'+key).boundaryDiagnostic());}catch{return json({error:'Diagnostic unavailable'},503);}
  }if(path==='/v1/carbon-diagnostics'&&request.method==='GET')return diagnoseCarbon(env);try{return await env.SCHEDULER.getByName('owner').fetch(request);}catch{return json({error:'Service is unavailable'},503);}}};

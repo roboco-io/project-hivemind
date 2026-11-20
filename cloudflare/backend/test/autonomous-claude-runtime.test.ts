@@ -51,6 +51,19 @@ test('synthetic production packaging accepts only expected immutable npm executa
  const files={lstat:async(path:string)=>({uid:0,mode:0o755,isSymbolicLink:()=>['/usr/local/bin/claude','/usr/local/bin/codex'].includes(path)}),realpath:async(path:string)=>wrongTarget?'/tmp/evil':path.endsWith('claude')?'/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js':'/usr/local/lib/node_modules/@openai/codex/bin/codex.js',readFile:async(path:string)=>path==='/etc/claude-code/managed-settings.json'?bytes:path==='/opt/hivemind/backend/runtime-build.json'?JSON.stringify({files:{'backend/config/claude-managed-settings.json':createHash('sha256').update(bytes).digest('hex')}}):Promise.reject(Error('not in image'))};
  await assert.doesNotReject(verifyAutonomousPrerequisiteFiles(files));wrongTarget=true;await assert.rejects(verifyAutonomousPrerequisiteFiles(files));
 });
+test('prerequisite check pins the tool audit hooks: Pre blocks, Post never blocks, none may be missing',async()=>{
+ const original=await readFile(new URL('../config/claude-managed-settings.json',import.meta.url),'utf8');
+ const attempt=async(mutate:(s:any)=>void)=>{const settings=JSON.parse(original);mutate(settings);const bytes=JSON.stringify(settings);
+  const files={lstat:async(path:string)=>({uid:0,mode:0o755,isSymbolicLink:()=>['/usr/local/bin/claude','/usr/local/bin/codex'].includes(path)}),realpath:async(path:string)=>path.endsWith('claude')?'/usr/local/lib/node_modules/@anthropic-ai/claude-code/cli.js':'/usr/local/lib/node_modules/@openai/codex/bin/codex.js',readFile:async(path:string)=>path==='/etc/claude-code/managed-settings.json'?bytes:path==='/opt/hivemind/backend/runtime-build.json'?JSON.stringify({files:{'backend/config/claude-managed-settings.json':createHash('sha256').update(bytes).digest('hex')}}):Promise.reject(Error('not in image'))};
+  return verifyAutonomousPrerequisiteFiles(files);};
+ await assert.doesNotReject(attempt(()=>{}));
+ await assert.rejects(attempt(s=>{delete s.hooks.PostToolUse;}));
+ await assert.rejects(attempt(s=>{delete s.hooks.PostToolUseFailure;}));
+ await assert.rejects(attempt(s=>{s.hooks.PreToolUse=s.hooks.PreToolUse.filter((h:any)=>h.matcher!=='.*');}));
+ await assert.rejects(attempt(s=>{delete s.hooks.PreToolUse.find((h:any)=>h.matcher==='.*').hooks[0].onFailure;}));
+ await assert.rejects(attempt(s=>{s.hooks.PostToolUse[0].hooks[0].onFailure='block';}));
+ await assert.rejects(attempt(s=>{s.hooks.PostToolUse[0].hooks[0].command+=' extra';}));
+});
 test('bootstrap object listen overload binds loopback and rejects concurrent iterations',async()=>{
  let release!:(v:never)=>void,started!:()=>void;const ready=new Promise<void>(r=>{started=r;});
  const server=createAutonomousBootstrap({token:'private-test-token',execute:async()=>{started();return new Promise<never>(r=>{release=r;});}});await new Promise<void>(r=>server.listen({port:0},r));

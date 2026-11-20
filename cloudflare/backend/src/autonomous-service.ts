@@ -8,7 +8,7 @@ import type { AutonomousApiService, AutonomousOperation } from '../../../apps/co
 export const AUTONOMOUS_STATE_MAX_BYTES = 1536 * 1024;
 // Leave room below the 2 MB KV key/value limit for bounded stop and recovery writes.
 export const AUTONOMOUS_STATE_HARD_MAX_BYTES = 1900 * 1024;
-const recoveryOperations=new Set<AutonomousOperation>(['acceptExternal','settleExternal','cleanedExternal','nativeReady','recordNativeReceipt','workerState','cancel','cleaned','tick','heartbeat','settle','finish','finishCloud','finishUnstartedCloud','abandonCloud','reconcile','reconcileRun','get','getSummary','historyPage','list','listPage']);
+const recoveryOperations=new Set<AutonomousOperation>(['acceptExternal','settleExternal','cleanedExternal','nativeReady','recordNativeReceipt','workerState','cancel','cleaned','tick','stopExternalBudget','toolAuditScope','heartbeat','settle','finish','finishCloud','finishUnstartedCloud','abandonCloud','reconcile','reconcileRun','get','getSummary','historyPage','list','listPage']);
 export class AutonomousStorageCapacityError extends Error {
  statusCode=413;
  code='AUTONOMOUS_STORAGE_CAPACITY';

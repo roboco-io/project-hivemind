@@ -1,12 +1,18 @@
 import {createAwsCostExplorerReader,createExternalCostCache,type AwsCostExplorerOptions,type ExternalCostReader} from '../../../packages/adapters/src/autonomous-external-cost.ts';
 import {createAwsTtlGuardPort,type AwsGuardOptions} from '../../../packages/adapters/src/autonomous-aws-guard.ts';
 import {createHash} from 'node:crypto';
+import {validateExternalS3Target} from '../../../packages/core/src/autonomous-external-s3.ts';
+import {createExternalLargeStore,type ExternalLargeBucket,type ExternalLargeStore} from '../../../packages/adapters/src/autonomous-external-large-store.ts';
+import {createExternalLargeRecordPort} from '../../../packages/adapters/src/autonomous-external-large-sql.ts';
+import type {ExternalLargeLimits,ExternalLargeManifest} from '../../../packages/contracts/src/autonomous-external-large.js';
+import type {ExternalS3Target} from '../../../packages/contracts/src/autonomous-external-s3.js';
+import {createExternalCostWatch} from '../../../packages/core/src/autonomous-external-cost-watch.ts';
 import {ExternalBroker,type GuardedExternalProviderTransport} from '../../../packages/core/src/autonomous-external.ts';
 import {createExternalSqlStore,type ExternalSqlPort} from '../../../packages/core/src/autonomous-external-sql.ts';
 import {createAutonomousExternalService,type AutonomousExternalService} from '../../../apps/control-plane/src/autonomous-external-api.ts';
 import type {AutonomousApiService} from '../../../apps/control-plane/src/autonomous-api.ts';
 import type {ExternalProfile,ExternalCredentialScope,ExternalInvocation} from '../../../packages/contracts/src/autonomous-external.ts';
-import {createExternalProviderTransport,createExternalR2ArtifactLoader,createExternalR2ArtifactPublisher,type ExternalArtifactPublisher,type ExternalArtifactLoader,type ExternalProviderCredential,type ExternalProviderOptions,type AwsTtlGuardPort} from '../../../packages/adapters/src/autonomous-external.ts';
+import {createExternalProviderTransport,createExternalR2ArtifactLoader,createExternalR2ArtifactPublisher,type ExternalArtifactPublisher,type ExternalArtifactLoader,type ExternalProviderCredential,type ExternalProviderOptions,type ExternalHfLfsConfig,type AwsTtlGuardPort} from '../../../packages/adapters/src/autonomous-external.ts';
 
 export interface ExternalEnvironment {
  AUTONOMOUS_EXTERNAL_COST_CONFIG?:string;
@@ -19,6 +25,10 @@ export interface ExternalEnvironment {
 export interface ExternalArtifactBucket {
  get(key:string):Promise<{size:number;body:ReadableStream<Uint8Array>}|null>;
  put?(key:string,value:string,options:{onlyIf:{etagDoesNotMatch:string}}):Promise<unknown|null>;
+ /** R2 multipart surface. Needed only for large Hugging Face uploads; without it large uploads stay disabled. */
+ createMultipartUpload?(key:string):Promise<{uploadId:string}>;
+ resumeMultipartUpload?(key:string,uploadId:string):{uploadPart(partNumber:number,data:Uint8Array):Promise<{etag:string}>;complete(parts:{partNumber:number;etag:string}[]):Promise<unknown>;abort():Promise<unknown>};
+ delete?(key:string):Promise<unknown>;
 }
 /** CONFIG schema: {version:1,profiles:[ExternalProfile],providers:{aws?:{
  * enabled,accountId,region,workloadId,imageId,instanceType,subnetId,instanceProfileArn,
@@ -30,7 +40,17 @@ export interface ExternalArtifactBucket {
  * Worker publication uses native authority and fixed external-artifacts/<digest> keys.
  * Records are immutable ExternalArtifact JSON, NOT SourceSnapshot or LargeArtifactRef.
  */
-interface Configuration {version:1;profiles:ExternalProfile[];providers:Pick<ExternalProviderOptions,'aws'|'hf'|'github'>;ttlGuard?:{guardArn:string};credentialPolicyRevision?:string}
+/** Raw JSON form of providers.hf.lfs. Functions and limits that need runtime wiring are added later. */
+interface ConfiguredLfs {maxFileBytes:number;maxTotalBytes:number;uploadHosts:string[]}
+interface ConfiguredProviders {
+ aws?:ExternalProviderOptions['aws'];github?:ExternalProviderOptions['github'];
+ hf?:{enabled:boolean;repository:string;revision:string;visibility?:'private'|'public';lfs?:ConfiguredLfs};
+ s3?:{enabled:boolean;target:ExternalS3Target};
+}
+interface Configuration {version:1;profiles:ExternalProfile[];providers:ConfiguredProviders;ttlGuard?:{guardArn:string};credentialPolicyRevision?:string}
+/** The 's3' provider signs with the same typed credential as 'aws'. */
+const credentialKind=(provider:string)=>provider==='s3'?'aws':provider;
+const LFS_MAX_FILE_BYTES=5*1024**3,LFS_MAX_TOTAL_BYTES=64*1024**3,LARGE_MAX_FILES=32;
 export interface ExternalRuntimeOptions {
  env:ExternalEnvironment;core?:AutonomousApiService;sql?:ExternalSqlPort;artifacts?:ExternalArtifactBucket;
  /** Optional trusted fixture port. Production uses AUTONOMOUS_EXTERNAL_CREDENTIALS. */
@@ -42,6 +62,8 @@ export interface ExternalRuntimeOptions {
 }
 export interface AutonomousExternalRuntime {
  enabled:boolean;service:AutonomousExternalService;configurationFingerprint:string;
+ /** Large upload wiring for the external-large routes. Absent unless providers.hf.lfs and a multipart bucket are configured. */
+ large?:{store:ExternalLargeStore;limits:ExternalLargeLimits};
  /** PRIVATE safety scanner input only. Never include in HTTP/UI/model data. */
  configuredSecretValues():readonly string[];
  recover():Promise<{needsWork:boolean;nextWake?:number}>;
@@ -58,13 +80,13 @@ function canonical(value:unknown):string{if(value===null||typeof value!=='object
 const hash=(value:unknown)=>createHash('sha256').update(canonical(value)).digest('hex');
 function json(raw:string):unknown{if(Buffer.byteLength(raw)>65536)unavailable();try{return JSON.parse(raw);}catch{unavailable();}}
 function configuration(raw:string):Configuration {
- const c=object(json(raw),['version','profiles','providers'],['ttlGuard','credentialPolicyRevision']);if(c.credentialPolicyRevision!==undefined)text(c.credentialPolicyRevision,128);if(c.version!==1||!Array.isArray(c.profiles)||c.profiles.length<1||c.profiles.length>3)unavailable();
- const providers=object(c.providers,[],['aws','hf','github']),ids=new Set<string>(),kinds=new Set<string>();
+ const c=object(json(raw),['version','profiles','providers'],['ttlGuard','credentialPolicyRevision']);if(c.credentialPolicyRevision!==undefined)text(c.credentialPolicyRevision,128);if(c.version!==1||!Array.isArray(c.profiles)||c.profiles.length<1||c.profiles.length>4)unavailable();
+ const providers=object(c.providers,[],['aws','hf','github','s3']),ids=new Set<string>(),kinds=new Set<string>();
  for(const entry of c.profiles){
   const p=object(entry,['id','provider','target','operations','credentialRef','maxLifetimeMs','upperBoundMicros','maxActiveActions'],['enabled']);
-  text(p.id,128);text(p.credentialRef,128);if(!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(p.id)||!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(p.credentialRef)||ids.has(p.id)||!['aws','hf','github'].includes(String(p.provider))||kinds.has(String(p.provider)))unavailable();ids.add(p.id);kinds.add(String(p.provider));
+  text(p.id,128);text(p.credentialRef,128);if(!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(p.id)||!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(p.credentialRef)||ids.has(p.id)||!['aws','hf','github','s3'].includes(String(p.provider))||kinds.has(String(p.provider)))unavailable();ids.add(p.id);kinds.add(String(p.provider));
   integer(p.maxLifetimeMs,1);integer(p.upperBoundMicros);integer(p.maxActiveActions,1);if(p.enabled!==undefined&&typeof p.enabled!=='boolean')unavailable();
-  const allowed=({aws:['aws.spot.start','aws.spot.inspect'],hf:['hf.model.commit'],github:['github.branch.push']} as Record<string,string[]>)[String(p.provider)]!;
+  const allowed=({aws:['aws.spot.start','aws.spot.inspect'],hf:['hf.model.commit','hf.model.lfs_commit'],github:['github.branch.push'],s3:['aws.s3.put','aws.s3.inspect']} as Record<string,string[]>)[String(p.provider)]!;
   if(!Array.isArray(p.operations)||!p.operations.length||new Set(p.operations).size!==p.operations.length||p.operations.some(op=>!allowed.includes(op)))unavailable();
   if(p.provider==='aws'){
    const target=object(p.target,['accountId','region','workloadId']),a=object(providers.aws,['enabled','accountId','region','workloadId','imageId','instanceType','subnetId','instanceProfileArn','maxLifetimeMs','credentialRef','maxUpperBoundMicros'],['billingPolicy']);
@@ -73,8 +95,24 @@ function configuration(raw:string):Configuration {
    if(typeof a.enabled!=='boolean'||!/^\d{12}$/.test(String(a.accountId))||!/^[a-z]{2}-[a-z]+-\d$/.test(String(a.region))||!/^ami-[a-f0-9]+$/.test(String(a.imageId))||!/^subnet-[a-f0-9]+$/.test(String(a.subnetId))||!/^[a-z0-9]+\.[a-z0-9]+$/.test(String(a.instanceType))||!String(a.instanceProfileArn).startsWith(`arn:aws:iam::${a.accountId}:instance-profile/`))unavailable();
    integer(a.maxLifetimeMs,1);integer(a.maxUpperBoundMicros);if(p.maxLifetimeMs>a.maxLifetimeMs||p.upperBoundMicros>a.maxUpperBoundMicros||p.credentialRef!==a.credentialRef||['accountId','region','workloadId'].some(k=>target[k]!==a[k]))unavailable();
    if(c.ttlGuard!==undefined){const guard=object(c.ttlGuard,['guardArn']);text(guard.guardArn);if(!guard.guardArn.startsWith(`arn:aws:events:${a.region}:${a.accountId}:rule/`))unavailable();}
+  }else if(p.provider==='s3'){
+   // Both targets go through the contract validator, then must match exactly. Nothing is inferred.
+   let target:ExternalS3Target,provider:Record<string,unknown>;
+   try{target=validateExternalS3Target(p.target);provider=object(providers.s3,['enabled','target']);if(typeof provider.enabled!=='boolean')unavailable();if(hash(validateExternalS3Target(provider.target))!==hash(target))unavailable();}catch{unavailable();}
   }else{
-   const ref=p.provider==='hf'?'revision':'branch',target=object(p.target,['repository',ref]),provider=object(providers[String(p.provider)],['enabled','repository',ref]);
+   const ref=p.provider==='hf'?'revision':'branch',hf=p.provider==='hf',target=object(p.target,['repository',ref],hf?['visibility']:[]),provider=object(providers[String(p.provider)],['enabled','repository',ref],hf?['visibility','lfs']:[]);
+   if(hf){
+    for(const value of [target.visibility,provider.visibility])if(value!==undefined&&value!=='private'&&value!=='public')unavailable();
+    // Omitted visibility means private, so the profile and provider must agree after resolving it.
+    if((target.visibility??'private')!==(provider.visibility??'private'))unavailable();
+    if(provider.lfs!==undefined){
+     const lfs=object(provider.lfs,['maxFileBytes','maxTotalBytes','uploadHosts']);integer(lfs.maxFileBytes,1);integer(lfs.maxTotalBytes,1);
+     if(lfs.maxFileBytes>LFS_MAX_FILE_BYTES||lfs.maxTotalBytes<lfs.maxFileBytes||lfs.maxTotalBytes>LFS_MAX_TOTAL_BYTES||!Array.isArray(lfs.uploadHosts)||!lfs.uploadHosts.length||lfs.uploadHosts.length>8||new Set(lfs.uploadHosts).size!==lfs.uploadHosts.length)unavailable();
+     for(const host of lfs.uploadHosts){text(host,253);if(!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(host)||host==='huggingface.co')unavailable();}
+    }
+    // A large commit needs server-owned limits and may never target a public repository.
+    if((p.operations as string[]).includes('hf.model.lfs_commit')&&(provider.lfs===undefined||(provider.visibility??'private')!=='private'))unavailable();
+   }
    text(provider.repository);text(provider[ref],128);if(typeof provider.enabled!=='boolean'||!/^[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+$/.test(provider.repository)||!/^[A-Za-z0-9][A-Za-z0-9_./-]*$/.test(String(provider[ref]))||String(provider[ref]).includes('..')||String(provider[ref]).includes('//')||String(provider[ref]).endsWith('.lock')||String(provider[ref]).endsWith('/')||target.repository!==provider.repository||target[ref]!==provider[ref])unavailable();
   }
  }
@@ -127,7 +165,25 @@ function configuredCredentialMap(env:ExternalEnvironment):Record<string,External
 export function externalConfiguredSecretValues(env:ExternalEnvironment):readonly string[]{
  return Object.freeze(Object.values(configuredCredentialMap(env)).flatMap(c=>Object.entries(c).filter(([key])=>key!=='provider').map(([,value])=>String(value))));
 }
+/** Durable manifest ledger in the same SQL as the broker. A digest names exactly one canonical manifest. */
+function createLargeManifestStore(sql:ExternalSqlPort){
+ sql.exec('CREATE TABLE IF NOT EXISTS external_large_manifests(manifest_digest TEXT PRIMARY KEY,json TEXT NOT NULL)');
+ const read=(digest:string)=>[...sql.exec('SELECT json FROM external_large_manifests WHERE manifest_digest=?',digest)][0] as {json?:unknown}|undefined;
+ return {
+  async save(manifest:ExternalLargeManifest,digest:string):Promise<void>{
+   const json=JSON.stringify(manifest);if(!/^[a-f0-9]{64}$/.test(digest)||Buffer.byteLength(json)>1048576)unavailable();
+   sql.exec('INSERT OR IGNORE INTO external_large_manifests(manifest_digest,json) VALUES(?,?)',digest,json);
+   const row=read(digest);if(!row||typeof row.json!=='string'||canonical(JSON.parse(row.json))!==canonical(manifest))unavailable();
+  },
+  async load(digest:string):Promise<ExternalLargeManifest>{
+   const row=/^[a-f0-9]{64}$/.test(digest)?read(digest):undefined;if(!row||typeof row.json!=='string')unavailable();
+   return JSON.parse(row!.json as string) as ExternalLargeManifest;
+  },
+ };
+}
 /** Concrete Worker composition. Does not call providers, read secrets remotely, or deploy. */
+/** LFS byte source bound to the invocation owner: only a file whose upload this owner completed can be opened. */
+export const openLargeFor=(store:Pick<ExternalLargeStore,'open'>):ExternalHfLfsConfig['open']=>async (file,i)=>(await store.open(file,{taskId:i.taskId,revision:i.revision,profileId:i.profile.id})).body;
 export function createAutonomousExternalRuntime(options:ExternalRuntimeOptions):AutonomousExternalRuntime|undefined {
  const {env}=options,enabled=env.AUTONOMOUS_EXTERNAL_ENABLED==='true';
  if(!env.AUTONOMOUS_EXTERNAL_CONFIG){if(enabled)unavailable();return undefined;}
@@ -136,7 +192,7 @@ export function createAutonomousExternalRuntime(options:ExternalRuntimeOptions):
  const credentials=configuredCredentialMap(env);
  const guardSettings=env.AUTONOMOUS_AWS_GUARD_CONFIG?guardConfiguration(env.AUTONOMOUS_AWS_GUARD_CONFIG,config):undefined;
  const costSettings=env.AUTONOMOUS_EXTERNAL_COST_CONFIG?costConfiguration(env.AUTONOMOUS_EXTERNAL_COST_CONFIG,config):undefined;
- const descriptors=config.profiles.map(p=>({credentialRef:p.credentialRef,provider:credentials[p.credentialRef]?.provider??p.provider,target:p.target,operations:p.operations}));
+ const descriptors=config.profiles.map(p=>({credentialRef:p.credentialRef,provider:credentials[p.credentialRef]?.provider??credentialKind(p.provider),target:p.target,operations:p.operations}));
  const configurationFingerprint=hash({config,credentialPolicyRevision:config.credentialPolicyRevision??hash(descriptors),descriptors,enabled,costSettings,costReaderConfigured:!!options.costReader,guardSettings,guardConfigured:!!options.awsTtlGuard||!!guardSettings}),now=options.now??Date.now;
  const resolved:Record<string,ExternalProviderCredential>={...credentials},knownSecretValues=new Set<string>();
  function refreshSecretValues(){
@@ -161,7 +217,7 @@ export function createAutonomousExternalRuntime(options:ExternalRuntimeOptions):
   const {credentialRef,...settings}=costSettings;
   costReader=createAwsCostExplorerReader({...settings,enabled:true,cache:createExternalCostCache(options.sql),credentials:async()=>{const c=await resolveCredential(credentialRef,'aws');if(c.provider!=='aws')unavailable();return {accessKeyId:c.accessKeyId,secretAccessKey:c.secretAccessKey,...(c.sessionToken?{sessionToken:c.sessionToken}:{})};},fetch:options.fetch,now});
  }
- const available=(p:ExternalProfile)=>!!((credentials[p.credentialRef]?.provider===p.provider||options.secrets)&&enabled&&p.enabled===true&&config.providers[p.provider]?.enabled===true&&(p.provider!=='aws'||config.ttlGuard&&guardPort&&(!guardSettings||guardSettings.manifest.validUntil>now())&&(config.providers.aws?.billingPolicy==='reserved_ceiling_only'||config.providers.aws?.billingPolicy==='verified_cost_source'&&!!costReader)));
+ const available=(p:ExternalProfile)=>!!((credentials[p.credentialRef]?.provider===credentialKind(p.provider)||options.secrets)&&enabled&&p.enabled===true&&config.providers[p.provider]?.enabled===true&&(p.provider!=='aws'||config.ttlGuard&&guardPort&&(!guardSettings||guardSettings.manifest.validUntil>now())&&(config.providers.aws?.billingPolicy==='reserved_ceiling_only'||config.providers.aws?.billingPolicy==='verified_cost_source'&&!!costReader)));
  const registry={get(id:string){const p=config.profiles.find(p=>p.id===id);return p?{...structuredClone(p),enabled:available(p)}:undefined;}};
  const store=createExternalSqlStore(options.sql);
  function recoveryIssue(actionId:string,issue?:'historical_policy_missing'|'historical_credential_unavailable'){
@@ -185,10 +241,21 @@ export function createAutonomousExternalRuntime(options:ExternalRuntimeOptions):
    const p=config.profiles.find(p=>p.id===durable.profileId&&p.credentialRef===reference&&p.provider===scope.provider&&hash(p.target)===hash(scope.target));
    if(!p||!available(p)||now()>=scope.expiresAt)unavailable();
   }else historical({taskId:scope.taskId,revision:scope.revision,profile:durable.profile,actionId:scope.actionId});
-  try{const value=await resolveCredential(reference,scope.provider);if(scope.purpose!=='execute')recoveryIssue(scope.actionId);return consume(structuredClone(value));}
+  try{const value=await resolveCredential(reference,credentialKind(scope.provider));if(scope.purpose!=='execute')recoveryIssue(scope.actionId);return consume(structuredClone(value));}
   catch(error){if(scope.purpose!=='execute')recoveryIssue(scope.actionId,'historical_credential_unavailable');throw error;}
  }};
- const providerOptions:ExternalProviderOptions={enabled:true,costReader,artifacts:createExternalArtifactLoader(options.artifacts),now,fetch:options.fetch,...(config.providers.aws?{aws:{...config.providers.aws,enabled:true}}:{}),...(config.providers.hf?{hf:{...config.providers.hf,enabled:true}}:{}),...(config.providers.github?{github:{...config.providers.github,enabled:true}}:{}),...(config.ttlGuard&&guardPort?{awsTtlGuard:{guardArn:config.ttlGuard.guardArn,port:guardPort}}:{})};
+ // Large uploads: R2 multipart bucket + durable ledger + manifest ledger. All three or none.
+ const multipart=options.artifacts,largeBucket:ExternalLargeBucket|undefined=multipart.createMultipartUpload&&multipart.resumeMultipartUpload&&multipart.delete?{createMultipartUpload:key=>multipart.createMultipartUpload!(key),resumeMultipartUpload:(key,id)=>multipart.resumeMultipartUpload!(key,id),get:key=>multipart.get(key),delete:key=>multipart.delete!(key)}:undefined;
+ const limitsOf=(lfs:ConfiguredLfs):ExternalLargeLimits=>({maxFileBytes:lfs.maxFileBytes,maxTotalBytes:lfs.maxTotalBytes,maxFiles:LARGE_MAX_FILES});
+ const largeStore=config.providers.hf?.lfs&&largeBucket?createExternalLargeStore({bucket:largeBucket,records:createExternalLargeRecordPort(options.sql),limits:limitsOf(config.providers.hf.lfs),now}):undefined;
+ const manifests=largeStore?createLargeManifestStore(options.sql):undefined;
+ const lfsWiring=(lfs:ConfiguredLfs|undefined):ExternalHfLfsConfig|undefined=>lfs&&largeStore&&manifests?{uploadHosts:[...lfs.uploadHosts],limits:limitsOf(lfs),loadManifest:digest=>manifests.load(digest),open:openLargeFor(largeStore)}:undefined;
+ /** Provider block for the transport, built from one saved or current configuration. */
+ function providerSet(c:ConfiguredProviders):Pick<ExternalProviderOptions,'aws'|'hf'|'github'|'s3'>{
+  const {lfs,...hf}=c.hf??{},wired=lfsWiring(lfs);
+  return {...(c.aws?{aws:{...c.aws,enabled:true}}:{}),...(c.hf?{hf:{...hf,enabled:true,repository:c.hf.repository,revision:c.hf.revision,...(wired?{lfs:wired}:{})}}:{}),...(c.github?{github:{...c.github,enabled:true}}:{}),...(c.s3?{s3:{enabled:true,target:structuredClone(c.s3.target)}}:{})};
+ }
+ const providerOptions:ExternalProviderOptions={enabled:true,costReader,artifacts:createExternalArtifactLoader(options.artifacts),now,fetch:options.fetch,...providerSet(config.providers),...(config.ttlGuard&&guardPort?{awsTtlGuard:{guardArn:config.ttlGuard.guardArn,port:guardPort}}:{})};
  const provider=()=>createExternalProviderTransport({...providerOptions,forbiddenValues:[...knownSecretValues]});
  function recoveryProvider(i:ExternalInvocation){
   const snapshot=historical(i),saved=snapshot.config;let reader:ExternalCostReader|undefined;
@@ -198,7 +265,7 @@ export function createAutonomousExternalRuntime(options:ExternalRuntimeOptions):
   }
   // Historical policy is read/delete only. No recovery path exposes execute or arms a timer.
   const noLaunch:AwsTtlGuardPort={async attest(){unavailable();},async arm(){unavailable();}};
-  return createExternalProviderTransport({enabled:true,artifacts:createExternalArtifactLoader(options.artifacts!),now,fetch:options.fetch,forbiddenValues:[...knownSecretValues],costReader:reader,...(saved.providers.aws?{aws:{...saved.providers.aws,enabled:true}}:{}),...(saved.providers.hf?{hf:{...saved.providers.hf,enabled:true}}:{}),...(saved.providers.github?{github:{...saved.providers.github,enabled:true}}:{}),...(saved.ttlGuard?{awsTtlGuard:{guardArn:saved.ttlGuard.guardArn,port:noLaunch}}:{})});
+  return createExternalProviderTransport({enabled:true,artifacts:createExternalArtifactLoader(options.artifacts!),now,fetch:options.fetch,forbiddenValues:[...knownSecretValues],costReader:reader,...providerSet(saved.providers),...(saved.ttlGuard?{awsTtlGuard:{guardArn:saved.ttlGuard.guardArn,port:noLaunch}}:{})});
  }
  const transport:GuardedExternalProviderTransport<ExternalProviderCredential>={execute:(i,c,authority)=>provider().execute(i,c,authority),inspect:(i,c)=>recoveryProvider(i).inspect(i,c),cleanup:(i,r,c)=>recoveryProvider(i).cleanup(i,r,c),confirmAbsent:(i,r,c)=>recoveryProvider(i).confirmAbsent(i,r,c)};
  const broker=new ExternalBroker({store,registry,resolver,transport,now});
@@ -208,14 +275,21 @@ export function createAutonomousExternalRuntime(options:ExternalRuntimeOptions):
   store.bindProviderPolicy(request.taskId,request.revision,request.profileId,{version:1,profileHash:approval.profileHash,configurationFingerprint,config,...(costSettings?{costSettings}:{}),...(options.costReader?{injectedCostReader:true}:{})});
   return approval;
  };
+ // Budget watch: cancel live approvals first, then stop the canonical task through the budget stop. Never an HTTP route.
+ const costWatch=createExternalCostWatch({store,now,
+  stopTask:async(taskId,reason)=>{await options.core!.execute('stopExternalBudget',{id:taskId,reason});},
+  cancelApprovals:(taskId,revision)=>{
+   const active=store.transaction(s=>Object.values(s.approvals).some(p=>p.taskId===taskId&&p.revision===revision&&p.stoppedAt===undefined));
+   if(active){store.blockTask(taskId,revision);broker.cancel(taskId,revision,'External cost stop');}
+  }});
  const artifactBucket=options.artifacts;
  const artifactPublisher=options.artifactPublisher??(artifactBucket.put?createExternalR2ArtifactPublisher({
   async get(key){const object=await artifactBucket.get(key);if(!object)return null;return {size:object.size,async arrayBuffer(){if(!Number.isSafeInteger(object.size)||object.size<1||object.size>2*1024*1024)unavailable();const reader=object.body.getReader(),chunks:Uint8Array[]=[];let size=0;try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>object.size){await reader.cancel();unavailable();}chunks.push(part.value);}}finally{reader.releaseLock();}if(size!==object.size)unavailable();return new Uint8Array(Buffer.concat(chunks)).buffer;}};},
   put:(key,value,condition)=>artifactBucket.put!(key,value,condition),
  }):undefined);
- const service=createAutonomousExternalService({core:options.core,broker,registry,store,configurationFingerprint,artifactPublisher,knownSecretValues:()=>[...knownSecretValues]});
+ const service=createAutonomousExternalService({core:options.core,broker,registry,store,configurationFingerprint,artifactPublisher,...(manifests&&largeStore?{manifestStore:{save:(m,d)=>manifests.save(m,d)},largeStore:{abortOwner:(t,r)=>largeStore.abortOwner(t,r)}}:{}),knownSecretValues:()=>[...knownSecretValues]});
  let cursor=0;
- return {enabled:config.profiles.some(available),service,configurationFingerprint,configuredSecretValues:()=>Object.freeze([...knownSecretValues]),
+ return {enabled:config.profiles.some(available),service,configurationFingerprint,...(largeStore&&config.providers.hf?.lfs?{large:{store:largeStore,limits:limitsOf(config.providers.hf.lfs)}}:{}),configuredSecretValues:()=>Object.freeze([...knownSecretValues]),
   async recover(){
    await service.recover();const pending=store.listJournal().filter(j=>!['settled','cleaned'].includes(j.phase));
    if(!pending.length)return {needsWork:false};
@@ -223,6 +297,8 @@ export function createAutonomousExternalRuntime(options:ExternalRuntimeOptions):
   },
   async cleanupDue(limit=20){
    if(!Number.isSafeInteger(limit)||limit<1||limit>100)unavailable();
+   let sweep:{failed:string[];nextExpiryAt?:number}={failed:[]};
+   try{sweep=await costWatch.sweep();}catch{sweep={failed:['sweep']};/* Keep retrying on the next wake. */}
    const pending=store.listJournal().filter(j=>!['settled','cleaned'].includes(j.phase)),ordered=[...pending.slice(cursor),...pending.slice(0,cursor)],due=ordered.filter(j=>(j.retryAt??0)<=now()).slice(0,limit);let visited=0;
    for(const j of due){visited++;try{
     let canonical:unknown;try{canonical=await options.core!.execute('getSummary',{id:j.taskId});}catch{canonical=await options.core!.execute('get',{id:j.taskId});}
@@ -231,7 +307,11 @@ export function createAutonomousExternalRuntime(options:ExternalRuntimeOptions):
     const latest=store.getJournal(j.taskId,j.revision,j.requestId)!;const attempts=Math.min(10,(latest.retryAttempts??0)+1);store.putJournal({...latest,retryAttempts:attempts,retryAt:now()+Math.min(3600000,60000*2**(attempts-1))});}
    cursor=pending.length?(cursor+visited)%pending.length:0;
    const remaining=store.listJournal().filter(j=>!['settled','cleaned'].includes(j.phase));
-   return {visited,needsWork:remaining.length>0,...(remaining.length?{nextWake:Math.max(now()+60000,Math.min(...remaining.map(j=>j.retryAt??now()+60000)))}:{})};
+   // Retry and failure wakes keep the 60 s floor so a failing cleanup cannot spin. Only an action expiry may wake sooner, never below 1 s.
+   const backoff=[...remaining.map(j=>j.retryAt??now()+60000),...(sweep.failed.length?[now()+60000]:[])],wakes:number[]=[];
+   if(backoff.length)wakes.push(Math.max(now()+60000,Math.min(...backoff)));
+   if(sweep.nextExpiryAt!==undefined)wakes.push(Math.max(now()+1000,sweep.nextExpiryAt));
+   return {visited,needsWork:wakes.length>0,...(wakes.length?{nextWake:Math.min(...wakes)}:{})};
   },
  };
 }

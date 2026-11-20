@@ -12,6 +12,7 @@ import type {CallToolResult,JSONRPCMessage} from '@modelcontextprotocol/sdk/type
 import {z} from 'zod';
 import type {AutonomousLease} from '../../../../packages/contracts/src/autonomous.ts';
 import type {ExternalActionRequest} from '../../../../packages/contracts/src/autonomous-external.ts';
+import {createLargePost,uploadWorkspaceFiles} from './autonomous-large-upload.ts';
 
 export const ACTION_MCP_SERVER_NAME='hivemind';
 export const ACTION_MCP_TOOL_NAME='action';
@@ -27,10 +28,19 @@ const integer=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER);
 const token=z.string().min(1).max(4096).regex(/^[^\s\p{Cc}]+$/u);
 const identity={profileId:id,requestId:id};
 const artifactSchema=z.strictObject({files:z.array(z.strictObject({path:z.string().min(1).max(1024),contentBase64:z.string().max(349528)})).min(1).max(32)});
+const digestSchema=z.string().regex(/^[a-f0-9]{64}$/);
+const commitMessage=z.string().min(1).max(200).regex(/^[^\p{Cc}]+$/u);
+// Same suffix rule as the server: no "..", "//", "/./", leading or trailing separators. The server validates again.
+const keySuffix=z.string().regex(/^(?!.*\.\.)(?!.*\/\/)(?!.*\/\.\/)(?!.*\/\.?$)[A-Za-z0-9_][A-Za-z0-9_./-]{0,239}$/);
+/** Workspace files for a large Hugging Face commit. Paths are relative; the uploader checks them against /workspace. */
+const largeArtifactSchema=z.strictObject({paths:z.array(z.string().min(1).max(1024)).min(1).max(32)});
 const actionSchema=z.discriminatedUnion('operation',[
   z.strictObject({...identity,operation:z.literal('aws.spot.start'),parameters:z.strictObject({lifetimeMs:integer.min(1)})}),
   z.strictObject({...identity,operation:z.literal('aws.spot.inspect'),parameters:z.strictObject({startActionId:id})}),
   z.strictObject({...identity,operation:z.literal('hf.model.commit'),artifact:artifactSchema.optional(),parameters:z.strictObject({artifactDigest:z.string().regex(/^[a-f0-9]{64}$/),message:z.string().min(1).max(200).regex(/^[^\p{Cc}]+$/u)})}),
+  z.strictObject({...identity,operation:z.literal('hf.model.lfs_commit'),largeArtifact:largeArtifactSchema.optional(),parameters:z.strictObject({message:commitMessage,manifestDigest:digestSchema.optional()})}),
+  z.strictObject({...identity,operation:z.literal('aws.s3.put'),artifact:artifactSchema.optional(),parameters:z.strictObject({keySuffix,artifactDigest:digestSchema})}),
+  z.strictObject({...identity,operation:z.literal('aws.s3.inspect'),parameters:z.strictObject({putActionId:id})}),
   z.strictObject({...identity,operation:z.literal('github.branch.push'),artifact:artifactSchema.optional(),parameters:z.strictObject({artifactDigest:z.string().regex(/^[a-f0-9]{64}$/),expectedHead:z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/)})}),
 ]);
 export type ActionModelRequest = ExternalActionRequest extends infer R ? R extends ExternalActionRequest ? Omit<R,'taskId'|'revision'> : never : never;
@@ -49,7 +59,8 @@ const privateSchema=z.strictObject({
 });
 /** Trusted runtime options only. Timeout defaults to 55s (below SDK's 60s),
  * may be raised to 120s, and is always clipped to the approved absolute deadline. */
-export interface ActionToolOptions {fetchImpl?:typeof fetch;now?:()=>number;timeoutMs?:number;signal?:AbortSignal}
+/** workspaceRoot is a trusted runtime option (default /workspace), never model input. */
+export interface ActionToolOptions {fetchImpl?:typeof fetch;now?:()=>number;timeoutMs?:number;signal?:AbortSignal;workspaceRoot?:string}
 export type ActionTool=(input:unknown,signal?:AbortSignal)=>Promise<CallToolResult>;
 function errorResult():CallToolResult {return {isError:true,content:[{type:'text',text:ACTION_ERROR}]};}
 /** Reject accessors/cycles before serialization; never call untrusted toJSON. */
@@ -126,7 +137,7 @@ const providerResultSchema=z.discriminatedUnion('kind',[
 const publicActionSchema=z.object({
   requestId:id,phase:z.enum(['intent','reserved','broker','settled','cleaned']),actionId:id.optional(),
   status:z.enum(['intent','dispatching','ambiguous','succeeded','failed','cancelled']).optional(),
-  operation:z.enum(['aws.spot.start','aws.spot.inspect','hf.model.commit','github.branch.push']).optional(),
+  operation:z.enum(['aws.spot.start','aws.spot.inspect','hf.model.commit','hf.model.lfs_commit','aws.s3.put','aws.s3.inspect','github.branch.push']).optional(),
   effect:z.enum(['none','retained','resource','unknown']).optional(),cleanupStatus:z.enum(['none','pending','deleting','cleaned']).optional(),
   upperBoundMicros:integer.optional(),reservedMicros:integer.optional(),verifiedCostMicros:integer.nullable().optional(),billingFinal:z.boolean().optional(),
   providerResult:providerResultSchema.optional(),
@@ -137,8 +148,10 @@ function project(value:unknown,secrets:string[],request:ActionModelRequest):Reco
   if(p.providerResult!==undefined){
     if(p.operation!==request.operation||p.status!=='succeeded'||!p.actionId||!['broker','settled','cleaned'].includes(p.phase))fail();
     const result=p.providerResult;
+    // S3 results never carry a provider result: the bucket and key are server-owned and not shown to the model.
     const matches=request.operation==='github.branch.push'?result.kind==='github_commit'&&p.effect==='retained':
-      request.operation==='hf.model.commit'?result.kind==='hf_commit'&&p.effect==='retained':
+      request.operation==='hf.model.commit'||request.operation==='hf.model.lfs_commit'?result.kind==='hf_commit'&&p.effect==='retained':
+      request.operation==='aws.s3.put'||request.operation==='aws.s3.inspect'?false:
       result.kind==='aws_instance'&&p.effect===(request.operation==='aws.spot.start'?'resource':'none');
     if(!matches)fail();
   }
@@ -170,7 +183,7 @@ export function createActionTool(privateInput:ActionPrivateInput,options:ActionT
       const raw=boundedPlainJson(value,ACTION_ARTIFACT_MAX_BYTES);
       if(secrets.some(secret=>raw.includes(secret)))fail();
       const parsed=actionSchema.parse(JSON.parse(raw));
-      const {artifact,...input}=('artifact'in parsed?parsed:{...parsed,artifact:undefined});
+      const {artifact,largeArtifact,...input}={artifact:undefined,largeArtifact:undefined,...parsed} as typeof parsed&{artifact?:z.infer<typeof artifactSchema>;largeArtifact?:z.infer<typeof largeArtifactSchema>};
       if(!artifact&&Buffer.byteLength(raw)>ACTION_MAX_BYTES)fail();
       if(artifact){
         let total=0;const paths=new Set<string>();
@@ -183,6 +196,9 @@ export function createActionTool(privateInput:ActionPrivateInput,options:ActionT
         }
       }
       if(!p.request.externalProfiles?.includes(input.profileId))fail();
+      // A large commit names its files or an already uploaded manifest digest, never both and never neither.
+      const hasDigest=input.operation==='hf.model.lfs_commit'&&input.parameters.manifestDigest!==undefined;
+      if(input.operation==='hf.model.lfs_commit'?!!largeArtifact===hasDigest:!!largeArtifact)fail();
       const current=now(),remaining=Math.min(timeout,deadline-current);if(!Number.isSafeInteger(current)||current<start||remaining<=0)fail();
       const controller=new AbortController();timer=setTimeout(()=>controller.abort(),remaining);
       const signal=AbortSignal.any([controller.signal,...(options.signal?[options.signal]:[]),...(callerSignal?[callerSignal]:[])]);
@@ -196,8 +212,15 @@ export function createActionTool(privateInput:ActionPrivateInput,options:ActionT
         const uploaded=z.strictObject({artifactDigest:z.string().regex(/^[a-f0-9]{64}$/)}).parse(await post(endpoint.replace(/external-action$/,'external-artifact'),boundedPlainJson({lease:p.request.executionLease,runtimeId:p.runtimeId,profileId:input.profileId,artifact},ACTION_ARTIFACT_MAX_BYTES+16384)));
         if(!('artifactDigest'in input.parameters)||uploaded.artifactDigest!==input.parameters.artifactDigest)fail();
       }
-      const body=boundedPlainJson({lease:p.request.executionLease,runtimeId:p.runtimeId,request:input});
-      const data=project(await post(endpoint,body),secrets,input);signal.throwIfAborted();
+      let request:typeof input=input;
+      if(largeArtifact&&input.operation==='hf.model.lfs_commit'){
+        // Authority comes from the private input: approved lease, runtime and the profile already checked above.
+        const large=createLargePost({origin:p.control.origin,workerToken:p.control.workerToken,taskId:p.request.taskId,lease:p.request.executionLease,runtimeId:p.runtimeId,profileId:input.profileId,fetchImpl:fetcher,now,deadline});
+        const uploaded=await uploadWorkspaceFiles({root:options.workspaceRoot??'/workspace',paths:largeArtifact.paths,post:large,signal});
+        request={...input,parameters:{message:input.parameters.message,manifestDigest:uploaded.manifestDigest}};
+      }
+      const body=boundedPlainJson({lease:p.request.executionLease,runtimeId:p.runtimeId,request});
+      const data=project(await post(endpoint,body),secrets,request as ActionModelRequest);signal.throwIfAborted();
       const completedAt=now();if(!Number.isSafeInteger(completedAt)||completedAt<current||completedAt>=deadline)fail();
       return {content:[{type:'text',text:JSON.stringify(data)}],structuredContent:data};
     }catch {return errorResult();}finally {if(timer)clearTimeout(timer);}
@@ -223,7 +246,7 @@ class PrivateActionServer extends Server {
 export function createActionMcpServer(privateInput:ActionPrivateInput,options:ActionToolOptions={}):Server {
   const p=parsePrivate(privateInput),tool=createActionTool(p,options),server=new PrivateActionServer([p.control.workerToken,p.request.executionLease.token,p.runtimeId]);
   const branches=(z.toJSONSchema(actionSchema) as {oneOf?:unknown[]}).oneOf;
-  const inputSchema={type:'object' as const,additionalProperties:false,required:['profileId','requestId','operation','parameters'],properties:{profileId:{type:'string'},requestId:{type:'string'},operation:{enum:['aws.spot.start','aws.spot.inspect','hf.model.commit','github.branch.push']},parameters:{type:'object'},artifact:z.toJSONSchema(artifactSchema)},oneOf:branches};
+  const inputSchema={type:'object' as const,additionalProperties:false,required:['profileId','requestId','operation','parameters'],properties:{profileId:{type:'string'},requestId:{type:'string'},operation:{enum:['aws.spot.start','aws.spot.inspect','hf.model.commit','hf.model.lfs_commit','aws.s3.put','aws.s3.inspect','github.branch.push']},parameters:{type:'object'},artifact:z.toJSONSchema(artifactSchema),largeArtifact:z.toJSONSchema(largeArtifactSchema)},oneOf:branches};
   server.setRequestHandler(ListToolsRequestSchema,()=>({tools:[{name:ACTION_MCP_TOOL_NAME,description:'Submit one action within the approved external profile. Reuse requestId to query an uncertain action; never blindly retry with a new ID.',inputSchema,annotations:{readOnlyHint:false,destructiveHint:true,idempotentHint:true,openWorldHint:true}}]}));
   // Preserve params for our strict validation; the SDK still validates MCP envelopes.
   server.setRequestHandler(RequestSchema.extend({method:z.literal('tools/call')}),async(request,extra)=>{

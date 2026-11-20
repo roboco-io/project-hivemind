@@ -84,3 +84,15 @@ test('reconstructed alarm destroys an uncertain running diagnostic without repla
  assert.equal(f.container.running,false);assert.equal(f.state.get('metadata').nativeBoundaryVerified,undefined);assert.equal(f.state.has('alarm'),false);
  assert.equal((await restored.boundaryDiagnostic()).status,'failed');assert.equal(f.calls.filter(x=>x[0]==='exec'||x[0]==='start').length,0);
 });
+test('Workers runtime gives bodiless POST an empty non-null body: accepted; one byte is rejected',async()=>{
+ const names:string[]=[];const env={CONTROL_TOKEN:'control',RUNNER:{getByName(n:string){names.push(n);return {boundaryDiagnostic:async()=>({status:'passed'})};}}};
+ const headers={authorization:'Bearer control','idempotency-key':'request-9','content-type':'application/octet-stream'};
+ const empty=()=>new ReadableStream<Uint8Array>({start(c){c.close();}});
+ const ok=await worker.fetch(new Request(path,{method:'POST',headers,body:empty(),duplex:'half'} as RequestInit),env as any);
+ assert.equal(ok.status,200);assert.equal(names.length,1);
+ const one=new ReadableStream<Uint8Array>({start(c){c.enqueue(new Uint8Array([1]));c.close();}});
+ const bad=await worker.fetch(new Request(path,{method:'POST',headers,body:one,duplex:'half'} as RequestInit),env as any);
+ assert.equal(bad.status,400);assert.equal(names.length,1);
+ const query=await worker.fetch(new Request(path+'?x=1',{method:'POST',headers,body:empty(),duplex:'half'} as RequestInit),env as any);
+ assert.equal(query.status,400);
+});

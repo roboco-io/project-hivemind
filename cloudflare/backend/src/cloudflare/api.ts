@@ -46,9 +46,10 @@ export function authorize(request:Request,token:string|undefined):Response|null 
 export const isAutonomousPath=(path:string)=>path==='/v1/autonomous-tasks'||path.startsWith('/v1/autonomous-tasks/');
 export function authorizeAutonomousRoute(request:Request,operatorToken:string|undefined,workerToken:string|undefined,reporterToken?:string):Response|null {
  if(/\/(?:acceptExternal|settleExternal|cleanedExternal|accept-external|settle-external|cleaned-external)\/?$/.test(new URL(request.url).pathname))return json({error:'Not found'},404);
- const worker=/^\/v1\/autonomous-tasks\/[^/]+\/(claim|native-start|heartbeat|finish|reserve|settle|worker-state|external-action|external-artifact)\/?$/.test(new URL(request.url).pathname);
+ const worker=/^\/v1\/autonomous-tasks\/[^/]+\/(claim|native-start|heartbeat|finish|reserve|settle|worker-state|external-action|external-artifact)\/?$/.test(new URL(request.url).pathname)||/^\/v1\/autonomous-tasks\/[^/]+\/external-large\/(begin|part|complete|abort|manifest)\/?$/.test(new URL(request.url).pathname);
  if(worker&&(!workerToken?.trim()||!operatorToken?.trim()||workerToken===operatorToken))return json({error:'Service is not configured'},503);
- const reporter=/^\/v1\/autonomous-tasks\/[^/]+\/(native-ready|native-receipt)\/?$/.test(new URL(request.url).pathname);
+ // tool-calls: the worker reports with the reporter token (POST); operators read with the operator token (GET).
+ const reporter=/^\/v1\/autonomous-tasks\/[^/]+\/(native-ready|native-receipt)\/?$/.test(new URL(request.url).pathname)||request.method==='POST'&&/^\/v1\/autonomous-tasks\/[^/]+\/tool-calls\/?$/.test(new URL(request.url).pathname);
  if(reporter&&(!reporterToken||/[\s\p{Cc}]/u.test(reporterToken)||!operatorToken?.trim()||!workerToken?.trim()||reporterToken===operatorToken||reporterToken===workerToken))return json({error:'Service is not configured'},503);
  return authorize(request,reporter?reporterToken:worker?workerToken:operatorToken);
 }
