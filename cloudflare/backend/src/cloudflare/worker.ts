@@ -209,6 +209,7 @@ export class RunnerDO extends DurableObject<Env>{
  private readonly diagnosticScopes=new WeakMap<JobRecord,{aborted:boolean;deadline:number}>();
  private diagnosticScope?:{aborted:boolean;deadline:number};
  private diagnosticInFlight=false;
+ private diagnosticPollMs=1000;
  private diagnosticPending?:Promise<{status:'passed'|'failed';runtimeRevision:string;stopped:boolean}>;
  async boundaryDiagnostic(){
   if(this.diagnosticPending)return this.diagnosticPending;
@@ -235,10 +236,21 @@ export class RunnerDO extends DurableObject<Env>{
    const scope={aborted:false,deadline:Date.now()+30000};this.diagnosticScope=scope;
    const job=Object.freeze({id:'boundary-diagnostic',attempt:runtimeBuild.digest,kind:'compute',deadline:scope.deadline}) as JobRecord;
    this.diagnosticScopes.set(job,scope);this.diagnosticInFlight=true;
-   const ensuring=this.ensure(job).finally(async()=>{
-    this.diagnosticInFlight=false;
-    if(scope.aborted)await this.cleanupDiagnostic();
-   });
+   // A cold container fails its first /health request, so poll ensure like the scheduler does.
+   // A thrown ensure (including a failed boundary probe) ends the loop and is never retried.
+   const ensuring=(async()=>{
+    for(;;){
+     this.diagnosticInFlight=true;
+     let state:Awaited<ReturnType<RunnerDO['ensure']>>;
+     try{state=await this.ensure(job);}
+     finally{
+      this.diagnosticInFlight=false;
+      if(scope.aborted)await this.cleanupDiagnostic();
+     }
+     if(state.ready||state.lost||scope.aborted||Date.now()>=scope.deadline)return state;
+     await new Promise<void>(resolve=>setTimeout(resolve,this.diagnosticPollMs));
+    }
+   })();
    const ready=await Promise.race([ensuring,new Promise<never>((_,reject)=>{timer=setTimeout(()=>{scope.aborted=true;reject(Error('Diagnostic timeout'));},30000);})]);
    const verified=(await this.ctx.storage.get<RunnerMetadata>('metadata'))?.nativeBoundaryVerified===runtimeBuild.digest;
    passed=!scope.aborted&&Date.now()<scope.deadline&&ready.ready&&!ready.lost&&verified;

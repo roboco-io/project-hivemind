@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "9bc8a872a7aaed38a47c92074f3e4ec426f87227857b0ef0bdd672383178029a",
+  "digest": "d12d69147d678363d0b483862d0411618faa155e6f8aac1834b5b2c865f3705e",
   "files": {
     ".dockerignore": "de83695a16eda0fca3d47bb8bb7250569cf0d8b88bc736ccf7dffcc5bfde8a53",
     "backend/Dockerfile": "18bb8783cbd8826cacb1bd99d49410730f30cc99739c03b5fdf31dbe1f04a5c5",
@@ -30,7 +30,7 @@
     "backend/src/cloudflare/autonomous-api.ts": "f033622d7746b6e4b9563dee7f02b3bb027f1cb8f86f22bea9ca8869b11f0bfd",
     "backend/src/cloudflare/autonomous-ports.ts": "57566b95f918567b02051efa5d4d3d61bb6523b41873a4d663ad463499d5f19b",
     "backend/src/cloudflare/scheduler-alarm.ts": "fd78b2282258372746c548e07c033e93f78a0745cba8c08acbe9996002dbee96",
-    "backend/src/cloudflare/worker.ts": "068c5ee121f55dd79c5433ffa60470b5d9ae1e5b5aeac6dc6fef6d80e86ad0e1",
+    "backend/src/cloudflare/worker.ts": "c79ea08ccfdbccac7c20a3a0ecd28001344088739a953410b73ff7f748d74b1a",
     "backend/src/compute-group.ts": "1583cfb61d58f34f143f50a39f7e0d1a6d3ba62a0364789d7ce72050cd37829a",
     "backend/src/contracts.ts": "f740a55a2c70f65677d986a3a45d5af6345e6d5a492cc8112d163fe99d661780",
     "backend/src/crypto.ts": "7942415d4f2a9b885c98184fa4a81667e90d8441bd850a569757647f125bb9db",
