@@ -10,6 +10,7 @@ MCP(Model Context Protocol) 클라이언트가 HIVEMIND의 Cloudflare 작업과 
 - `[server.ts:loadMcpSettings]` - `HIVEMIND_API_URL`, `HIVEMIND_OPERATOR_TOKEN`, `HIVEMIND_OPERATOR_TOKEN_FILE`에서 `McpSettings`를 만든다.
 - `[server.ts:McpSettings]` - `apiUrl`, `operatorToken`.
 - `[server.ts:HivemindMcpOptions]` - `McpSettings`에 테스트용 `fetchImpl`을 더한 타입.
+- `[autonomous-tool-audit.ts:registerToolAuditTool]` - 읽기 전용 도구 `hivemind_autonomous_tool_calls`를 등록한다. `GET /api/cloudflare/autonomous-tasks/:id/tool-calls`만 호출하며, 응답은 워커 보고(`source: 'worker_report'`)임을 알리고 입력 요약을 한 번 더 가린다. `[server.ts:createHivemindMcpServer]`가 장기 작업 운영자 도구 뒤에 호출한다.
 - `[main.ts]` - 실행 진입점. `StdioServerTransport`로 서버를 연결한다.
 
 `[server.ts:createHivemindMcpServer]`가 등록하는 MCP 도구는 다음과 같다.

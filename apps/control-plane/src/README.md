@@ -19,13 +19,21 @@
 | 라우트 | 인증 | 등록 조건 |
 | --- | --- | --- |
 | `GET /health`, `GET /favicon.ico` | 없음 | 항상 |
-| `GET /`, `/app.js`, `/styles.css`, `/brand/hivemind-logo.png`, `/brand/hivemind-bee.png` | 없음 | 항상 |
+| `GET /`, `/app.js`, `/tool-audit.js`, `/styles.css`, `/brand/hivemind-logo.png`, `/brand/hivemind-bee.png` | 없음 | 항상 |
 | `GET /api/capabilities`, `GET /api/state` | 운영자 토큰 | 항상 |
 | `POST /api/tasks`, `POST /api/tasks/:id/decision`, `POST /api/tasks/:id/cancel` | 운영자 토큰 | 항상 |
 | `POST /api/cloudflare/tasks`, `POST /api/cloudflare/tasks/:id/decision`, `POST /api/cloudflare/tasks/:id/cancel` | 운영자 토큰 | `options.cloudflare`가 있을 때 |
 | `POST /api/cloudflare/workflows`, `GET /api/cloudflare/workflows`, `POST /api/cloudflare/workflows/:id/approve`, `GET /api/cloudflare/workflows/:id`, `GET /api/cloudflare/workflows/:id/result` | 운영자 토큰 | `options.workflows`가 있을 때 |
 | `POST /api/workers/register`, `POST /api/workers/claim` | 워커 토큰 | 항상 |
 | `POST /api/tasks/:id/heartbeat`, `POST /api/tasks/:id/result`, `POST /api/tasks/:id/fail` | 워커 토큰 | 항상 |
+
+## 장기 자율 작업 연결 (2026-11-21 후속)
+
+- `[autonomous-api.ts]`의 연산 `stopExternalBudget`(비용 초과 중단)과 `toolAuditScope`(lease 확인)는 서버 내부 연산이다. 어떤 HTTP 경로도 이 연산에 닿지 않는다.
+- `[autonomous-tool-audit-api.ts:handleToolAuditApi]` - `GET`(운영자)과 `POST`(reporter) `/v1/autonomous-tasks/:id/tool-calls`를 처리한다. `[app.ts:buildApp]`은 `handleAutonomousApi`보다 먼저 호출하며, lease 확인은 서비스의 `toolAuditScope`를 쓴다. 이 경로는 가드 훅이 아니라 처리기 안에서 인증한다. 기록은 워커 보고이며 독립 증명이 아니다.
+- `[autonomous-cloud-proxy.ts]`는 운영자 `GET /api/cloudflare/autonomous-tasks/:id/tool-calls`를 원격 같은 경로로 전달하고 응답을 허용 목록으로 투영한다. 선택 필드 `counts.workerToolCalls`와 S3·HF 공개 범위 표시 필드를 통과시킨다.
+- `[autonomous-external-api.ts]`는 S3(`aws.s3.put`, `aws.s3.inspect`)와 `hf.model.lfs_commit` 매개변수를 검증한다. `approvedTarget`에 S3 bucket·prefix와 HF `visibility`를 넣고, profile 메타데이터에 `hfVisibilityDisplay`를 넣어 공개 commit을 승인 시점에 드러낸다. `largeStore`가 연결된 경우 취소·revise 때 큰 파일 업로드를 모두 중단한다.
+- `[autonomous-external-large-api.ts:handleExternalLargeApi]` - `external-large/{begin,part,complete,abort,manifest}`를 처리한다. `[autonomous-external-api.ts:handleAutonomousExternalApi]`가 먼저 위임하며, 큰 파일 저장소(`ExternalApiOptions.large`)가 연결되지 않았으면 503이다. 로컬 `[app.ts:buildApp]`은 이를 연결하지 않으므로 로컬에서는 항상 503이다.
 
 ## Invariants
 

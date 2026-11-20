@@ -45,6 +45,10 @@
 | `PUT /v1/large-artifact-uploads/{uuid}/parts/{n}` | part 하나를 올린다 | `[api.ts:handleApi]` |
 | `POST /v1/large-artifact-uploads/{uuid}/complete`, `POST /v1/large-artifact-uploads/{uuid}/abort` | 업로드를 완료하거나 중단한다 | `[api.ts:handleApi]` |
 | `GET /v1/large-artifacts/{sha256}` | 등록된 artifact의 메타데이터를 조회한다 | `[api.ts:handleApi]` |
+| `POST /v1/boundary-diagnostics` | 본문이 비어 있고 쿼리가 없으며 `idempotency-key`가 있을 때만 격리 검사를 실행한다. Workers 런타임은 본문 없는 POST에도 빈 스트림을 주므로 본문을 읽어 길이 0을 확인한다 | `[worker.ts:default]` |
+| `POST /v1/autonomous-tasks/{id}/tool-calls` | 워커가 도구 호출 기록을 보고한다. reporter 토큰과 현재 lease가 필요하다 | `[worker.ts:SchedulerDO.fetch]` |
+| `GET /v1/autonomous-tasks/{id}/tool-calls` | 운영자가 기록을 페이지로 읽는다. 작업 보기의 `counts.workerToolCalls`는 이 기록의 건수를 보기에서만 덧붙인 값이다 | `[worker.ts:SchedulerDO.fetch]` |
+| `POST /v1/autonomous-tasks/{id}/external-large/{begin,part,complete,abort,manifest}` | 대형 산출물 업로드. worker 토큰이 필요하고, 컨테이너 egress는 외부 기능이 켜졌을 때만 허용한다 | `[worker.ts:SchedulerDO.fetch]`, `[autonomous-ports.ts:allowNativeControl]` |
 | `POST /v1/carbon-benchmarks`, `POST /v1/terra-benchmarks` | 벤치마크 캠페인을 등록한다 | `[api.ts:handleApi]` |
 | `GET /v1/carbon-benchmarks/{uuid}`, `GET /v1/terra-benchmarks/{uuid}` | 캠페인과 실행을 조회한다 | `[api.ts:handleApi]` |
 

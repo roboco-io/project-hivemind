@@ -45,7 +45,7 @@ AI 코딩 에이전트는 사람이 읽을 수 있는 양보다 훨씬 많은 �
 
 **핵심 가설은 아직 입증하지 못했다.** 2026-11-14 실측에 쓴 작은 RealWorld 과제에서는 로컬 병렬 실행이 원격 실행보다 빨랐다. 사람이 코드를 읽지 않고 의도와 정책만으로 목표에 도달할 수 있다는 가설, 대규모 작업에서 원격 실행이 로컬 자원 한계를 극복한다는 가설, 랄프 루프가 토큰을 절감한다는 가설은 더 큰 실제 프로젝트에서 측정해야 한다.
 
-이슈 #1의 장기 실행·예약·quota 대기·웹·외부 작업 경로는 bounded 구현 상태다. 검증 후보를 Cloudflare에 배포했으며 새 기능은 비활성이다. 원격 격리와 실제 장기 수용은 남아 있다. [구현·검증·잔여 운영 작업](docs/plans/2026-11-20-autonomous-remaining.report.md)을 확인한다. 사용자 결정에 따른 실제 프로젝트 검증 이관과 최신 연결 보완은 [구현 마감 기록](docs/plans/2026-11-20-issue1-implementation-closeout.md)을 따른다.
+이슈 #1의 장기 실행·예약·quota 대기·웹·외부 작업 경로는 bounded 구현 상태다. 검증 후보를 Cloudflare에 배포했으며 새 기능은 비활성이다. 원격 격리와 실제 장기 수용은 남아 있다. [구현·검증·잔여 운영 작업](docs/plans/2026-11-20-autonomous-remaining.report.md)을 확인한다. 사용자 결정에 따른 실제 프로젝트 검증 이관과 최신 연결 보완은 [구현 마감 기록](docs/plans/2026-11-20-issue1-implementation-closeout.md)을 따른다. 2026-11-21 후속(비용 초과 시 작업 중단, 워커 도구 호출 기록, S3 put·inspect, HF 공개 범위와 LFS commit)은 [후속 계획](docs/plans/2026-11-21-issue1-followups.md)과 [장기 자율 작업](docs/autonomous-tasks.md)에 적었다. 이 후속은 가짜 HTTP로만 검사했고 실제 AWS·Hugging Face는 미검증이다.
 
 ## 아키텍처
 

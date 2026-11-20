@@ -245,6 +245,8 @@ workload에는 `HIVEMIND_ARTIFACT_SOURCE`(archive 최상위 디렉터리를 보�
 
 사용자는 실제24시간·외부 제공자·Fable 실증을 실제 프로젝트로 넘겼다. [구현 마감 기록](../../docs/plans/2026-11-20-issue1-implementation-closeout.md)에서 구현·로컬 검사·실제 미검증을 구분한다.
 
-운영자 전용 `POST /v1/boundary-diagnostics`는 빈 body와 길이8..80의 `idempotency-key`를 받는다. 모델·구독 인증 없이 현재 이미지의 기존 native 격리 gate를 검사하고 정리한다. 같은 key는 재실행하지 않는다. 기능 비활성 상태에서도 호출할 수 있지만 실제 컨테이너 실행이므로 운영자가 해당 검사를 지시했을 때만 사용한다. 이 경로의 로컬 회귀 통과는 원격 격리 통과가 아니다.
+운영자 전용 `POST /v1/boundary-diagnostics`는 빈 body와 길이8..80의 `idempotency-key`를 받는다. 빈 body 판정은 본문을 읽어 길이 0을 확인하는 방식이다. 2026-11-21 원격 확인에서 Workers 런타임이 본문 없는 POST에도 null이 아닌 body를 주어 이전 판정이 모든 요청을 400으로 거절했다. 모델·구독 인증 없이 현재 이미지의 기존 native 격리 gate를 검사하고 정리한다. 같은 key는 재실행하지 않는다. 기능 비활성 상태에서도 호출할 수 있지만 실제 컨테이너 실행이므로 운영자가 해당 검사를 지시했을 때만 사용한다. 이 경로의 로컬 회귀 통과는 원격 격리 통과가 아니다.
 
 워커의 `POST /v1/autonomous-tasks/:id/external-artifact`는 현재 lease·runtime·승인 프로필로 작은 산출물을 등록한다. 서버는 task/revision/profile에 결속된 digest만 외부 action에 허용한다. inline 한도·불변 저장·비밀 검사·실패 예약까지 포함한 revision 할당량은 [게시 계약](../../docs/plans/2026-11-20-autonomous-artifact-publication.md)에 명시한다.
+
+자율 작업의 도구 호출은 컨테이너 안 hook이 spool에 쓰고, runtime이 heartbeat와 종료 전에 `POST /v1/autonomous-tasks/:id/tool-calls`(reporter 토큰)로 보낸다. 서버는 `(taskId, runId, sequence)`로 중복을 걸러 Durable Object SQL에 저장한다. 이 값은 워커의 보고이며 독립 증명이 아니다. 설정은 `AUTONOMOUS_EXTERNAL_CONFIG`에서 profile을 최대 4개(`aws`, `hf`, `github`, `s3`)까지 받는다. `s3`는 `aws`와 같은 형태의 자격 증명을 쓰고, Hugging Face는 `visibility`와 `providers.hf.lfs`(`maxFileBytes`, `maxTotalBytes`, `uploadHosts`)를 받는다. 새 설정 값은 모두 승인 지문에 포함된다. 외부 정리 alarm은 비용 초과를 감지하면 작업을 `budget_exceeded`로 중단하고, action 만료 시각에도 깨어난다.

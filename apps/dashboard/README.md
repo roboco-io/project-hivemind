@@ -6,4 +6,4 @@
 
 ## Subdirectories & Boundaries
 
-- public: [./public/README.md](./public/README.md) - 브라우저 스크립트 `app.js`. 운영자 API를 호출해 작업·워커·실행 근거를 표시하고, 작업 등록과 승인·반려·중단 요청을 보낸다. 서버 값은 `textContent`로만 표시한다.
+- public: [./public/README.md](./public/README.md) - 브라우저 스크립트 `app.js`와 `tool-audit.js`(워커 도구 호출 기록 패널). 운영자 API를 호출해 작업·워커·실행 근거를 표시하고, 작업 등록과 승인·반려·중단 요청을 보낸다. 서버 값은 `textContent`로만 표시한다.

@@ -13,6 +13,7 @@
 - `[app.js]`의 `create-form` submit 핸들러 - `POST /api/tasks` 또는 `POST /api/cloudflare/tasks`로 작업을 등록한다.
 - `[app.js]`의 `decision-form` submit 핸들러 - `/api/tasks/:id/decision`, `/api/tasks/:id/cancel` 또는 같은 이름의 `/api/cloudflare/tasks/:id/...` 경로를 호출한다.
 - `[app.js:render]` - `renderProvider`, `renderTasks`, `renderWorkers`, `renderSelected`를 차례로 호출한다. `renderSelected`는 `renderExecution`(로컬 실행 근거)과 `renderRemote`(Cloudflare 실행 근거)를 호출한다.
+- `[tool-audit.js:renderToolAudit]`, `[tool-audit.js:loadToolAudit]` - 장기 작업 상세에서 `GET /api/cloudflare/autonomous-tasks/:id/tool-calls?limit=20`을 읽어 워커 도구 호출 기록을 표시한다. `index.html`이 `app.js`보다 먼저 불러오며, `app.js`의 `showAutonomousToolAudit`이 호출한다. 패널은 워커 보고이며 독립 증명이 아니라고 표시한다. 서버 값은 `textContent`로만 넣는다.
 - `[app.js:statuses]`, `[app.js:cloudStatuses]`, `[app.js:processStatuses]` - 서버 상태 값을 한국어 표시 문구로 바꾸는 표.
 
 ## Invariants
