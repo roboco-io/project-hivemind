@@ -1,144 +1,170 @@
-# Project HIVEMIND
-
-## 프로젝트의 의도
-
-HIVEMIND는 **한 대의 개발 머신이 가진 CPU·메모리·네트워크 한계를 넘어 대규모 개발 작업을 처리하기 위한 원격 실행 플랫폼**이다. 로컬 머신은 사람이 목표를 정하고 실행을 승인하며 결과를 검토하는 컨트롤 타워 역할을 맡는다. 실제 구현·빌드·테스트·통합은 클라우드 워커 클러스터가 수행한다.
-
-독립적인 작업은 공통 계약과 완료 기준을 정한 뒤 병렬로 실행한다. 각 워커는 랄프 루프에서 구현·검증·수정을 반복하고 같은 과제의 컨텍스트를 이어 가며 토큰 낭비를 줄이는 것을 목표로 한다. 서로 의존하는 작업은 연속성을 유지하고, 분할·인계·통합 비용보다 이득이 있는 경우에 병렬화한다.
-
-성공 기준은 워커 수가 아니라 **같은 품질의 결과를 통합하기까지 걸린 시간, 로컬 자원 부담, 실패·재시도를 포함한 총비용**이다. 클라우드 비용을 부담하더라도 로컬에서 감당하기 어려운 일을 완료하거나 전체 납기를 충분히 줄일 수 있어야 한다. Codex와 Claude Code의 앱·CLI를 주 접점으로 삼고, 사람이 승인·진행·비용·실제 diff와 테스트 결과를 확인할 수 있게 한다.
-
-현재 실행 백엔드는 Cloudflare이며 AWS ECS는 현재 MVP 검증을 마친 다음 단계다. 작은 RealWorld 과제에서는 로컬 병렬 실행이 더 빨랐다. 관제 조회 프로세스를 종료한 동안에도 원격 통합과 결과 보존이 이어지는 것은 확인했지만, **대규모 작업에서 로컬 자원 한계를 극복한다는 가설과 랄프 반복의 토큰 절감 효과는 아직 입증하지 못했다.** 다음 실험은 더 큰 실제 프로젝트에서 이 조건을 측정한다.
-
-## 아키텍처
-
-```mermaid
-flowchart LR
-    User["로컬 관제<br/>Codex · Claude Code 앱 / CLI"] -->|등록 · 승인 · 조회| API["Cloudflare Worker API"]
-    API --> Scheduler["Durable Object<br/>스케줄링 · 작업 상태"]
-    API -->|입력 등록 · 결과 조회| R2[("R2 아티팩트<br/>소스 · 데이터 · 결과")]
-    Scheduler -->|승인된 모델 작업| Agent["격리된 AI 워커<br/>Codex · Claude Code"]
-    Scheduler -->|검증 · 통합 작업| Compute["격리된 Compute 워커<br/>빌드 · 테스트"]
-    Agent -->|변경 및 검증 요청| Scheduler
-    R2 --> Gateway["작업별 입력 게이트웨이"]
-    Gateway -->|검증된 입력 전달| Compute
-    Compute -->|검사 결과| Scheduler
-    Scheduler -->|diff · 검사 결과 저장| R2
-```
-
-중앙 스케줄러는 승인과 작업 상태를 보존한다. 대형 입력은 compute 작업에 연결하며, 런타임은 해시를 검증한 뒤 읽기 전용으로 제공한다. [아키텍처 상세](docs/architecture.md) · [편집용 Draw.io](docs/hivemind-architecture.drawio)
-
 <p align="center">
-  <img src="apps/dashboard/public/brand/hivemind-logo.png" alt="Project HIVEMIND — 심플한 손그림 꿀벌과 손글씨 로고" width="720">
+  <img src="apps/dashboard/public/brand/hivemind-logo.png" alt="Project HIVEMIND — 심플한 손그림 꿀벌과 손글씨 로고" width="480">
 </p>
+
+# Project HIVEMIND
 
 **One Vision. Many Agents.**
 
-사람이 정한 대규모 개발 목표를 중앙 관제 시스템이 검증 가능한 작업 단위로 분배하는 플랫폼이다.
-독립적으로 진행할 수 있는 단위는 여러 워커에서 병렬 실행한다. 각 워커는 랄프 루프로 컨텍스트를 이어 가며 완료 조건까지 구현·검증·수정을 반복해 토큰 효율을 높이는 것을 목표로 한다.
-워커별 랄프 루프의 수용 기준은 [MVP 범위](docs/mvp.md#실행-기본-정책)에 정리했다.
-사람은 작업 과정, 승인, 비용과 Git 변경 제안을 한곳에서 확인한다.
-HIVEMIND는 임시 개발 코드명이다. 공개 제품명은 아직 정하지 않았다.
-소스와 문서는 [Apache License 2.0](LICENSE)으로 제공한다.
-별도 라이선스가 표시된 서드파티 코드는 해당 [고지](cloudflare/backend/native/BUBBLEWRAP-NOTICE.md)를 따른다.
+HIVEMIND는 한 대의 개발 머신이 가진 CPU·메모리·네트워크 한계를 넘어 대규모 개발 작업을 처리하기 위한 원격 실행 플랫폼이다. 사람은 로컬 머신에서 목표를 정하고, 실행을 승인하고, 결과를 검토한다. 구현·빌드·테스트·통합은 클라우드의 AI 워커가 수행한다.
 
-**1차 지원 대상은 Codex와 Claude Code의 앱·CLI 네 접점**이다.
-Codex·Claude Code용 프로젝트 MCP 등록 도구와 스킬을 구현했다. 네 앱·CLI에서 실제 상태와 결과 조회를 검증했으며, 새 원격 작업의 전체 실행 수용은 [검증 기록](docs/verification/2026-11-10-claude-clients.md)에 구분해 기록한다.
-[지원 설계·구현 차이](docs/client-support.md)를 기준으로 지원 수준을 확인한다.
-연결한 대화에서 Codex·Claude 원격 작업을 등록하고 실행 승인·상태·실제 diff·테스트 결과를 조회한다.
-웹 관제실은 선택적인 검증·관리 보조 화면이며, 앱의 상시 HUD는 이번 구현 범위가 아니다.
+HIVEMIND는 임시 개발 코드명이며 공개 제품명은 아직 정하지 않았다. 소스와 문서는 [Apache License 2.0](LICENSE)으로 제공한다.
+
+## 왜 만드는가
+
+AI 코딩 에이전트는 사람보다 훨씬 많은 작업을 동시에 진행할 수 있다. 그러나 에이전트를 실행하는 개발 머신은 한 대다. 여러 에이전트가 같은 머신에서 빌드와 테스트를 실행하면 CPU와 메모리가 먼저 고갈되고, 사람은 그 머신을 켜 둔 채로 기다려야 한다. HIVEMIND는 이 병목을 없애려고 한다. 로컬 머신은 사람이 판단을 내리는 관제 지점으로만 쓰고, 자원을 많이 쓰는 실행은 작업별로 격리된 클라우드 컨테이너로 옮긴다.
+
+실행을 원격으로 옮겨도 통제권은 사람에게 남아야 한다. 그래서 HIVEMIND는 작업 등록, 실행 승인, 결과 수락을 서로 다른 결정으로 분리한다. 에이전트는 사람이 승인한 범위의 작업만 실행하고, 사람은 실제 Git diff와 테스트 결과를 확인한 뒤에 결과를 수락한다. 결과 수락은 검토 이력만 기록하며, 원본 저장소에 변경을 적용하거나 커밋·병합·푸시를 수행하지 않는다.
+
+## 달성하려는 목표
+
+첫째 목표는 로컬 자원 한계의 극복이다. 로컬 머신에서 감당하기 어려운 규모의 빌드·테스트·통합을 원격에서 완료하고, 사람이 관제 프로세스를 종료한 동안에도 원격 작업과 결과 보존이 이어지게 한다.
+
+둘째 목표는 이득이 있는 경우에만 병렬화하는 것이다. 서로 독립적인 작업은 공통 계약(여러 워커가 함께 지켜야 하는 인터페이스와 완료 기준을 적은 파일)을 먼저 고정한 뒤 여러 워커에서 병렬로 실행한다. 같은 명세·파일·설계 결정을 공유하는 변경은 한 워커의 작업으로 묶는다. 작업을 나누면 컨텍스트 재구축·인계·통합 비용이 생기므로, 예상되는 시간 절감이 이 비용보다 클 때만 분할한다.
+
+셋째 목표는 토큰 효율이다. 각 워커는 랄프 루프로 작업한다. 랄프 루프는 워커가 완료 조건을 충족할 때까지 같은 모델 세션의 컨텍스트를 이어 가며 구현·검증·수정을 반복하는 실행 방식이다. 검증이 실패하면 검증 로그를 같은 세션에 전달해 재개하므로, 매 반복마다 컨텍스트를 처음부터 다시 만드는 비용을 줄이는 것을 목표로 한다. 수용 기준은 [MVP 범위](docs/mvp.md#실행-기본-정책)에 있다.
+
+넷째 목표는 사람이 이미 쓰는 도구 안에서 통제하는 것이다. 1차 지원 대상은 Codex와 Claude Code 각각의 앱·CLI, 네 접점이다. 사람은 이 대화 안에서 원격 작업을 등록하고 실행 승인·진행 상태·실제 diff·테스트 결과를 확인한다. 웹 관제실은 검증과 관리를 돕는 보조 화면이다.
+
+성공 기준은 워커 수가 아니다. **같은 품질의 결과를 통합하기까지 걸린 시간, 로컬 자원 부담, 실패와 재시도를 포함한 총비용**으로 판단한다. 클라우드 비용을 부담하더라도 로컬에서 감당하기 어려운 일을 완료하거나 전체 납기를 충분히 줄일 수 있어야 한다.
+
+## 현재까지 확인한 것과 확인하지 못한 것
+
+아래는 각 검증 기록에 적힌 측정 결과다. 측정 시점 이후의 코드 변경은 반영하지 않는다.
+
+| 확인 시점 | 확인한 내용 | 근거 |
+|---|---|---|
+| 2026-11-09 | 로컬에서 Codex와 Claude Code 워커가 서로 다른 worktree에서 46.247초 동안 겹쳐 실행됐고, 두 작업 모두 테스트를 통과했다. | [병렬 실행 안내](docs/concurrent-execution.md) · [실행 근거 JSON](docs/concurrent-run-evidence.json) |
+| 2026-11-10 | Cloudflare에서 Codex와 Claude 작업이 약 30초 동안 동시에 실행됐고, 제공자별 별도 검증 컨테이너에서 테스트를 통과했다. 같은 결과를 MCP stdio 연결로도 조회했다. | [Cloudflare 관제 연결·검증](docs/verification/2026-11-10-codex-integration.md) · [원격 백엔드 검증](cloudflare/docs/verification/2026-11-10-cloudflare.md) |
+| 2026-11-10 | Codex·Claude Code의 앱·CLI 네 접점에서 상태와 결과 조회가 동작했다. | [클라이언트 검증 기록](docs/verification/2026-11-10-claude-clients.md) · [지원 설계·구현 차이](docs/client-support.md) |
+| 2026-11-14 | 로컬과 Cloudflare 비교 실측의 최종 검증(A 18회·B 9회·C 3회)을 통과했다. 로컬 관제 연결이 끊긴 동안에도 원격 통합과 결과 보존이 이어졌다. | [로컬·Cloudflare 실측](docs/verification/2026-11-14-resource-validation-final.md) |
+
+**핵심 가설은 아직 입증하지 못했다.** 2026-11-14 실측에 쓴 작은 RealWorld 과제에서는 로컬 병렬 실행이 원격 실행보다 빨랐다. 대규모 작업에서 원격 실행이 로컬 자원 한계를 극복한다는 가설과, 랄프 루프가 토큰을 절감한다는 가설은 더 큰 실제 프로젝트에서 측정해야 한다.
+
+## 아키텍처
+
+HIVEMIND는 세 계층으로 구성된다. 사람이 사용하는 **접점**, 승인과 작업 상태를 결정하는 **중앙 관제**, 승인된 작업을 수행하는 **실행 백엔드**다. 세 계층은 HTTP API로만 연결되며, 접점과 워커는 중앙 관제의 상태 저장소를 직접 열지 않는다.
+
+```mermaid
+flowchart TB
+    Human["사람<br/>목표 · 승인 · 검토"]
+
+    subgraph Client["접점 (로컬 머신)"]
+        Host["Codex · Claude Code<br/>앱 / CLI"]
+        MCP["공통 MCP 서버 · 스킬"]
+        Web["보조 웹 관제실"]
+    end
+
+    subgraph Control["중앙 관제"]
+        API["중앙 HTTP API<br/>역할 인증 · 요청 검증"]
+        Core["core<br/>승인 · 분배 · 상태 전이 · 결과 검증"]
+        DB[("SQLite<br/>작업 · 이벤트 · 실행 근거")]
+    end
+
+    subgraph Local["로컬 실행 경로"]
+        LW["워커<br/>mock · Codex · Claude Code"]
+        WT["작업별 detached worktree<br/>CLI 실행 · 준비 · 테스트"]
+    end
+
+    subgraph CF["Cloudflare 실행 백엔드"]
+        WAPI["Worker API"]
+        DO["Scheduler Durable Object<br/>스케줄링 · 작업 상태"]
+        Agent["작업별 AI 워커 컨테이너<br/>Codex · Claude Code"]
+        Verify["별도 검증 컨테이너<br/>빌드 · 테스트"]
+        R2[("R2<br/>소스 · 결과 snapshot")]
+    end
+
+    Human --> Host --> MCP --> API
+    Human --> Web --> API
+    API --> Core --> DB
+    LW -->|claim · heartbeat · result| API
+    LW --> WT
+    API -->|snapshot 제출 · 상태 조회| WAPI
+    WAPI --> DO
+    WAPI --> R2
+    DO --> Agent
+    DO --> Verify
+    Agent -->|변경 snapshot| R2
+    R2 -->|해시를 검증한 입력| Verify
+    Verify -->|검사 결과| DO
+```
+
+### 접점: 사람이 이미 쓰는 앱과 CLI
+
+사람은 Codex 또는 Claude Code 대화에서 `$hivemind`(Codex)나 `/hivemind`(Claude Code) 스킬로 작업을 등록하고 조회한다. 스킬은 `apps/mcp-server`의 MCP 도구를 호출하고, MCP 서버는 중앙 HTTP API만 호출한다. MCP 서버는 SQLite 파일, Cloudflare 제어 토큰, 제공자 인증에 접근하지 않는다. 이렇게 한 이유는 모델이 실행하는 도구가 비밀이나 상태 저장소를 직접 다루지 못하게 하기 위해서다. 작업 등록 도구는 실행 승인 전의 초안만 만들며, 실행 승인과 결과 수락은 사람의 명시적인 지시에 따라 별도 도구로 호출한다.
+
+### 중앙 관제: 결정과 상태의 단일 지점
+
+`apps/control-plane`은 요청을 검증하고 역할을 인증하는 HTTP 서버다. 승인·취소·비용 정책과 상태 전이는 `packages/core`가 결정한다. UI와 모델 어댑터는 이 정책을 우회하지 못한다. 작업은 아래 순서로 진행한다.
+
+```mermaid
+stateDiagram-v2
+    [*] --> awaiting_execution_approval: 등록
+    awaiting_execution_approval --> queued: 실행 승인
+    awaiting_execution_approval --> rejected: 반려
+    queued --> running: 워커 claim
+    running --> awaiting_review: 실행과 검증 성공
+    awaiting_review --> completed: 결과 수락
+    awaiting_review --> rejected: 반려
+    running --> failed: 실행 / 테스트 / 권한 만료 / 비용 오류
+    awaiting_execution_approval --> cancelled: 중단
+    queued --> cancelled: 중단
+    running --> cancelled: 중단
+    awaiting_review --> cancelled: 중단
+```
+
+core는 작업 선택과 상태 변경을 SQLite `BEGIN IMMEDIATE` 트랜잭션 하나로 처리하므로, 두 워커가 같은 작업을 동시에 가져갈 수 없다. 각 실행에는 무작위 실행 권한 토큰이 붙는다. 실행 권한은 30초 후 만료되며 워커가 5초마다 heartbeat로 갱신한다. 실행 권한이 만료되거나 사람이 작업을 중단한 뒤에 도착한 결과는 거절한다. 실패한 작업은 자동으로 재시도하지 않으며 결과 수락으로 완료 처리할 수도 없다. 재시도는 새 작업으로 등록한다.
+
+작업 API는 임의의 저장소 경로나 실행 명령을 받지 않는다. 운영자가 서버에 설정한 저장소, 서버 시작 시 고정한 커밋, 등록 시 작업에 복사한 테스트 명령만 사용한다. 작업 지시와 모델 출력은 신뢰하지 않는 데이터로 취급하므로, 지시문이 실행 대상이나 검증 방법을 바꾸지 못하게 하기 위한 제약이다.
+
+### 실행 백엔드: 로컬 worktree와 Cloudflare 컨테이너
+
+실행 경로는 두 가지다. 로컬 경로는 개발과 계약 검증에 쓰고, Cloudflare 경로가 이 프로젝트의 목표인 원격 실행이다.
+
+로컬 경로에서는 `apps/worker`가 HTTP로 작업을 claim한다. `packages/adapters`의 공통 실행 계층이 고정 커밋에서 실행별 detached worktree를 만들고, 선택한 Codex 또는 Claude Code CLI를 실행한 뒤 준비·테스트 명령을 실행하고 실제 Git diff를 수집한다. worktree는 파일 변경을 분리할 뿐이며 보안 컨테이너가 아니다. 그래서 로컬 경로는 신뢰하는 저장소만 대상으로 한다. mock 워커는 합성 diff와 모의 비용을 만들며, 이 값은 실제 실행 근거와 구분해 표시한다.
+
+Cloudflare 경로에서는 중앙 관제가 고정 커밋의 소스를 불변 snapshot으로 만들어 [Cloudflare 백엔드](cloudflare/README.md)에 제출한다. Worker API가 요청을 받고, Scheduler Durable Object가 승인과 작업 상태를 보존하며 작업을 배정한다. 모델 작업은 작업별 AI 워커 컨테이너에서 공식 Codex·Claude Code CLI로 실행한다. 빌드와 테스트는 제공자 인증이 없는 별도 검증 컨테이너에서 실행한다. 모델이 만든 코드가 실행되는 환경에 구독 인증을 두지 않기 위해 두 컨테이너를 분리한다. 소스와 결과 snapshot은 R2에 저장하고, 런타임은 해시를 검증한 입력만 읽기 전용으로 제공한다. 컨테이너는 인터넷 접근을 끈 상태로 시작하며 외부 요청은 허용 호스트 목록을 거친다. 현재 원격 소스 입력 한도는 4MiB·1000파일이다.
+
+여러 워커가 함께 작업하는 [원격 통합 워크플로](cloudflare/backend/README.md#두-워커의-원격-통합-워크플로)는 다음과 같이 동작한다. 사람이 소스 snapshot과 공통 계약 파일의 해시를 지정해 계획을 승인한다. 각 워커는 독립 컨테이너에서 같은 입력 snapshot으로 랄프 루프를 실행하고, 라운드마다 별도 검증 컨테이너에 현재 결과를 전달한다. 모든 워커의 검증과 종료가 확인되면 스케줄러가 승인된 경로의 변경만 합치고 새 snapshot으로 통합 검사를 실행한다. 같은 파일에 대한 쓰기 범위가 겹치는 계획은 계획 검증 단계에서 차단한다. 로컬 요청 연결은 승인 응답 뒤에 닫혀도 원격 통합이 이어진다.
+
+AWS ECS 백엔드는 현재 MVP 검증을 마친 다음 단계이며, 현재 AWS 리소스를 만들거나 배포하지 않는다.
+
+### 신뢰 경계와 비용
+
+운영자 토큰과 워커 토큰은 서로 달라야 하며, 워커 토큰으로는 사람의 승인·취소를 수행할 수 없다. 관제 토큰은 모델·준비·테스트 프로세스에 전달하지 않는다. 제공자 인증은 해당 CLI 프로세스에만 제공하고 다른 제공자나 준비·테스트 환경으로 넘기지 않는다. 운영자 토큰·워커 토큰·제공자 비밀은 로그, 이벤트, UI 응답과 저장소에 넣지 않는다. 대시보드는 서버 값을 `textContent`로만 표시한다.
+
+실행 근거는 인증된 워커가 보고한 값이다. 독립적으로 검증한 증명이나 원격 attestation이 아니다. Codex와 Claude Code의 금액은 임의로 환산하지 않고 **미확정**으로 표시하며, 제공자가 보고한 토큰 수만 저장한다. 작업 예산은 제공자의 실제 과금을 중지하거나 상한을 보장하지 않는다.
+
+### 코드 구성
+
+| 구성 요소 | 책임 |
+|---|---|
+| `packages/contracts` | 작업, 저장소 정책, 실행 근거와 어댑터 계약 |
+| `packages/core` | 승인·취소·실행 권한·분배, 결과 검증과 SQLite 저장 |
+| `packages/adapters` | Codex·Claude·mock 실행, 공통 worktree·프로세스·diff·테스트 계층, Cloudflare 포트 |
+| `apps/control-plane` | 중앙 HTTP API, 역할 인증, 저장소 정책 조회 |
+| `apps/mcp-server` | 운영자 API를 `hivemind_*` 도구로 제공하는 MCP 서버 |
+| `apps/worker` | HTTP 워커. 작업 claim, heartbeat와 결과 보고 |
+| `apps/dashboard` | 보조 웹 관제실 |
+| `cloudflare/` | 별도 패키지인 Cloudflare 실행 백엔드 |
+
+API 목록, 저장 형식과 실행 권한의 상세 규칙은 [아키텍처 상세](docs/architecture.md)에 있다. 편집용 도식은 [Draw.io 파일](docs/hivemind-architecture.drawio)이다. 아직 구현하지 않은 자연어 목표 분해, 작업 의존성 DAG, 모델 선택은 [개발 로드맵](docs/roadmap.md)에 있다.
+
+## 앱·CLI에서 연결
 
 ```sh
 npm ci
 npm run build
 npm run start
-# 다른 터미널에서 프로젝트 MCP 등록
+# 다른 터미널에서 프로젝트 MCP 등록 (Codex)
 npm run mcp:configure
 # Claude Code 앱의 로컬 Code 탭 / CLI는 다음 명령 사용
 npm run mcp:configure:claude
 ```
 
-새 Codex 세션에서 `$hivemind`, Claude Code 세션에서 `/hivemind`를 사용한다. 현재 대상 저장소와 고정 커밋을 먼저 확인한다.
-[Codex 연결 안내](docs/codex-integration.md)와 [Claude Code 연결 안내](docs/claude-integration.md)에 인증 파일·다른 포트·설정 보존과 도구 사용법을 정리했다.
-[공통 계약 워크플로 연결](docs/workflow-mcp.md)에서 등록·승인·랄프 라운드·통합 결과 조회를 안내한다.
-MCP는 중앙 HTTP API만 호출하며 Cloudflare 제어 토큰과 제공자 인증에 직접 접근하지 않는다.
+새 Codex 세션에서 `$hivemind`, Claude Code 세션에서 `/hivemind`를 사용한다. 작업을 등록하기 전에 대상 저장소와 고정 커밋을 먼저 확인한다. 인증 파일, 다른 포트, 기존 설정 보존과 도구 사용법은 [Codex 연결 안내](docs/codex-integration.md)와 [Claude Code 연결 안내](docs/claude-integration.md)에 있다. 공통 계약 워크플로의 등록·승인·랄프 라운드·통합 결과 조회는 [공통 계약 워크플로 연결](docs/workflow-mcp.md)에 있다.
 
-Cloudflare 실행 백엔드는 [cloudflare/](cloudflare/README.md)에 배포했다.
-공식 구독 인증, 작업별 컨테이너, 불변 snapshot과 별도 테스트 컨테이너를 사용한다.
-[원격 통합 워크플로](cloudflare/backend/README.md#두-워커의-원격-통합-워크플로)는 공통 계약을 고정하고 Codex·Claude의 랄프 루프와 통합 검증을 원격에서 진행한다.
-중앙 서버에 원격 설정을 제공하면 웹에서도 실행 환경 **Cloudflare**와 제공자 **Codex / Claude Code**를 선택할 수 있다.
-기존 mock/local과 로컬 Codex·Claude worktree 실행도 유지한다.
-
-[Cloudflare 관제 연결·검증](docs/verification/2026-11-10-codex-integration.md) ·
-[원격 백엔드 사용법](cloudflare/backend/README.md) · [원격 백엔드 검증](cloudflare/docs/verification/2026-11-10-cloudflare.md)
-
-## Cloudflare 실제 화면과 공통 MCP
-
-화면에서 두 작업을 등록·승인해 약 30.18초 동안 동시 실행했다.
-각 제공자의 별도 검증 컨테이너 두 개에서 각각 테스트 2건·통과 2건·실패 0건을 확인했다.
-같은 결과를 실제 MCP SDK의 stdio 연결에서도 조회했다. MCP 초안 생성·실행 없는 반려도 확인했다.
-서버 재시작 뒤 작업 ID·diff·로그를 복원했고, 결과 수락은 원본 저장소를 수정하지 않았다.
-검증에는 작은 전용 저장소를 사용했다. 실제 작업 전 서버의 대상 저장소 정책을 설정해야 한다.
-
-![Cloudflare 동시 작업과 테스트 진행](docs/screenshots/remote-running.png)
-![Cloudflare Codex 실제 diff와 테스트 결과](docs/screenshots/remote-codex-result.png)
-![Cloudflare Claude 실제 diff와 테스트 결과](docs/screenshots/remote-claude-result.png)
-
-## 기존 로컬 대시보드와 실행 기록
-
-실행 워커에서 **Codex** 또는 **Claude Code**를 선택한다.
-선택한 제공자의 워커가 고정 커밋과 승인한 테스트 명령으로 작업을 실행한다.
-
-![Codex와 Claude Code를 선택하는 관제 화면](docs/screenshots/providers.png)
-
-**작업 등록 → 사람의 실행 승인 → 별도 Git worktree 실행 → 실제 diff·테스트 결과 검토 → 결과 수락** 순서로 진행한다.
-각 CLI의 기존 로그인을 사용하며 합성 결과를 만드는 mock 실행과 구분한다.
-두 실제 제공자의 금액은 **미확정**으로 표시한다.
-
-![실제 Claude Code 실행의 diff와 테스트 결과](docs/screenshots/claude-result.png)
-
-두 제공자를 각각 실제로 실행해 샘플 테스트 **3개 통과·종료 코드 0**을 확인했다.
-당시 공통 실행 계층 검사 **65개 통과·실패 0개**를 확인했다.
-원본 파일·index는 보존됐으며, 결과를 검토하고 수락했다.
-실패한 첫 기동 기록도 보존하며, 위 결과는 문제 수정 후 재실행한 성공 기록이다.
-공개 결과 캡처는 개인 로컬 경로만 숨겼다.
-
-<details>
-<summary>이전 Codex README 개선 시연</summary>
-
-![손그림 꿀벌 로고가 적용된 이전 관제 화면](docs/screenshots/dashboard.png)
-
-![이전 실제 Codex diff와 테스트 결과 검토](docs/screenshots/codex-result.png)
-
-이 캡처는 Claude 추가 전, 실제 Codex 워커가 이 README를 개선한 실행 기록이다.
-당시 `npm run check`로 테스트 47개 통과·실패 0개·종료 코드 0을 확인했다.
-
-</details>
-
-### 병렬 실행 시연
-
-Codex와 Claude Code 작업을 각각 등록하고 실행을 승인한다.
-두 워커는 서로 다른 worktree에서 병렬로 작업한다.
-사람은 각 작업의 실제 diff와 테스트 결과를 검토한 뒤 결과를 수락한다.
-절차와 검토 항목은 [병렬 실행 안내](docs/concurrent-execution.md)를 참고한다.
-
-2026-11-09 실측에서 두 작업의 `running` 구간은 **46.247초** 겹쳤다.
-같은 시작 커밋에서 서로 다른 worktree를 사용했고 원본은 검토 전까지 보존됐다.
-
-| 워커 | 실행 구간 (한국 시간) | 변경 파일 | 테스트 |
-|---|---|---|---|
-| Codex | 15:56:32.459–15:57:18.706 | README.md | 65개 통과·실패 0·종료 코드 0 |
-| Claude Code | 15:56:30.453–15:57:26.070 | docs/concurrent-execution.md | 65개 통과·실패 0·종료 코드 0 |
-
-이 시간은 모델 추론만이 아닌 worktree 준비·CLI·준비 명령·테스트를 포함한 작업 실행 구간이다.
-이벤트 시각과 원본 diff 해시는 [실행 근거 JSON](docs/concurrent-run-evidence.json)에 기록했다.
-검토 후 두 결과를 수락했다. 공개 결과 캡처에서는 개인 로컬 경로만 숨겼다.
-
-![Codex와 Claude Code의 병렬 실행 화면](docs/screenshots/concurrent-running.png)
-
-![병렬 실행의 Codex diff와 테스트 결과 검토](docs/screenshots/concurrent-codex.png)
-
-![병렬 실행의 Claude Code diff와 테스트 결과 검토](docs/screenshots/concurrent-claude.png)
+중앙 서버에 Cloudflare 원격 설정을 제공하면 실행 환경으로 **Cloudflare**를 선택할 수 있다. 설정 방법은 [원격 백엔드 사용법](cloudflare/backend/README.md)에 있다. 실제 작업을 실행하기 전에 서버의 대상 저장소 정책을 설정해야 한다. 기본 실행은 mock/local이며, 실제 모델 호출과 유료 자원 생성은 사람이 명시적으로 요청한 경우에만 수행한다.
 
 ## 빠른 시작: 모의 실행
 
@@ -326,8 +352,6 @@ HIVEMIND_WORKER_ID=worker-local-2 npm run worker
 `.env`, `data/`, `node_modules/`, `dist/`는 버전 관리에서 제외한다.
 상태를 초기화할 때는 서버·워커 종료 후 SQLite 파일을 백업하고 해당 상태 파일만 정리한다.
 `data/` 전체를 삭제하지 않는다. 그 아래 보존된 worktree는 위 Git 절차로 별도 정리한다.
-
-2026-11-14 [로컬·Cloudflare 실측](docs/verification/2026-11-14-resource-validation-final.md): A 18회·B 9회·C 3회 최종 검증을 통과했다. 원격 연결 단절 중 통합·결과 보존을 확인했으나, 이번 작은 과제에서는 로컬 병렬 실행이 더 빨랐다. 대규모 작업의 성능 우위는 아직 입증하지 않았다.
 
 ## 프로젝트 구조와 검증
 
