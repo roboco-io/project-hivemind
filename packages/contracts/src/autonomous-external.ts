@@ -1,9 +1,12 @@
 /** Server-owned broker, scoped provider transport and action audit contracts. */
-export type ExternalOperation = 'aws.spot.start'|'aws.spot.inspect'|'hf.model.commit'|'github.branch.push';
+import type {ExternalS3Operation,ExternalS3Parameters,ExternalS3InspectParameters,ExternalS3Target} from './autonomous-external-s3.js';
+export type ExternalHfVisibility = 'private'|'public';
+export type ExternalOperation = 'aws.spot.start'|'aws.spot.inspect'|'hf.model.commit'|'hf.model.lfs_commit'|'github.branch.push'|ExternalS3Operation;
 export type ExternalTarget =
   | {accountId:string; region:string; workloadId:string}
-  | {repository:string; revision:string}
-  | {repository:string; branch:string};
+  | {repository:string; revision:string; visibility?:ExternalHfVisibility}
+  | {repository:string; branch:string}
+  | ExternalS3Target;
 interface ProfileLimits {
   id:string; enabled?:boolean; credentialRef:string; maxLifetimeMs:number;
   /** Trusted maximum exposure, not an estimate or verified charge. */
@@ -11,8 +14,9 @@ interface ProfileLimits {
 }
 export type ExternalProfile = ProfileLimits & (
   | {provider:'aws'; target:{accountId:string; region:string; workloadId:string}; operations:('aws.spot.start'|'aws.spot.inspect')[]}
-  | {provider:'hf'; target:{repository:string; revision:string}; operations:'hf.model.commit'[]}
+  | {provider:'hf'; target:{repository:string; revision:string; visibility?:ExternalHfVisibility}; operations:('hf.model.commit'|'hf.model.lfs_commit')[]}
   | {provider:'github'; target:{repository:string; branch:string}; operations:'github.branch.push'[]}
+  | {provider:'s3'; target:ExternalS3Target; operations:ExternalS3Operation[]}
 );
 /** Registry is server-owned. Missing entries and enabled !== true deny admission. */
 export interface ExternalProfileRegistry {get(profileId:string):ExternalProfile|undefined}
@@ -27,12 +31,18 @@ export type ExternalParameters =
   | {lifetimeMs:number}
   | {startActionId:string}
   | {artifactDigest:string; message:string}
-  | {artifactDigest:string; expectedHead:string};
+  | {manifestDigest:string; message:string}
+  | {artifactDigest:string; expectedHead:string}
+  | ExternalS3Parameters
+  | ExternalS3InspectParameters;
 export type ExternalActionRequest = Pick<ExternalApprovalRequest,'taskId'|'revision'|'profileId'> & {requestId:string} & (
   | {operation:'aws.spot.start'; parameters:{lifetimeMs:number}}
   | {operation:'aws.spot.inspect'; parameters:{startActionId:string}}
   | {operation:'hf.model.commit'; parameters:{artifactDigest:string; message:string}}
+  | {operation:'hf.model.lfs_commit'; parameters:{manifestDigest:string; message:string}}
   | {operation:'github.branch.push'; parameters:{artifactDigest:string; expectedHead:string}}
+  | {operation:'aws.s3.put'; parameters:ExternalS3Parameters}
+  | {operation:'aws.s3.inspect'; parameters:ExternalS3InspectParameters}
 );
 export interface ExternalResource {id:string; cleanupRequired:true}
 export interface ExternalProviderReceipt {
@@ -77,6 +87,8 @@ export interface ExternalInvocation {
   providerRecoveryCursor?:string;
   /** aws.spot.inspect resolves an owned start action, never an arbitrary resource. */
   ownedResource?:ExternalResource & {actionId:string; ownershipToken:string; idempotencyKey:string};
+  /** aws.s3.inspect resolves the owned put action, so it can only check that put's object and mark. */
+  ownedPut?:{actionId:string; ownershipToken:string; idempotencyKey:string; parametersHash:string; parameters:ExternalS3Parameters};
 }
 export interface ExternalCredentialScope {
   taskId:string; revision:number; actionId:string; provider:ExternalProfile['provider'];

@@ -3,6 +3,13 @@ import {AsyncLocalStorage} from 'node:async_hooks';
 import type {ExternalInvocation,ExternalProviderReceipt,ExternalResource} from '../../contracts/src/autonomous-external.js';
 import {externalParametersHash,externalRecoveryBinding,parseExternalRecoveryCursor,type ExternalDispatchAuthority,type GuardedExternalProviderTransport} from '../../core/src/autonomous-external.ts';
 import type {ExternalCostReader} from './autonomous-external-cost.ts';
+import type {ExternalLargeLimits,ExternalLargeManifest} from '../../contracts/src/autonomous-external-large.js';
+import type {ExternalS3Target} from '../../contracts/src/autonomous-external-s3.js';
+import {externalLargeManifestDigest,validateExternalLargeManifest} from '../../core/src/autonomous-external-large.ts';
+import {externalS3PutOf} from '../../core/src/autonomous-external-s3.ts';
+import {createExternalS3Transport,type ExternalS3Transport} from './autonomous-external-s3.ts';
+import {assertHfVisibility,resolveHfVisibility,type HfVisibility} from './autonomous-external-hf-visibility.ts';
+import {hfLfsCommit,hfLfsProof,type HfLfsOptions} from './autonomous-external-hf-lfs.ts';
 export type ExternalProviderCredential={provider:'aws';accessKeyId:string;secretAccessKey:string;sessionToken?:string}|{provider:'hf'|'github';token:string};
 export interface ExternalArtifact {files:{path:string;contentBase64:string}[]}
 /** Digest producer: stable field order, immutable file order, canonical base64 required. */
@@ -85,9 +92,21 @@ export interface ExternalProviderOptions {
  aws?:{enabled?:boolean;accountId:string;region:string;workloadId:string;imageId:string;instanceType:string;subnetId:string;instanceProfileArn:string;maxLifetimeMs:number;credentialRef?:string;maxUpperBoundMicros?:number;billingPolicy?:'reserved_ceiling_only'|'verified_cost_source'};
  awsTtlGuard?:{guardArn:string;port:AwsTtlGuardPort};
  costReader?:ExternalCostReader;
- hf?:{enabled?:boolean;repository:string;revision:string};
+ hf?:{enabled?:boolean;repository:string;revision:string;
+  /** Omitted means private. Must equal the approved profile target. */
+  visibility?:HfVisibility;
+  /** Large-artifact commits. Without it hf.model.lfs_commit is denied. */
+  lfs?:ExternalHfLfsConfig};
+ s3?:{enabled?:boolean;target:ExternalS3Target};
  github?:{enabled?:boolean;repository:string;branch:string};
  artifacts:ExternalArtifactLoader;fetch?:typeof fetch;now?:()=>number;
+}
+/** Server-owned LFS wiring. The manifest and byte stream come from the large store, never from model input. */
+export interface ExternalHfLfsConfig {
+ uploadHosts:readonly string[];limits:ExternalLargeLimits;
+ loadManifest(manifestDigest:string,i:ExternalInvocation):Promise<ExternalLargeManifest>;
+ /** The invocation identifies the owner. The implementation must open only that owner's verified files. */
+ open(file:Parameters<HfLfsOptions['open']>[0],i:ExternalInvocation):ReturnType<HfLfsOptions['open']>;
 }
 export type ExternalAwsLaunchPolicy=Pick<NonNullable<ExternalProviderOptions['aws']>,
  'accountId'|'region'|'workloadId'|'imageId'|'instanceType'|'subnetId'|'instanceProfileArn'|'maxLifetimeMs'|'maxUpperBoundMicros'>;
@@ -128,12 +147,14 @@ const value=(n:Xml,key:string)=>child(n,key)?.text??'';
 const items=(n:Xml|undefined)=>n?.children.filter(c=>c.name==='item')??[];
 export function createExternalProviderTransport(options:ExternalProviderOptions):GuardedExternalProviderTransport<ExternalProviderCredential>{
  // Snapshot trusted configuration: later caller mutation cannot change an in-flight target.
- const config={enabled:options.enabled,aws:options.aws?structuredClone(options.aws):undefined,hf:options.hf?structuredClone(options.hf):undefined,github:options.github?structuredClone(options.github):undefined};
+ const config={enabled:options.enabled,aws:options.aws?structuredClone(options.aws):undefined,hf:options.hf?{...structuredClone({...options.hf,lfs:undefined}),lfs:options.hf.lfs}:undefined,github:options.github?structuredClone(options.github):undefined};
  const now=options.now??Date.now,fetcher=options.fetch??globalThis.fetch;
  const dispatch=new AsyncLocalStorage<ExternalDispatchAuthority & {expiresAt:number}>();
  const guardArn=options.awsTtlGuard?.guardArn,guardPort=options.awsTtlGuard?.port;
  const attest=guardPort?.attest.bind(guardPort),arm=guardPort?.arm.bind(guardPort);
  const loadArtifact=options.artifacts.load.bind(options.artifacts);
+ const s3:ExternalS3Transport|undefined=options.s3?createExternalS3Transport({enabled:options.enabled===true&&options.s3.enabled===true,target:options.s3.target,fetch:fetcher,now,
+  loadFiles:async i=>{const artifact=await loadArtifact(externalS3PutOf(i).parameters.artifactDigest);return structuredClone(artifact.files);}}):undefined;
  const readCost=options.costReader?.read.bind(options.costReader),quoteCost=options.costReader?.quote.bind(options.costReader);
  const forbiddenValues=[...(options.forbiddenValues??[])];
  requireThat(forbiddenValues.length<=256&&forbiddenValues.every(v=>typeof v==='string'&&Buffer.byteLength(v)<=262144));
@@ -148,7 +169,7 @@ export function createExternalProviderTransport(options:ExternalProviderOptions)
  }
  function step<T>(work:(signal:AbortSignal)=>Promise<T>,expiresAt:number,timeoutMs=TIMEOUT_MS):Promise<T>{return phase(work,timeoutMs,expiresAt,dispatch.getStore());}
  function gate(i:ExternalInvocation,c:ExternalProviderCredential,execute=false){
-  requireThat(config.enabled===true&&i.profile.enabled===true&&c.provider===i.profile.provider&&config[i.profile.provider]?.enabled===true);
+  requireThat(i.profile.provider!=='s3'&&config.enabled===true&&i.profile.enabled===true&&c.provider===i.profile.provider&&config[i.profile.provider]?.enabled===true);
   requireThat(i.profile.operations.includes(i.operation as never));text(i.ownershipToken);text(i.idempotencyKey);text(i.actionId);requireThat(/^[a-f0-9]{64}$/.test(i.parametersHash));
   requireThat(externalParametersHash(i.profile,i.operation,i.parameters)===i.parametersHash);
   requireThat(Number.isSafeInteger(i.expiresAt)&&(!execute||now()<i.expiresAt));
@@ -158,7 +179,7 @@ export function createExternalProviderTransport(options:ExternalProviderOptions)
    requireThat(/^ami-[a-f0-9]+$/.test(a.imageId)&&/^subnet-[a-f0-9]+$/.test(a.subnetId)&&/^[a-z0-9]+\.[a-z0-9]+$/.test(a.instanceType)&&a.instanceProfileArn.startsWith(`arn:aws:iam::${a.accountId}:instance-profile/`));text(a.instanceProfileArn,256);
    requireThat(Number.isSafeInteger(a.maxLifetimeMs)&&a.maxLifetimeMs>0);
   }else{ text(c.token,8192);const cfg=config[c.provider]!,target=record(i.profile.target);repository(cfg.repository);requireThat(target.repository===cfg.repository);
-   if(c.provider==='hf'){const hf=config.hf!;ref(hf.revision);requireThat(target.revision===hf.revision);}else{const gh=config.github!;ref(gh.branch);requireThat(target.branch===gh.branch);}}
+   if(c.provider==='hf'){const hf=config.hf!;ref(hf.revision);requireThat(target.revision===hf.revision&&resolveHfVisibility(target.visibility)===resolveHfVisibility(hf.visibility));}else{const gh=config.github!;ref(gh.branch);requireThat(target.branch===gh.branch);}}
  }
  async function http(url:string,method:string,headers:Record<string,string>,body?:string,expiresAt?:number,observeHeaders?:(headers:Headers)=>void):Promise<string>{
   expiresAt??=dispatch.getStore()?.expiresAt;
@@ -271,7 +292,7 @@ export function createExternalProviderTransport(options:ExternalProviderOptions)
   const cfg=config.hf!,base=`https://huggingface.co/api/models/${repository(cfg.repository)}`;
   const commits=await json(`${base}/commits/${ref(cfg.revision)}`,'GET',c);requireThat(Array.isArray(commits)&&commits.length<=100);
   const commit=commits.map(record).find(r=>r.title===mark(i)&&(expected===undefined||r.id===expected));if(!commit)return null;hashId(commit.id);
-  const info=record(await json(`${base}/revision/${commit.id}?blobs=true`,'GET',c));requireThat(info.private===true&&info.sha===commit.id&&Array.isArray(info.siblings));
+  const info=record(await json(`${base}/revision/${commit.id}?blobs=true`,'GET',c));assertHfVisibility(info,resolveHfVisibility(cfg.visibility));requireThat(info.sha===commit.id&&Array.isArray(info.siblings));
   for(const f of files){const file=info.siblings.map(record).find(s=>s.rfilename===f.path);requireThat(file&&file.blobId===gitBlob(Buffer.from(f.contentBase64,'base64')));}
   return receipt(i,'hf:'+commit.id,'retained');
  }
@@ -305,6 +326,19 @@ export function createExternalProviderTransport(options:ExternalProviderOptions)
   requireThat(timer.kind==='owned_expiry_timer'&&timer.guardArn===guardArn&&timer.timerArn.startsWith(`arn:aws:scheduler:${a.region}:${a.accountId}:schedule/`)&&timer.bindingHash===bindingHash&&timer.expiresAt===i.expiresAt&&now()<i.expiresAt);
   return timer;
  }
+ 
+ /** hf.model.lfs_commit: the manifest is loaded, validated and bound to the approved digest before any request. */
+ async function lfsContext(i:ExternalInvocation,c:Extract<ExternalProviderCredential,{token:string}>){
+  const hf=config.hf!,lfs=hf.lfs;requireThat(lfs&&i.operation==='hf.model.lfs_commit'&&c.provider==='hf');
+  const p=record(i.parameters);fields(p,['manifestDigest','message']);requireThat(typeof p.manifestDigest==='string'&&/^[a-f0-9]{64}$/.test(p.manifestDigest)&&typeof p.message==='string');
+  const secrets=[...forbiddenValues,c.token].filter(v=>Buffer.byteLength(v)>=8).map(v=>Buffer.from(v)),bytes=Buffer.from(JSON.stringify(i.parameters));
+  requireThat(!secrets.some(v=>bytes.includes(v)));
+  const loaded=await lfs!.loadManifest(p.manifestDigest as string,structuredClone(i));active();
+  const manifest=validateExternalLargeManifest(loaded,lfs!.limits);
+  requireThat(externalLargeManifestDigest(manifest)===p.manifestDigest&&manifest.taskId===i.taskId&&manifest.revision===i.revision&&manifest.profileId===i.profile.id);
+  const options:HfLfsOptions={repository:hf.repository,revision:hf.revision,message:p.message as string,visibility:hf.visibility,fetch:fetcher,now,signal:dispatch.getStore()?.signal,uploadHosts:lfs!.uploadHosts,open:file=>lfs!.open(file,structuredClone(i))};
+  return {manifest,options};
+ }
  async function execute(i:ExternalInvocation,c:ExternalProviderCredential){
   gate(i,c,true);
   if(c.provider==='aws'){
@@ -318,10 +352,14 @@ export function createExternalProviderTransport(options:ExternalProviderOptions)
    params['TagSpecification.2.ResourceType']='volume';for(let n=1;n<=7;n++){params[`TagSpecification.2.Tag.${n}.Key`]=params[`TagSpecification.1.Tag.${n}.Key`]!;params[`TagSpecification.2.Tag.${n}.Value`]=params[`TagSpecification.1.Tag.${n}.Value`]!;}
    await account(c,i.expiresAt);await awsQuery('RunInstances',params,c,i.expiresAt);const r=await awsInspect(i,c);requireThat(r);return r;
   }
+  if(c.provider==='hf'&&i.operation==='hf.model.lfs_commit'){
+   const {manifest,options:o}=await lfsContext(i,c),result=await hfLfsCommit(i,c.token,manifest,o);
+   return receipt(i,'hf:'+result.commitOid,'retained');
+  }
   const files=await artifact(i,c);
   if(c.provider==='hf'){
    requireThat(i.operation==='hf.model.commit');fields(i.parameters,['artifactDigest','message']);text(record(i.parameters).message,512);
-   const cfg=config.hf!,base=`https://huggingface.co/api/models/${repository(cfg.repository)}`,info=record(await json(`${base}/revision/${ref(cfg.revision)}?blobs=true`,'GET',c));requireThat(info.private===true);hashId(info.sha);
+   const cfg=config.hf!,base=`https://huggingface.co/api/models/${repository(cfg.repository)}`,info=record(await json(`${base}/revision/${ref(cfg.revision)}?blobs=true`,'GET',c));assertHfVisibility(info,resolveHfVisibility(cfg.visibility));hashId(info.sha);
    const prior=await hfProof(i,c,files);if(prior)return prior;
    const payload=[{key:'header',value:{summary:mark(i),description:record(i.parameters).message,parentCommit:info.sha}},...files.map(f=>({key:'file',value:{path:f.path,content:f.contentBase64,encoding:'base64'}}))].map(x=>JSON.stringify(x)).join('\n')+'\n';
    const response=record(JSON.parse(await http(`${base}/commit/${ref(cfg.revision)}`,'POST',{authorization:`Bearer ${c.token}`,'content-type':'application/x-ndjson'},payload,i.expiresAt)));hashId(response.commitOid);const proof=await hfProof(i,c,files,response.commitOid);requireThat(proof);return proof;
@@ -336,10 +374,18 @@ export function createExternalProviderTransport(options:ExternalProviderOptions)
  }
  return {
   async execute(i,c,authority){try{
+   if(i.profile.provider==='s3'){requireThat(s3);
+    // Like aws.spot.inspect, an inspect action is dispatched through execute and must resolve to a receipt.
+    if(i.operation==='aws.s3.inspect'){const found=await s3!.inspect(i,c);requireThat(found);return found;}
+    return await s3!.execute(i,c,authority);}
    const guard=authority??{signal:new AbortController().signal,assertActive(){requireThat(now()<i.expiresAt);}};
    return await dispatch.run({signal:guard.signal,assertActive:()=>guard.assertActive(),expiresAt:i.expiresAt},()=>execute(i,c));
   }catch{throw unavailable();}},
-  async inspect(i,c){try{gate(i,c);if(c.provider==='aws')return await awsInspect(i,c,true);const files=await artifact(i,c);if(c.provider==='hf')return await hfProof(i,c,files);
+  async inspect(i,c){try{
+   if(i.profile.provider==='s3'){requireThat(s3);return await s3!.inspect(i,c);}
+   gate(i,c);if(c.provider==='aws')return await awsInspect(i,c,true);
+   if(c.provider==='hf'&&i.operation==='hf.model.lfs_commit'){const {manifest,options:o}=await lfsContext(i,c),proof=await hfLfsProof(i,c.token,manifest,o);return proof?receipt(i,'hf:'+proof.commitOid,'retained'):null;}
+   const files=await artifact(i,c);if(c.provider==='hf')return await hfProof(i,c,files);
    const bindingHash=externalRecoveryBinding(i);
    const cursor=i.providerRecoveryCursor===undefined?undefined:parseExternalRecoveryCursor(i.providerRecoveryCursor,bindingHash);
    const anchor=cursor?.head??await head(c),page=cursor?.page??1;

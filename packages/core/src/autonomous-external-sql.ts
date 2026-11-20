@@ -10,10 +10,16 @@ export interface ExternalJournal {
 export interface ExternalJournalQuery {limit?:number;cursor?:string}
 export interface ExternalApprovalPreflight {profileHashes:Record<string,string>;configurationFingerprint:string}
 export interface ExternalArtifactGrant {taskId:string;revision:number;profileId:string;artifactDigest:string;profileHash:string;configurationFingerprint:string;bytes:number;published?:boolean}
+/** Server-side admission of one large manifest for one approved profile. Mirrors ExternalArtifactGrant. */
+export interface ExternalManifestGrant {taskId:string;revision:number;profileId:string;manifestDigest:string;profileHash:string;configurationFingerprint:string;files:number;bytes:number;published?:boolean}
+export const EXTERNAL_MANIFEST_GRANT_LIMITS={perRevision:8,filesPerRevision:256,bytesPerRevision:512*1024*1024*1024} as const;
 export interface ExternalDurableStore extends ExternalTransactionalStore {
  getArtifactGrant(taskId:string,revision:number,profileId:string,artifactDigest:string):ExternalArtifactGrant|undefined;
  reserveArtifactGrant(grant:ExternalArtifactGrant):void;
  bindArtifactGrant(grant:ExternalArtifactGrant):void;
+ getManifestGrant(taskId:string,revision:number,profileId:string,manifestDigest:string):ExternalManifestGrant|undefined;
+ reserveManifestGrant(grant:ExternalManifestGrant):void;
+ bindManifestGrant(grant:ExternalManifestGrant):void;
  getProviderPolicy(taskId:string,revision:number,profileId:string):unknown;
  bindProviderPolicy(taskId:string,revision:number,profileId:string,value:unknown):void;
  pageJournal(taskId:string,query:ExternalJournalQuery):{items:ExternalJournal[];nextCursor?:string};
@@ -28,7 +34,7 @@ export interface ExternalDurableStore extends ExternalTransactionalStore {
  isTaskBlocked(taskId:string,revision:number):boolean;
  close():void;
 }
-interface Root {version:1;broker:ExternalState;journal:Record<string,ExternalJournal>;blocked:Record<string,true>;secret?:string;nextSequence?:number;bindings?:Record<string,string>;preflights?:Record<string,ExternalApprovalPreflight>;providerPolicies?:Record<string,unknown>;artifactGrants?:Record<string,ExternalArtifactGrant>}
+interface Root {version:1;broker:ExternalState;journal:Record<string,ExternalJournal>;blocked:Record<string,true>;secret?:string;nextSequence?:number;bindings?:Record<string,string>;preflights?:Record<string,ExternalApprovalPreflight>;providerPolicies?:Record<string,unknown>;artifactGrants?:Record<string,ExternalArtifactGrant>;manifestGrants?:Record<string,ExternalManifestGrant>}
 const key=(values:unknown[])=>createHash('sha256').update(JSON.stringify(values)).digest('hex');
 function badPage():never{throw Object.assign(new Error('Invalid external page'),{statusCode:400});}
 function invalid():never{throw new Error('Invalid external persisted state');}
@@ -43,15 +49,18 @@ function intent(j:ExternalJournal){
    case 'aws.spot.start':fields(r.parameters,['lifetimeMs']);if(!Number.isSafeInteger(r.parameters.lifetimeMs)||r.parameters.lifetimeMs<1)invalid();break;
    case 'aws.spot.inspect':fields(r.parameters,['startActionId']);if(typeof r.parameters.startActionId!=='string'||r.parameters.startActionId.length<1||r.parameters.startActionId.length>256)invalid();break;
    case 'hf.model.commit':fields(r.parameters,['artifactDigest','message']);if(typeof r.parameters.artifactDigest!=='string'||!/^[a-f0-9]{64}$/.test(r.parameters.artifactDigest)||typeof r.parameters.message!=='string'||!r.parameters.message.length||r.parameters.message.length>200||/[\p{Cc}]/u.test(r.parameters.message))invalid();break;
+   case 'hf.model.lfs_commit':fields(r.parameters,['manifestDigest','message']);if(typeof r.parameters.manifestDigest!=='string'||!/^[a-f0-9]{64}$/.test(r.parameters.manifestDigest)||typeof r.parameters.message!=='string'||!r.parameters.message.length||r.parameters.message.length>200||/[\p{Cc}]/u.test(r.parameters.message))invalid();break;
+   case 'aws.s3.put':fields(r.parameters,['keySuffix','artifactDigest']);if(typeof r.parameters.keySuffix!=='string'||!/^[A-Za-z0-9_][A-Za-z0-9_./-]{0,239}$/.test(r.parameters.keySuffix)||r.parameters.keySuffix.includes('..')||r.parameters.keySuffix.includes('//')||r.parameters.keySuffix.includes('/./')||r.parameters.keySuffix.endsWith('/')||typeof r.parameters.artifactDigest!=='string'||!/^[a-f0-9]{64}$/.test(r.parameters.artifactDigest))invalid();break;
+   case 'aws.s3.inspect':fields(r.parameters,['putActionId']);if(typeof r.parameters.putActionId!=='string'||r.parameters.putActionId.length<1||r.parameters.putActionId.length>256)invalid();break;
    case 'github.branch.push':fields(r.parameters,['artifactDigest','expectedHead']);if(typeof r.parameters.artifactDigest!=='string'||!/^[a-f0-9]{64}$/.test(r.parameters.artifactDigest)||typeof r.parameters.expectedHead!=='string'||!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(r.parameters.expectedHead))invalid();break;
    default:invalid();
   }
  }
- if(j.reservation!==undefined){const r=j.reservation;fields(r,['tool','system','operation','estimatedCostMicros']);const allowed:Record<string,string[]>={aws:['aws.spot.start','aws.spot.inspect'],hf:['hf.model.commit'],github:['github.branch.push']};if(r.tool!=='mcp__hivemind__action'||!allowed[r.system]?.includes(r.operation)||!Number.isSafeInteger(r.estimatedCostMicros)||r.estimatedCostMicros<0||j.request&&r.operation!==j.request.operation)invalid();}
+ if(j.reservation!==undefined){const r=j.reservation;fields(r,['tool','system','operation','estimatedCostMicros']);const allowed:Record<string,string[]>={aws:['aws.spot.start','aws.spot.inspect'],hf:['hf.model.commit','hf.model.lfs_commit'],github:['github.branch.push'],s3:['aws.s3.put','aws.s3.inspect']};if(r.tool!=='mcp__hivemind__action'||!allowed[r.system]?.includes(r.operation)||!Number.isSafeInteger(r.estimatedCostMicros)||r.estimatedCostMicros<0||j.request&&r.operation!==j.request.operation)invalid();}
 }
 function providerPolicy(value:unknown){
  fields(value,['version','profileHash','configurationFingerprint','config'],['costSettings','injectedCostReader']);if(value.version!==1||typeof value.profileHash!=='string'||!/^[a-f0-9]{64}$/.test(value.profileHash)||typeof value.configurationFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(value.configurationFingerprint))invalid();
- fields(value.config,['version','profiles','providers'],['ttlGuard','credentialPolicyRevision']);if(value.config.version!==1||!Array.isArray(value.config.profiles)||value.config.profiles.length<1||value.config.profiles.length>3)invalid();
+ fields(value.config,['version','profiles','providers'],['ttlGuard','credentialPolicyRevision']);if(value.config.version!==1||!Array.isArray(value.config.profiles)||value.config.profiles.length<1||value.config.profiles.length>4)invalid();
  if(value.injectedCostReader!==undefined&&typeof value.injectedCostReader!=='boolean')invalid();
 }
 function artifactGrant(g:unknown):asserts g is ExternalArtifactGrant {
@@ -59,14 +68,20 @@ function artifactGrant(g:unknown):asserts g is ExternalArtifactGrant {
  if(!Number.isSafeInteger(g.bytes)||g.bytes<0||g.bytes>1024*1024||g.published!==undefined&&typeof g.published!=='boolean')invalid();
  if(typeof g.taskId!=='string'||!g.taskId||typeof g.profileId!=='string'||!g.profileId||!Number.isSafeInteger(g.revision)||g.revision<1||[g.artifactDigest,g.profileHash,g.configurationFingerprint].some(h=>typeof h!=='string'||!/^[a-f0-9]{64}$/.test(h)))invalid();
 }
+function manifestGrant(g:unknown):asserts g is ExternalManifestGrant {
+ fields(g,['taskId','revision','profileId','manifestDigest','profileHash','configurationFingerprint','files','bytes'],['published']);
+ if(!Number.isSafeInteger(g.files)||g.files<1||g.files>EXTERNAL_MANIFEST_GRANT_LIMITS.filesPerRevision||!Number.isSafeInteger(g.bytes)||g.bytes<1||g.bytes>EXTERNAL_MANIFEST_GRANT_LIMITS.bytesPerRevision||g.published!==undefined&&typeof g.published!=='boolean')invalid();
+ if(typeof g.taskId!=='string'||!g.taskId||typeof g.profileId!=='string'||!g.profileId||!Number.isSafeInteger(g.revision)||g.revision<1||[g.manifestDigest,g.profileHash,g.configurationFingerprint].some(h=>typeof h!=='string'||!/^[a-f0-9]{64}$/.test(h)))invalid();
+}
 function validate(root:Root){
+ if(root.manifestGrants!==undefined){plain(root.manifestGrants);for(const [id,g] of Object.entries(root.manifestGrants)){manifestGrant(g);if(id!==key(['manifest',g.taskId,g.revision,g.profileId,g.manifestDigest]))invalid();}}
  if(root.artifactGrants!==undefined){plain(root.artifactGrants);for(const [id,g] of Object.entries(root.artifactGrants)){artifactGrant(g);if(id!==key([g.taskId,g.revision,g.profileId,g.artifactDigest]))invalid();}}
 
- if(root?.version!==1||root.broker?.version!==1||Object.keys(root).some(k=>!['version','broker','journal','blocked','secret','nextSequence','bindings','preflights','providerPolicies','artifactGrants'].includes(k))||Object.keys(root.broker).some(k=>!['version','approvals','actions'].includes(k)))invalid();
+ if(root?.version!==1||root.broker?.version!==1||Object.keys(root).some(k=>!['version','broker','journal','blocked','secret','nextSequence','bindings','preflights','providerPolicies','artifactGrants','manifestGrants'].includes(k))||Object.keys(root.broker).some(k=>!['version','approvals','actions'].includes(k)))invalid();
  if(root.secret!==undefined&&(typeof root.secret!=='string'||!/^[a-f0-9]{64}$/.test(root.secret)))invalid();
  if(root.nextSequence!==undefined&&(!Number.isSafeInteger(root.nextSequence)||root.nextSequence<1))invalid();
  for(const value of Object.values(root.bindings??{}))if(typeof value!=='string'||!/^[a-f0-9]{64}$/.test(value))invalid();
- for(const p of Object.values(root.preflights??{})){if(!p||typeof p.configurationFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(p.configurationFingerprint)||!p.profileHashes||Object.keys(p.profileHashes).length<1||Object.keys(p.profileHashes).length>3||Object.values(p.profileHashes).some(h=>typeof h!=='string'||!/^[a-f0-9]{64}$/.test(h)))invalid();}
+ for(const p of Object.values(root.preflights??{})){if(!p||typeof p.configurationFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(p.configurationFingerprint)||!p.profileHashes||Object.keys(p.profileHashes).length<1||Object.keys(p.profileHashes).length>4||Object.values(p.profileHashes).some(h=>typeof h!=='string'||!/^[a-f0-9]{64}$/.test(h)))invalid();}
  if(root.providerPolicies!==undefined){plain(root.providerPolicies);for(const value of Object.values(root.providerPolicies))providerPolicy(value);}
  for(const value of [root.broker.approvals,root.broker.actions,root.journal,root.blocked])if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).length>131074)invalid();
  for(const [id,j] of Object.entries(root.journal)){
@@ -102,7 +117,7 @@ export function createExternalSqlStore(sql:ExternalSqlPort):ExternalDurableStore
    }
    if(!m&&[...sql.exec('SELECT ordinal FROM external_chunks LIMIT 1')].length)invalid();
    validate(root);
-   root.secret??=randomBytes(32).toString('hex');root.nextSequence??=1;root.bindings??={};root.preflights??={};root.providerPolicies??={};root.artifactGrants??={};
+   root.secret??=randomBytes(32).toString('hex');root.nextSequence??=1;root.bindings??={};root.preflights??={};root.providerPolicies??={};root.artifactGrants??={};root.manifestGrants??={};
    for(const j of Object.values(root.journal))j.sequence??=root.nextSequence++;
    validate(root);const result=fn(root);
    if(result&&typeof (result as {then?:unknown}).then==='function'){
@@ -132,6 +147,21 @@ export function createExternalSqlStore(sql:ExternalSqlPort):ExternalDurableStore
    const id=key([grant.taskId,grant.revision,grant.profileId,grant.artifactDigest]),prior=root.artifactGrants![id];
    if(!prior||fingerprint({...prior,published:false})!==fingerprint({...grant,published:false}))throw Error('External artifact grant conflict');
    root.artifactGrants![id]={...prior,published:true};
+  }),
+  getManifestGrant:(taskId,revision,profileId,manifestDigest)=>update(root=>root.manifestGrants![key(['manifest',taskId,revision,profileId,manifestDigest])]),
+  reserveManifestGrant:grant=>update(root=>{
+   manifestGrant(grant);if(root.blocked[key([grant.taskId,grant.revision])])throw Error('External manifest admission stopped');
+   const id=key(['manifest',grant.taskId,grant.revision,grant.profileId,grant.manifestDigest]),prior=root.manifestGrants![id];
+   if(prior){if(fingerprint({...prior,published:false})!==fingerprint({...grant,published:false}))throw Error('External manifest grant conflict');return;}
+   const all=Object.values(root.manifestGrants!).filter(g=>g.taskId===grant.taskId&&g.revision===grant.revision);
+   if(all.length>=EXTERNAL_MANIFEST_GRANT_LIMITS.perRevision||all.reduce((sum,g)=>sum+g.files,0)+grant.files>EXTERNAL_MANIFEST_GRANT_LIMITS.filesPerRevision||all.reduce((sum,g)=>sum+g.bytes,0)+grant.bytes>EXTERNAL_MANIFEST_GRANT_LIMITS.bytesPerRevision)throw Error('External manifest quota exceeded');
+   root.manifestGrants![id]={...structuredClone(grant),published:false};
+  }),
+  bindManifestGrant:grant=>update(root=>{
+   manifestGrant(grant);if(root.blocked[key([grant.taskId,grant.revision])])throw Error('External manifest admission stopped');
+   const id=key(['manifest',grant.taskId,grant.revision,grant.profileId,grant.manifestDigest]),prior=root.manifestGrants![id];
+   if(!prior||fingerprint({...prior,published:false})!==fingerprint({...grant,published:false}))throw Error('External manifest grant conflict');
+   root.manifestGrants![id]={...prior,published:true};
   }),
   getJournal:(taskId,revision,requestId)=>update(root=>root.journal[key([taskId,revision,requestId])]),
   getProviderPolicy:(taskId,revision,profileId)=>update(root=>root.providerPolicies![key([taskId,revision,profileId])]),
