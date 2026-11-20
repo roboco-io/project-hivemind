@@ -1,3 +1,4 @@
+import {handleAutonomousBootstrap} from './autonomous-bootstrap-routes.ts';
 import {timingSafeEqual} from 'node:crypto';
 import {createServer} from 'node:http';
 import {mkdir,open,readFile,stat,writeFile,rename} from 'node:fs/promises';
@@ -10,6 +11,7 @@ export function createBootstrap(runtimeDir='/runtime') {
  return createServer(async(req,res)=>{
   const send=(status:number,value:unknown)=>{res.writeHead(status,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(value));};
   try {
+   if(await handleAutonomousBootstrap(req,res,runtimeDir))return;
    const path=new URL(req.url??'/','http://runtime').pathname;
    if(req.method==='GET'&&path==='/health')return send(200,{ok:true,runtimeRevision:runtimeBuild.digest});
    if(req.method==='POST'&&path==='/prepare'){

@@ -1,5 +1,5 @@
 import {createHash,randomUUID} from 'node:crypto';
-import type {CredentialRecord,JobRecord,JobSpec,SchedulerState,Status,CheckSpec} from './contracts.ts';
+import type {CredentialRecord,JobRecord,JobSpec,SchedulerState,CheckSpec} from './contracts.ts';
 import {terminal} from './contracts.ts';
 
 export interface AgentOutcome {outputSnapshotId?:string;authGeneration:number;authObjectKey:string;containerStopped:boolean;success:boolean;errorCode?:string;resultKey?:string}
@@ -41,19 +41,32 @@ function computeReceipt(value:ComputeOutcome){return fingerprint({success:value.
 
 export class Scheduler {
  state:State;
- constructor(state?:SchedulerState){
+ private readonly exclusiveOwnership:boolean;
+ private readonly instructions=new Map<string,string>();
+ /** exclusiveOwnership is only for a freshly decoded graph or empty owner, never caller/shared state. */
+ constructor(state?:SchedulerState,options?:{exclusiveOwnership?:boolean}){
+  this.exclusiveOwnership=options?.exclusiveOwnership===true;
   if(state&&(state.version!==1||!state.jobs||!state.credentials||!state.idempotency))throw new SchedulerError('Unsupported or corrupt scheduler state',500);
-  this.state=state?copy(state):{version:1,jobs:{},credentials:{},idempotency:{}};
+  this.state=state?(options?.exclusiveOwnership===true?state:copy(state)):{version:1,jobs:{},credentials:{},idempotency:{}};
   this.state.completionReceipts??={};
+  if(this.exclusiveOwnership)for(const job of Object.values(this.state.jobs))if(typeof job.instructions==='string')this.intern(job.instructions);
  }
+ private intern(value:string):string{if(!this.exclusiveOwnership)return value;const prior=this.instructions.get(value);if(prior!==undefined)return prior;this.instructions.set(value,value);return value;}
  private record(id:string):JobRecord {const value=own(this.state.jobs,id);if(!value)throw new SchedulerError('Job not found',404);return value;}
  private attempt(id:string,attempt:string):JobRecord {const value=this.record(id);if(value.attempt!==attempt)throw new SchedulerError('Stale or invalid attempt');return value;}
  private credential(id:string):CredentialRecord {const value=own(this.state.credentials,id);if(!value)throw new SchedulerError('Credential not found',422);return value;}
  private receiptKey(job:JobRecord){return `${job.id}:${job.attempt}`;}
  private replay(job:JobRecord,hash:string):boolean {const saved=own(this.state.completionReceipts!,this.receiptKey(job));if(saved&&saved!==hash)throw new SchedulerError('Conflicting duplicate completion');return Boolean(saved);}
  private saveReceipt(job:JobRecord,hash:string){this.state.completionReceipts![this.receiptKey(job)]=hash;}
- get(id:string):JobRecord{return copy(this.record(id));}
- list():JobRecord[]{return Object.values(this.state.jobs).map(copy);}
+ private view(job:JobRecord):JobRecord {
+  if(!this.exclusiveOwnership)return copy(job);
+  // Instruction strings are immutable. Keep the restored pool pointer while cloning
+  // every mutable field; otherwise list() recreates all repeated goal strings.
+  const {instructions,...data}=job;const result=copy(data) as JobRecord;
+  if(Object.hasOwn(job,'instructions'))result.instructions=instructions;return result;
+ }
+ get(id:string):JobRecord{return this.view(this.record(id));}
+ list():JobRecord[]{return Object.values(this.state.jobs).map(job=>this.view(job));}
  enqueueCompute(snapshotId:string, spec:CheckSpec, time:number):JobRecord {
   now(time);const verified=validateCheckSpec(spec);
   const job:JobRecord={id:randomUUID(),attempt:randomUUID(),kind:'compute',checkId:verified.id,
@@ -73,11 +86,12 @@ export class Scheduler {
   }
   this.state.credentials[credential.id]=credential;
  }
- submit(input:JobSpec,time:number):JobRecord {
-  now(time);const spec=validateJobSpec(input),hash=fingerprint(spec),saved=own(this.state.idempotency,spec.idempotencyKey);
-  if(saved){if(saved.fingerprint!==hash)throw new SchedulerError('Idempotency key conflicts with another payload');return this.get(saved.jobId);}
+ submit(input:JobSpec,time:number,fixedId?:string):JobRecord {
+  now(time);if(fixedId!==undefined)id(fixedId,'internal job identity');const spec=validateJobSpec(input),hash=fingerprint(spec),saved=own(this.state.idempotency,spec.idempotencyKey);
+  if(saved){if(fixedId!==undefined&&saved.jobId!==fixedId)throw new SchedulerError('Idempotency identity conflicts');if(saved.fingerprint!==hash)throw new SchedulerError('Idempotency key conflicts with another payload');return this.get(saved.jobId);}
+  if(fixedId!==undefined&&Object.hasOwn(this.state.jobs,fixedId))throw new SchedulerError('Job identity collision');
   const credential=this.credential(spec.credentialId);if(credential.provider!==spec.provider)throw new SchedulerError('Credential provider does not match job',422);if(credential.quarantined)throw new SchedulerError('Credential is quarantined',422);
-  const job:JobRecord={id:randomUUID(),attempt:randomUUID(),kind:'agent',...validateModelSelection(spec.provider,spec.model,spec.effort),provider:spec.provider,credentialId:credential.id,snapshotId:spec.snapshotId,status:'QUEUED',instructions:spec.instructions,checks:copy(spec.checks),childIds:[],createdAt:time,deadline:0,timeoutMs:spec.timeoutMs,containerStopped:true,authSynced:false};
+  const job:JobRecord={id:fixedId??randomUUID(),attempt:randomUUID(),kind:'agent',...validateModelSelection(spec.provider,spec.model,spec.effort),provider:spec.provider,credentialId:credential.id,snapshotId:spec.snapshotId,status:'QUEUED',instructions:this.intern(spec.instructions),checks:copy(spec.checks),childIds:[],createdAt:time,deadline:0,timeoutMs:spec.timeoutMs,containerStopped:true,authSynced:false};
   this.state.jobs[job.id]=job;this.state.idempotency[spec.idempotencyKey]={fingerprint:hash,jobId:job.id};return copy(job);
  }
  dispatch(time:number):JobRecord[] {
@@ -157,12 +171,22 @@ export class Scheduler {
   else{job.status='FAILED';job.errorCode=!outcome.sourceUnchanged?'SOURCE_CHANGED':errorCode??'CHECK_FAILED';}
   this.saveReceipt(job,hash);if(job.parentId)this.settleParent(job.parentId,time);return copy(job);
  }
+ /** Trusted Runner lifecycle proof only; never accept this proof through an HTTP JobSpec. */
+ failUnstartedNative(id:string,attempt:string,code:string,time:number,proof:{containerStopped:true;neverLaunched:true}):JobRecord {
+  now(time);const job=this.attempt(id,attempt);string(code,'error code',200);
+  if(!proof||proof.containerStopped!==true||proof.neverLaunched!==true||job.kind!=='agent'||!job.autonomous||job.runningAt!==undefined||job.status!=='STARTING'||job.cancellationRequested||job.authSynced)throw new SchedulerError('Unstarted native proof rejected');
+  const credential=this.credential(job.credentialId!);
+  if(credential.activeJobId!==job.id||credential.generation!==job.credentialGeneration||credential.quarantined)throw new SchedulerError('Credential ownership changed');
+  delete credential.activeJobId;
+  job.status='FAILED';job.errorCode=code;job.finishedAt=time;job.containerStopped=true;job.authSynced=true;job.authDisposition='unchanged_unstarted';
+  return copy(job);
+ }
  quarantine(id:string,attempt:string,code:string,time:number,containerStopped=false):JobRecord {
   now(time);const job=this.attempt(id,attempt);string(code,'error code',200);
   if(job.kind==='agent'){
    if(job.authSynced)throw new SchedulerError('Cannot quarantine a released credential owner');
    if(terminal(job.status)&&job.status!=='AUTH_SYNC_FAILED')throw new SchedulerError('Agent is already terminal');
-   const credential=this.credential(job.credentialId!);if(credential.activeJobId!==job.id)throw new SchedulerError('Credential ownership changed');
+   const credential=this.credential(job.credentialId!);if(credential.activeJobId!==job.id||credential.generation!==job.credentialGeneration)throw new SchedulerError('Credential ownership changed');
    for(const id of job.checkpoint?.checkIds??[])this.cancelOne(this.record(id),'CANCELLED',time);
    credential.quarantined=true;job.status='AUTH_SYNC_FAILED';job.errorCode=code;job.containerStopped=job.containerStopped||containerStopped;job.finishedAt=time;
   }else{

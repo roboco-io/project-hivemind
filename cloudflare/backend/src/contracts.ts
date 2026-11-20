@@ -1,3 +1,4 @@
+import type {DuckdbCacheEvidence} from './duckdb-build-cache.ts';
 import type {LargeArtifactRef} from './large-artifact.ts';
 import type {BenchmarkResources} from './runtime/benchmark-resources.ts';
 import type {ComputeGroupRecord} from './compute-group.ts';
@@ -26,6 +27,8 @@ export interface RalphCheckpoint { round: number; sessionId: string; snapshot: S
 export interface RalphFeedback { accepted: boolean; message: string }
 export interface RalphCheckRecord {round:number;sessionId:string;snapshotId:string;checkIds:string[];rejected?:boolean}
 export interface JobRecord {
+  autonomous?:{taskId:string;runId:string};
+  authDisposition?:'unchanged_unstarted';
   id: string; attempt: string; kind: 'agent' | 'compute'; provider?: Provider;
   credentialId?: string; credentialGeneration?: number; parentId?: string; checkId?: string;
   snapshotId: string; outputSnapshotId?: string; status: Status;
@@ -60,6 +63,7 @@ export interface ClaudeResultMetrics {
  modelUsage?:Record<string,Record<string,number>>;
 }
 export interface RuntimeResult {
+  buildCache?:DuckdbCacheEvidence;
   version: 1; jobId: string; attempt: string; inputSnapshotId: string;
   process: ProcessResult; snapshot?: Snapshot; summary: string;
   sandboxReceipts?: {sessionId:string;agentId:string|null;toolUseId:string;commandHash:string;timestamp:string}[];

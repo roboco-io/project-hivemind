@@ -32,3 +32,27 @@ test('Python extraction helper is bound into runtime revision and changes invali
   assert.notEqual(first.digest,next.digest);assert.equal(await checkRuntimeManifest(root),false);
  }finally{await rm(root,{recursive:true,force:true});}
 });
+import * as runtimeBuild from '../scripts/runtime-build.ts';
+import {readFile} from 'node:fs/promises';
+async function contractFixture(){const root=await fixture(),sourceRoot=join(root,'source-repo');await mkdir(join(sourceRoot,'packages/contracts/src'),{recursive:true});const source='export interface Policy {tools:string[]}\nexport const tool="Bash";\n';await writeFile(join(sourceRoot,'packages/contracts/src/autonomous.ts'),source);return {root,sourceRoot,source};}
+const syncContract=(options:{sourceRoot:string;runtimeRoot:string;check:boolean})=>(Reflect.get(runtimeBuild,'syncRuntimeAutonomousContract') as (options:unknown)=>Promise<{sourceHash:string;path:string}>)(options);
+test('CLI shared contract seam vendors exact bytes and source hash without changing pure manifest fixtures',async()=>{
+ const f=await contractFixture();try{const before=await buildRuntimeManifest(f.root);const result=await syncContract({sourceRoot:f.sourceRoot,runtimeRoot:f.root,check:false});assert.equal(await readFile(join(f.root,result.path),'utf8'),f.source);assert.equal(result.sourceHash,createHash('sha256').update(f.source).digest('hex'));assert.equal((await buildRuntimeManifest(f.root)).files[result.path],result.sourceHash);assert.notEqual((await buildRuntimeManifest(f.root)).digest,before.digest);await syncContract({sourceRoot:f.sourceRoot,runtimeRoot:f.root,check:true});}finally{await rm(f.root,{recursive:true,force:true});}
+});
+test('shared contract check rejects missing vendor, drift and nonbuiltin runtime dependencies',async()=>{
+ const f=await contractFixture();try{const opts={sourceRoot:f.sourceRoot,runtimeRoot:f.root,check:true};await assert.rejects(syncContract(opts));await syncContract({...opts,check:false});await writeFile(join(f.root,'backend/src/runtime-shared/autonomous.ts'),'tampered');await assert.rejects(syncContract(opts));for(const source of ['import {x} from "outside-private";export const tool=x;','export * from "../../private";','export const x=()=>import("../../private");']){await writeFile(join(f.sourceRoot,'packages/contracts/src/autonomous.ts'),source);await assert.rejects(syncContract({...opts,check:false}));}}finally{await rm(f.root,{recursive:true,force:true});}
+});
+test('vendor sync rejects symlinked source or destination without copying private targets',async()=>{
+ const f=await contractFixture();try{const source=join(f.sourceRoot,'packages/contracts/src/autonomous.ts');await rm(source);await writeFile(join(f.root,'private-target'),'PRIVATE_FIXTURE');await symlink(join(f.root,'private-target'),source);await assert.rejects(syncContract({sourceRoot:f.sourceRoot,runtimeRoot:f.root,check:false}));await rm(source);await writeFile(source,f.source);await mkdir(join(f.root,'backend/src/runtime-shared'));await symlink(join(f.root,'private-target'),join(f.root,'backend/src/runtime-shared/autonomous.ts'));await assert.rejects(syncContract({sourceRoot:f.sourceRoot,runtimeRoot:f.root,check:false}));assert.equal(await readFile(join(f.root,'private-target'),'utf8'),'PRIVATE_FIXTURE');}finally{await rm(f.root,{recursive:true,force:true});}
+});
+import {pathToFileURL} from 'node:url';
+test('image-local policy modules import without any root packages directory or model call',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'hive-image-contract-'));
+ try{
+  for(const path of ['runtime-shared/autonomous.ts','runtime/autonomous-tool-hook.ts','runtime/autonomous-authorize.ts','autonomous-cloud-protocol.ts','snapshot.ts']){const target=join(root,'backend/src',path);await mkdir(dirname(target),{recursive:true});await writeFile(target,await readFile(new URL('../src/'+path,import.meta.url)));}
+  const hook=await import(pathToFileURL(join(root,'backend/src/runtime/autonomous-tool-hook.ts')).href);
+  assert.deepEqual(hook.validateAutonomousPolicy({version:1,tools:['Bash'],model:'pinned',subagentModel:'pinned'}).tools,['Bash']);
+  const authorizer=await import(pathToFileURL(join(root,'backend/src/runtime/autonomous-authorize.ts')).href);assert.equal(typeof authorizer.guardCanonicalNativePolicy,'function');
+  const protocol=await import(pathToFileURL(join(root,'backend/src/autonomous-cloud-protocol.ts')).href);assert.equal(typeof protocol.validateAutonomousCloudInput,'function');
+ }finally{await rm(root,{recursive:true,force:true});}
+});

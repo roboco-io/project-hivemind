@@ -1,3 +1,20 @@
+import type {SchedulerJobQuery} from '../scheduler-jobs.ts';
+import {createSchedulerStorage,SCHEDULER_STATE_LEGACY_BYTES} from '../scheduler-storage.ts';
+import {createAutonomousExternalRuntime,externalConfiguredSecretValues,type AutonomousExternalRuntime} from '../autonomous-external.ts';
+import {handleAutonomousExternalApi} from '../../../../apps/control-plane/src/autonomous-external-api.ts';
+import type {AutonomousOperation} from '../../../../apps/control-plane/src/autonomous-api.ts';
+import {createAutonomousWebTransport,type AutonomousWebConnector} from '../runtime/autonomous-web-transport.ts';
+import {approveAutonomousWeb,dispatchAutonomousWeb,validateAutonomousWebGrant,type AutonomousWebGrant,type AutonomousWebPolicy} from '../runtime/autonomous-web.ts';
+import {AutonomousCloudController,type AutonomousCloudRecord} from '../autonomous-cloud.ts';
+import {LegacyAutonomousCloudPorts,cloudReadiness,controlOrigin,sessionKey,allowNativeControl,nativeJobKey,nativeApprovalKey,nativeConfigurationFingerprint,boundedNativeJobPrivate,type NativeJobPrivate} from './autonomous-ports.ts';
+import {validateAutonomousCloudInput,validateAutonomousCloudOutput,AUTONOMOUS_CLOUD_MAX_BYTES,type AutonomousCloudInput} from '../autonomous-cloud-protocol.ts';
+import {EncryptedSessionStore} from '../../../../packages/adapters/src/autonomous-session-store.ts';
+import {R2PrivateBlobStore} from '../autonomous-session-objects.ts';
+import {AutonomousService} from '../autonomous-service.ts';
+import {handleAutonomousApi} from './autonomous-api.ts';
+import type {AutonomousTaskSummary} from '../../../../packages/core/src/autonomous-repository.ts';
+import type {AutonomousTask} from '../../../../packages/contracts/src/autonomous.ts';
+import {duckdbCacheIdentity,duckdbCacheOrigin,duckdbCachePath,duckdbCacheMaxBytes,validateDuckdbCacheEvidence} from '../duckdb-build-cache.ts';
 import {LargeArtifactStore} from '../large-artifact-store.ts';
 import {largeArtifactKey,authorizeArtifactRead,type LargeArtifactRef,type ArtifactReadGrant} from '../large-artifact.ts';
 import {validateClaudeResultMetrics} from '../claude-result-metrics.ts';
@@ -5,12 +22,12 @@ import {advanceComputeGroup,assignGroup,type ComputeGroupSpec,type ComputeGroupR
 import {ensureSchedulerAlarm} from './scheduler-alarm.ts';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {DurableObject,WorkerEntrypoint} from 'cloudflare:workers';
-import type {CredentialRecord,JobRecord,JobSpec,RuntimeInput,RuntimeResult,SchedulerState,Snapshot,RalphCheckpoint,RalphFeedback} from '../contracts.ts';
+import type {CredentialRecord,JobRecord,JobSpec,RuntimeInput,RuntimeResult,Snapshot,RalphCheckpoint,RalphFeedback} from '../contracts.ts';
 import {terminal} from '../contracts.ts';
 import {Scheduler,type AgentOutcome,type ComputeOutcome} from '../scheduler.ts';
 import {validateSnapshot} from '../snapshot.ts';
 import {openAuthReturn,openCredential,sealCredential,validateAuth,type StoredCredential} from '../crypto.ts';
-import {ApiError,authorize,handleApi,json,type ApiService} from './api.ts';
+import {ApiError,authorize,authorizeAutonomousRoute,isAutonomousPath,scheduleAutonomousAlarm,handleApi,json,type ApiService} from './api.ts';
 import {advanceWorkflow,changedPaths,workflowFingerprint,type WorkflowRecord,type WorkflowSpec} from '../workflow.ts';
 import {advanceCarbonCampaign,reserveCarbonRequest,settleCarbonRequest,terraSizingOrder,terraCachePairOrder,type NpmCacheMode,type BenchmarkInstance,type CarbonOutcome,type CarbonCampaign,type CarbonEffort,type CarbonUsage} from '../carbon-benchmark.ts';
 import {handleCarbonGateway, syntheticCarbonStream} from '../carbon-gateway.ts';
@@ -26,6 +43,11 @@ interface Env {
  ARTIFACTS:R2Bucket;CREDENTIALS:R2Bucket;
  SCHEDULER:DurableObjectNamespace<SchedulerDO>;RUNNER:DurableObjectNamespace<RunnerDO>;
  GEMINI_BENCHMARK_KEY?:string;TERRA_BENCHMARK_AUTH?:string;
+ AUTONOMOUS_EXTERNAL_COST_CONFIG?:string;AUTONOMOUS_AWS_GUARD_CONFIG?:string;AUTONOMOUS_EXTERNAL_ENABLED?:string;AUTONOMOUS_EXTERNAL_CONFIG?:string;AUTONOMOUS_EXTERNAL_CREDENTIALS?:string;
+ AUTONOMOUS_QUOTA_PAUSE_ENABLED?:string;AUTONOMOUS_WEB_ENABLED?:string;AUTONOMOUS_WEB_ALLOWED_HOSTS?:string;
+ AUTONOMOUS_LONG_RUNNING_ENABLED?:string;AUTONOMOUS_CLOUD_ENABLED?:string;AUTONOMOUS_CONTROL_ORIGIN?:string;AUTONOMOUS_SESSION_KEY?:string;
+ AUTONOMOUS_WORKER_TOKEN?:string;
+ AUTONOMOUS_REPORTER_TOKEN?:string;
  CONTROL_TOKEN?:string;AUTH_STORAGE_KEY:string;AUTH_RETURN_PRIVATE_KEY:string;AUTH_RETURN_PUBLIC_KEY:string;CLAUDE_NESTED_APPROVED?:string;CODEX_SANDBOX_APPROVED?:string;
 }
 const CA='/etc/cloudflare/certs/cloudflare-containers-ca.crt';
@@ -35,6 +57,15 @@ const resultKey=(job:JobRecord)=>`results/${job.id}/${job.attempt}.json`;
 const outbound=(request:Request,hosts:string[])=>{const url=new URL(request.url);return url.protocol==='https:'&&hosts.includes(url.hostname)&&!url.username&&!url.password&&(!url.port||url.port==='443')?fetch(request,{redirect:'manual'}):Promise.resolve(new Response('Denied',{status:403}));};
 export class CodexOutbound extends WorkerEntrypoint<Env>{fetch(request:Request){return outbound(request,['chatgpt.com','auth.openai.com','api.openai.com']);}}
 export class ClaudeOutbound extends WorkerEntrypoint<Env>{fetch(request:Request){return outbound(request,['api.anthropic.com','claude.ai','claude.com','platform.claude.com']);}}
+async function nativeWebConnector():Promise<AutonomousWebConnector|undefined>{try{const {connect}=await import('cloudflare:sockets');return typeof connect==='function'?connect:undefined;}catch{return undefined;}}
+export class NativeClaudeOutbound extends WorkerEntrypoint<Env,{webGrant?:AutonomousWebGrant}>{async fetch(request:Request){
+ const url=new URL(request.url);let origin:string;try{origin=controlOrigin(this.env);}catch{return Promise.resolve(new Response('Denied',{status:403}));}
+ if(url.origin===origin)return allowNativeControl(request,this.env)?fetch(request,{redirect:'manual'}):Promise.resolve(new Response('Denied',{status:403}));
+ if(['api.anthropic.com','claude.ai','claude.com','platform.claude.com'].includes(url.hostname))return outbound(request,['api.anthropic.com','claude.ai','claude.com','platform.claude.com']);
+ const grant=this.ctx.props?.webGrant;
+ if(!grant||grant.expiresAt<=Date.now())return Promise.resolve(new Response('Denied',{status:403}));
+ try{const policy=approveAutonomousWeb({allowedHosts:grant.allowedHosts},this.env,origin)!;const connector=await nativeWebConnector();if(!connector)return new Response('Denied',{status:403});return dispatchAutonomousWeb(request,policy,origin,createAutonomousWebTransport({connector}));}catch{return Promise.resolve(new Response('Denied',{status:403}));}
+}}
 export class ComputeOutbound extends WorkerEntrypoint<Env>{fetch(request:Request){return outbound(request,['registry.npmjs.org','github.com','codeload.github.com','objects.githubusercontent.com','release-assets.githubusercontent.com']);}}
 
 const dependencyHosts=['registry.npmjs.org','github.com','codeload.github.com','objects.githubusercontent.com',
@@ -48,6 +79,42 @@ function dependencyOutbound(request:Request,providerHosts:string[]=[]){
 }
 export class ResourceComputeOutbound extends WorkerEntrypoint<Env>{async fetch(request:Request){
  const url=new URL(request.url);
+ if(url.origin===duckdbCacheOrigin){
+  const auth=request.headers.get('authorization')??'';
+  if(url.pathname!==duckdbCachePath||url.search||url.username||url.password||
+     !['GET','PUT'].includes(request.method)||!/^Bearer hma_[a-f0-9]{64}$/.test(auth))
+   return new Response(null,{status:403});
+  const write=request.method==='PUT';
+  const key=await this.env.SCHEDULER.getByName('owner').duckdbCacheGrant(auth.slice(7),write);
+  if(!key)return new Response(null,{status:403});
+  if(!write){
+   const object=await this.env.ARTIFACTS.get(key);
+   if(!object)return new Response(null,{status:404});
+   const digest=object.customMetadata?.sha256;
+   if(object.size<1||object.size>duckdbCacheMaxBytes||!digest||!/^[a-f0-9]{64}$/.test(digest)){
+    await object.body.cancel();
+    return new Response(null,{status:502});
+   }
+   return new Response(object.body,{headers:{'content-type':'application/octet-stream',
+    'content-length':String(object.size),'x-hivemind-cache-length':String(object.size),
+    'x-hivemind-cache-sha256':digest,'cache-control':'no-store'}});
+  }
+  const size=Number(request.headers.get('x-hivemind-cache-length'));
+  const digest=request.headers.get('x-hivemind-cache-sha256');
+  if(!request.body||!Number.isSafeInteger(size)||size<1||size>duckdbCacheMaxBytes||!digest||!/^[a-f0-9]{64}$/.test(digest))
+   return new Response(null,{status:400});
+  if(await this.env.ARTIFACTS.head(key))return new Response(null,{status:409});
+  const {readable,writable}=new FixedLengthStream(size);
+  const controller=new AbortController();
+  const transfer=request.body.pipeTo(writable,{signal:controller.signal}).then(()=>true,()=>false);
+  try{
+   const saved=await this.env.ARTIFACTS.put(key,readable,{onlyIf:{etagDoesNotMatch:'*'},sha256:digest,customMetadata:{sha256:digest}});
+   if(!saved){controller.abort();await transfer;return new Response(null,{status:409});}
+   return new Response(null,{status:await transfer?201:502});
+  }catch{
+   controller.abort();await transfer;return new Response(null,{status:502});
+  }
+ }
  if(url.hostname==='hivemind-artifacts.invalid'){
   const digest=url.pathname.slice(1),auth=request.headers.get('authorization')??'';
   if(request.method!=='GET'||url.protocol!=='https:'||url.port||url.search||url.username||url.password||!/^[a-f0-9]{64}$/.test(digest)||!/^Bearer hma_[a-f0-9]{64}$/.test(auth))return new Response('Denied',{status:403});
@@ -127,27 +194,95 @@ export class CarbonOutbound extends WorkerEntrypoint<Env>{
  }
 }
 
-interface RunnerMetadata {jobId:string;attempt:string;kind:'agent'|'compute';provider?:'codex'|'claude';prepared:boolean;launchIssued:boolean;pid?:number;stopped:boolean;runtimeRevision?:string;ralphToken?:string}
+interface RunnerMetadata {webGrant?:AutonomousWebGrant;nativeBoundaryAttempted?:string;nativeBoundaryVerified?:string;native?:boolean;nativeGate?:string;jobId:string;attempt:string;kind:'agent'|'compute';provider?:'codex'|'claude';prepared:boolean;launchIssued:boolean;pid?:number;stopped:boolean;runtimeRevision?:string;ralphToken?:string}
 interface RuntimeState {prepared:boolean;started:{jobId:string;attempt:string;pid:number;startedAt:number}|null;resultReady:boolean;cancelRequested:boolean}
 class InvalidRuntimeResult extends Error {}
+interface NativeRecovery {jobId:string;attempt:string;taskId:string;runId:string;credentialId:string;generation:number;sealedAuthReturn:NonNullable<ReturnType<typeof validateAutonomousCloudOutput>['authReturn']>;artifact:string;completion:Completion;stopped:boolean;artifactStored?:boolean}
+const nativeRecoveryKey=(id:string)=>`autonomous-native-recovery:${id}`;
 type Completion={kind:'agent';outcome:AgentOutcome}|{kind:'compute';outcome:ComputeOutcome};
 export class RunnerDO extends DurableObject<Env>{
  private metadata?:RunnerMetadata;
  private revisionVerified=false;
+ // Identity is retained after expiry: a late continuation can never become legacy.
+ private readonly diagnosticScopes=new WeakMap<JobRecord,{aborted:boolean;deadline:number}>();
+ private diagnosticScope?:{aborted:boolean;deadline:number};
+ private diagnosticInFlight=false;
+ private diagnosticPending?:Promise<{status:'passed'|'failed';runtimeRevision:string;stopped:boolean}>;
+ async boundaryDiagnostic(){
+  if(this.diagnosticPending)return this.diagnosticPending;
+  this.diagnosticPending=this.runBoundaryDiagnostic();return this.diagnosticPending;
+ }
+ private async cleanupDiagnostic(){
+  this.revisionVerified=false;
+  let stopped=false;
+  try{stopped=await this.stop();}catch{/* Alarm retries uncertain destruction. */}
+  if(this.metadata){delete this.metadata.nativeBoundaryVerified;await this.save();}
+  // A successful destroy does not settle an outstanding platform exec/start.
+  if(stopped&&!this.diagnosticInFlight)await this.ctx.storage.deleteAlarm();
+  else await this.ctx.storage.setAlarm(Date.now()+5000);
+  return stopped;
+ }
+ private async runBoundaryDiagnostic():Promise<{status:'passed'|'failed';runtimeRevision:string;stopped:boolean}>{
+  const previous=await this.ctx.storage.get<{status:'passed'|'failed';runtimeRevision:string;stopped:boolean}>('boundaryDiagnosticResult');
+  if(previous)return previous;
+  let passed=false,stopped=false,timer:ReturnType<typeof setTimeout>|undefined;
+  try{
+   if(await this.ctx.storage.get('boundaryDiagnosticStarted')||this.metadata)throw Error('Diagnostic already attempted');
+   await this.ctx.storage.put('boundaryDiagnosticStarted',true);
+   await this.ctx.storage.setAlarm(Date.now()+45000);
+   const scope={aborted:false,deadline:Date.now()+30000};this.diagnosticScope=scope;
+   const job=Object.freeze({id:'boundary-diagnostic',attempt:runtimeBuild.digest,kind:'compute',deadline:scope.deadline}) as JobRecord;
+   this.diagnosticScopes.set(job,scope);this.diagnosticInFlight=true;
+   const ensuring=this.ensure(job).finally(async()=>{
+    this.diagnosticInFlight=false;
+    if(scope.aborted)await this.cleanupDiagnostic();
+   });
+   const ready=await Promise.race([ensuring,new Promise<never>((_,reject)=>{timer=setTimeout(()=>{scope.aborted=true;reject(Error('Diagnostic timeout'));},30000);})]);
+   const verified=(await this.ctx.storage.get<RunnerMetadata>('metadata'))?.nativeBoundaryVerified===runtimeBuild.digest;
+   passed=!scope.aborted&&Date.now()<scope.deadline&&ready.ready&&!ready.lost&&verified;
+  }catch{/* Never expose process output. */}
+  finally{
+   clearTimeout(timer);if(this.diagnosticScope)this.diagnosticScope.aborted=true;
+   stopped=await this.cleanupDiagnostic();
+  }
+  const result={status:passed&&stopped?'passed' as const:'failed' as const,runtimeRevision:runtimeBuild.digest,stopped};
+  await this.ctx.storage.put('boundaryDiagnosticResult',result);return result;
+ }
+ async alarm(){
+  if(!await this.ctx.storage.get('boundaryDiagnosticStarted'))return;
+  if(this.diagnosticScope)this.diagnosticScope.aborted=true;
+  // On reconstruction no old JavaScript continuation survives in this isolate.
+  await this.cleanupDiagnostic();
+ }
  constructor(ctx:DurableObjectState,env:Env){super(ctx,env);ctx.blockConcurrencyWhile(async()=>{this.metadata=await ctx.storage.get<RunnerMetadata>('metadata');});}
  private async save(){await this.ctx.storage.put('metadata',this.metadata!);}
- private async request(path:string,method='GET',value?:unknown,timeout=1500){const container=this.ctx.container;if(!container?.running)throw new Error('Runtime unavailable');return container.getTcpPort(3000).fetch(new Request(`http://runtime${path}`,{method,headers:{'content-type':'application/json',...(path.startsWith('/ralph/')&&this.metadata?.ralphToken?{'x-hivemind-ralph':this.metadata.ralphToken}:{})},...(value===undefined?{}:{body:JSON.stringify(value)}),signal:AbortSignal.timeout(timeout)}));}
- async ensure(job:JobRecord):Promise<{ready:boolean;lost:boolean;prepared:boolean;launchIssued:boolean;legacy?:boolean}>{return this.ctx.blockConcurrencyWhile(async()=>{
+ private async request(path:string,method='GET',value?:unknown,timeout=1500){const container=this.ctx.container;if(!container?.running)throw new Error('Runtime unavailable');return container.getTcpPort(3000).fetch(new Request(`http://runtime${path}`,{method,headers:{'content-type':'application/json',...(path.startsWith('/autonomous/')&&this.metadata?.nativeGate?{'x-hivemind-native':this.metadata.nativeGate}:{}),...(path.startsWith('/ralph/')&&this.metadata?.ralphToken?{'x-hivemind-ralph':this.metadata.ralphToken}:{})},...(value===undefined?{}:{body:JSON.stringify(value)}),signal:AbortSignal.timeout(timeout)}));}
+ async ensure(job:JobRecord,webGrant?:AutonomousWebGrant):Promise<{ready:boolean;lost:boolean;prepared:boolean;launchIssued:boolean;legacy?:boolean}>{
+  const diagnostic=this.diagnosticScopes.get(job);
+  const fence=()=>{if(diagnostic&&(diagnostic.aborted||Date.now()>=diagnostic.deadline))throw Error('Diagnostic expired');};
+  const work=async()=>{
+  fence();
   this.revisionVerified=false;
+  if(job.autonomous&&!cloudReadiness(this.env).ready)throw Error('Native execution disabled');
+  const grant=webGrant??this.metadata?.webGrant;
+  // A pinned, already launched grant can collect results after expiry. It never
+  // authorizes a new launch, replacement scope or outbound web request.
+  const collecting=!!grant&&grant.expiresAt<=Date.now()&&this.metadata?.launchIssued===true;
+  if(grant)webGrant=validateAutonomousWebGrant(grant,job,this.env,controlOrigin(this.env),collecting?grant.expiresAt-1:Date.now());
+  if(this.metadata&&JSON.stringify(this.metadata.webGrant)!==JSON.stringify(webGrant))throw Error('Native web scope changed');
   if(this.metadata&&(this.metadata.jobId!==job.id||this.metadata.attempt!==job.attempt))throw new Error('Attempt mismatch');
-  if(!this.metadata){this.metadata={jobId:job.id,attempt:job.attempt,kind:job.kind,provider:job.provider,prepared:false,launchIssued:false,stopped:false};await this.save();}
+  if(!this.metadata){this.metadata={jobId:job.id,attempt:job.attempt,kind:job.kind,provider:job.provider,...((job.autonomous||!!diagnostic)?{native:true,nativeGate:randomBytes(32).toString('hex'),...(webGrant?{webGrant}:{})}:{}),prepared:false,launchIssued:false,stopped:false};await this.save();}
+  fence();
   const container=this.ctx.container;if(!container)throw new Error('Runtime binding missing');
-  if(this.metadata.stopped||(!container.running&&(this.metadata.prepared||this.metadata.launchIssued)))return {ready:false,lost:true,prepared:this.metadata.prepared,launchIssued:this.metadata.launchIssued};
-  if(!container.running)container.start({image:container.images.runtime,instance:job.executionGroup?.instance??job.carbon?.instance??'standard-1',enableInternet:false,
+  if(this.metadata.stopped||(!container.running&&(this.metadata.prepared||this.metadata.launchIssued||this.metadata.nativeBoundaryAttempted)))return {ready:false,lost:true,prepared:this.metadata.prepared,launchIssued:this.metadata.launchIssued};
+  if(collecting&&Date.now()>job.deadline+10000)throw Error('Native collection grace expired');
+  if(collecting)return {ready:true,lost:false,prepared:this.metadata.prepared,launchIssued:true};
+  if(!container.running)container.start({image:container.images.runtime,instance:job.executionGroup?.instance??job.carbon?.instance??'standard-1',enableInternet:false,...(this.metadata.native?{env:{HIVEMIND_NATIVE_GATE_TOKEN:this.metadata.nativeGate!}}:{}),
    ...(job.executionGroup||job.carbon?.instance?{labels:{'hvm-bench-job':job.id}}:{})});
-  const handler=job.carbon?this.ctx.exports.CarbonOutbound:job.executionGroup?.dependencyNetwork?
+  fence();
+  const handler=this.metadata.native?(this.metadata.webGrant?this.ctx.exports.NativeClaudeOutbound({props:{webGrant:this.metadata.webGrant}}):this.ctx.exports.NativeClaudeOutbound):job.carbon?this.ctx.exports.CarbonOutbound:job.executionGroup?.dependencyNetwork?
    (job.kind==='compute'?this.ctx.exports.ResourceComputeOutbound:job.provider==='claude'?this.ctx.exports.ResourceClaudeOutbound:this.ctx.exports.ResourceCodexOutbound):job.kind==='compute'?this.ctx.exports.ComputeOutbound:job.provider==='claude'?this.ctx.exports.ClaudeOutbound:this.ctx.exports.CodexOutbound;
-  await container.interceptAllOutboundHttp(handler);await container.interceptOutboundHttps('*',handler);
+  fence();await container.interceptAllOutboundHttp(handler);fence();await container.interceptOutboundHttps('*',handler);fence();
   const legacy=!this.metadata.runtimeRevision&&(this.metadata.prepared||this.metadata.launchIssued);let ready=false,revisionToPin:string|undefined;
   try{const response=await this.request('/health');if(response.ok){
    const health=await response.json() as {ok?:unknown;runtimeRevision?:unknown};
@@ -158,14 +293,43 @@ export class RunnerDO extends DurableObject<Env>{
     if(ready&&!this.metadata.runtimeRevision)revisionToPin=expected;
    }
   }}catch{/* Cold starts and stale images stay unprepared. */}
+  fence();
   if(revisionToPin!==undefined){
    const candidate:RunnerMetadata={...this.metadata,runtimeRevision:revisionToPin};
    await this.ctx.storage.put('metadata',candidate);
-   this.metadata=candidate;
+   fence();this.metadata=candidate;
   }
-  this.revisionVerified=ready&&!legacy;
+  if(ready&&this.metadata.native){
+   if(legacy||!this.metadata.runtimeRevision)throw Error('Native boundary revision unavailable');
+   if(this.metadata.nativeBoundaryVerified!==this.metadata.runtimeRevision){
+    if(this.metadata.nativeBoundaryAttempted)throw Error('Native boundary probe was uncertain');
+    const attempted:RunnerMetadata={...this.metadata,nativeBoundaryAttempted:this.metadata.runtimeRevision};
+    fence();await this.ctx.storage.put('metadata',attempted);fence();this.metadata=attempted;
+    try{
+     fence();const process=await container.exec(['setpriv','--no-new-privs','--inh-caps=-all','--ambient-caps=-all','--bounding-set=-all','node','/opt/hivemind/backend/src/runtime/autonomous-boundary-probe.ts'],{cwd:'/workspace',stdout:'pipe',stderr:'ignore',env:{}});
+     fence();
+     let timer:ReturnType<typeof setTimeout>|undefined;
+     const output=await Promise.race([process.output(),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('Boundary probe timeout')),25000);})]).finally(()=>clearTimeout(timer));
+     fence();
+     if(output.exitCode!==0||output.stdout.byteLength>4096||output.stderr.byteLength>4096)throw Error('Boundary probe rejected');
+     const report=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(output.stdout));
+     const flags=['passed','namespaceGuardActive','workspaceWrite','outsideWriteDenied','runtimeReadDenied','claudeReadDenied','parentProcDenied','authEnvironmentAbsent','cleanup'];
+     if(!report||flags.some(key=>report[key]!==true)||report.errorCategory!=='none'||Object.keys(report).some(key=>!flags.includes(key)&&key!=='errorCategory'))throw Error('Boundary probe rejected');
+     const verified:RunnerMetadata={...this.metadata,nativeBoundaryVerified:this.metadata.runtimeRevision};
+     fence();await this.ctx.storage.put('metadata',verified);fence();this.metadata=verified;
+    }catch{
+     try{await container.destroy();}catch{}this.metadata.stopped=!container.running;await this.save();
+     throw Error('Native boundary probe failed or uncertain');
+    }
+   }
+  }
+  fence();this.revisionVerified=ready&&!legacy;
   return {ready,lost:false,prepared:this.metadata.prepared,launchIssued:this.metadata.launchIssued,...(legacy?{legacy:true}:{})};
- });}
+ };
+  // Diagnostic owns its isolated Runner and must allow timeout/alarm cleanup to
+  // run while platform I/O is pending. Ordinary ensure serialization is unchanged.
+  return diagnostic?work():this.ctx.blockConcurrencyWhile(work);
+ }
  async prepare(input:RuntimeInput){return this.ctx.blockConcurrencyWhile(async()=>{
   if(!this.revisionVerified||!this.metadata?.runtimeRevision)throw new Error('Runtime revision is not verified');
   if(!this.metadata||input.jobId!==this.metadata.jobId||input.attempt!==this.metadata.attempt||this.metadata.stopped)throw new Error('Attempt mismatch');
@@ -181,6 +345,32 @@ export class RunnerDO extends DurableObject<Env>{
   const process=await this.ctx.container!.exec(['setpriv','--no-new-privs','--inh-caps=-all','--ambient-caps=-all','--bounding-set=-all','node','/opt/hivemind/backend/src/runtime/run.ts'],{cwd:'/workspace',stdout:'ignore',stderr:'ignore',env:{SSL_CERT_FILE:CA,NODE_EXTRA_CA_CERTS:CA}});
   this.metadata.pid=process.pid;await this.save();
  });}
+ async prepareNative(value:AutonomousCloudInput){return this.ctx.blockConcurrencyWhile(async()=>{
+  if(!this.revisionVerified||!this.metadata?.runtimeRevision)throw Error('Runtime revision is not verified');
+  if(!this.metadata.native||this.metadata.stopped||this.metadata.nativeBoundaryVerified!==this.metadata.runtimeRevision)throw Error('Native boundary is not verified');
+  const input=validateAutonomousCloudInput(value);if(input.jobId!==this.metadata.jobId||input.attempt!==this.metadata.attempt)throw Error('Attempt mismatch');
+  const response=await this.request('/autonomous/prepare','POST',input,3000);if(!response.ok)throw Error('Native prepare rejected');this.metadata.prepared=true;await this.save();
+ });}
+ async launchNative(){return this.ctx.blockConcurrencyWhile(async()=>{
+  if(!cloudReadiness(this.env).ready)throw Error('Native execution disabled');
+  if(!this.metadata?.native||!this.metadata.prepared||this.metadata.stopped||!this.metadata.nativeBoundaryVerified||this.metadata.nativeBoundaryVerified!==this.metadata.runtimeRevision)throw Error('Native boundary is not verified');
+  if(this.metadata.launchIssued)return;
+  if(!this.revisionVerified||!this.metadata.runtimeRevision)throw Error('Runtime revision is not verified');
+  this.metadata.launchIssued=true;await this.save();
+  const process=await this.ctx.container!.exec(['setpriv','--no-new-privs','--inh-caps=-all','--ambient-caps=-all','--bounding-set=-all','node','/opt/hivemind/backend/src/runtime/autonomous-from-file.ts'],{cwd:'/workspace',stdout:'ignore',stderr:'ignore',env:{SSL_CERT_FILE:CA,NODE_EXTRA_CA_CERTS:CA}});
+  this.metadata.pid=process.pid;await this.save();
+ });}
+ async nativeLifecycle():Promise<{native:boolean;prepared:boolean;neverLaunched:boolean;containerStopped:boolean}>{
+  return {native:this.metadata?.native===true,prepared:this.metadata?.prepared===true,neverLaunched:this.metadata?.native===true&&this.metadata.launchIssued===false,containerStopped:!!this.ctx.container&&!this.ctx.container.running};
+ }
+ async pollNative():Promise<string>{
+  if(!this.metadata?.native)throw Error('Not native');if(!this.ctx.container?.running)return JSON.stringify({lost:true});
+  const response=await this.request('/autonomous/state');if(!response.ok)throw Error('Native state unavailable');
+  const state=await response.json() as {started:boolean;resultReady:boolean};if(!state.resultReady)return JSON.stringify({lost:false,state});
+  const result=await this.request('/autonomous/result','GET',undefined,3000);if(!result.ok)throw Error('Native result unavailable');
+  const text=await result.text();if(new TextEncoder().encode(text).length>AUTONOMOUS_CLOUD_MAX_BYTES)throw Error('Native result too large');
+  return JSON.stringify({lost:false,state,result:validateAutonomousCloudOutput(JSON.parse(text))});
+ }
  async checkpoint():Promise<string|null>{
   const response=await this.request('/ralph/checkpoint','GET',undefined,3000);
   if(response.status===404)return null;
@@ -202,23 +392,182 @@ export class RunnerDO extends DurableObject<Env>{
   if(!state.resultReady)return JSON.stringify({lost:false,state});
   const result=await this.request('/result','GET',undefined,3000);if(!result.ok)throw new Error('Runtime result unavailable');const text=await result.text();if(text.length>8*1024*1024)throw new Error('Runtime result is too large');return JSON.stringify({lost:false,state,result:JSON.parse(text)});
  }
- async cancel(){try{if(this.ctx.container?.running)await this.request('/cancel','POST');}catch{/* Hard deadline cleanup remains scheduled. */}}
+ async cancel(){try{if(this.ctx.container?.running)await this.request(this.metadata?.native?'/autonomous/cancel':'/cancel','POST');}catch{/* Hard deadline cleanup remains scheduled. */}}
  async stop():Promise<boolean>{return this.ctx.blockConcurrencyWhile(async()=>{if(this.ctx.container?.running)await this.ctx.container.destroy();const stopped=!this.ctx.container?.running;if(stopped&&this.metadata){this.metadata.stopped=true;await this.save();}return stopped;});}
 }
 
 export class SchedulerDO extends DurableObject<Env> implements ApiService {
- private scheduler=new Scheduler();
- constructor(ctx:DurableObjectState,env:Env){super(ctx,env);ctx.blockConcurrencyWhile(async()=>{const state=await ctx.storage.get<SchedulerState>('state');if(state)this.scheduler=new Scheduler(state);});}
- private async save(){await this.ctx.storage.put('state',this.scheduler.state);}
- private async schedule(){if(Object.values(this.scheduler.state.computeGroups??{}).some(g=>g.status==='RUNNING'||g.status==='INTEGRATING')||Object.values(this.scheduler.state.workflows??{}).some(w=>w.status==='RUNNING'||w.status==='INTEGRATING')||Object.values(this.scheduler.state.carbonCampaigns??{}).some(c=>c.phase!=='done')||this.scheduler.list().some(job=>job.status==='QUEUED'||!job.containerStopped||!terminal(job.status)))await ensureSchedulerAlarm(this.ctx.storage);}
- async fetch(request:Request){return this.ctx.blockConcurrencyWhile(async()=>{
+ private scheduler=new Scheduler(undefined,{exclusiveOwnership:true});
+ private schedulerStorage=createSchedulerStorage(this.ctx.storage);
+ private autonomy=new AutonomousService(this.ctx.storage);
+ private external?:AutonomousExternalRuntime;
+ private externalReady:Promise<void>;
+ private externalCleanupWake?:number;
+ private extraSecretValues(){return [this.env.CONTROL_TOKEN,this.env.AUTH_STORAGE_KEY,this.env.AUTH_RETURN_PRIVATE_KEY,this.env.AUTONOMOUS_SESSION_KEY,this.env.AUTONOMOUS_WORKER_TOKEN,this.env.AUTONOMOUS_REPORTER_TOKEN,this.env.GEMINI_BENCHMARK_KEY,this.env.TERRA_BENCHMARK_AUTH,terraCredential(this.env.TERRA_BENCHMARK_AUTH)?.access,...externalConfiguredSecretValues(this.env)].filter((v):v is string=>!!v);}
+ private nativeConfigurationFingerprint(){return nativeConfigurationFingerprint(this.env,runtimeBuild.digest,this.external?.configurationFingerprint);}
+ private async stopExternalAdmission(task:Pick<AutonomousTask,'id'|'revision'>,operation:'cancel'|'revise'|'finish'){
+  if(!this.external)return;
+  const key='external-stop-synced:'+task.id+':'+task.revision;if(await this.ctx.storage.get<boolean>(key)===true)return;
+  await this.external.service.beforeCoreMutation(task.id,operation);await this.scheduleExternalWake(Date.now()+2000);await this.ctx.storage.put(key,true);
+ }
+ private async syncCanonicalExternalStop(id:string){
+  let task:AutonomousTaskSummary;try{task=await this.autonomy.execute('getSummary',{id}) as AutonomousTaskSummary;}catch{return;}
+  if(task.spec.externalProfiles?.length&&(task.stopReason||['completed','cancelled','expired','failed','budget_exceeded'].includes(task.status)))await this.stopExternalAdmission(task,'finish');
+ }
+ private async executeAutonomous(operation:AutonomousOperation,input:Record<string,unknown>):Promise<unknown>{
+  const id=(input.id??(input.lease as {taskId?:string}|undefined)?.taskId) as string|undefined;
+  if(operation==='recordNativeReceipt'&&(input.receipt as {quota?:unknown}|undefined)?.quota&&this.env.AUTONOMOUS_QUOTA_PAUSE_ENABLED!=='true')throw Object.assign(Error('Quota pause unavailable'),{statusCode:503});
+  let task:AutonomousTask|undefined;
+  if(id&&['approve','resume','cancel','revise','finish','finishCloud','finishUnstartedCloud'].includes(operation))task=await this.autonomy.execute('get',{id}) as AutonomousTask;
+  if(task?.spec.externalProfiles?.length){
+   if(!this.external)throw Object.assign(Error('External bridge unavailable'),{statusCode:503});
+   if(operation==='approve'){
+    if(!this.external.enabled)throw Object.assign(Error('External bridge unavailable'),{statusCode:503});
+    if(!input.externalProfileHashes||typeof input.externalProfileHashes!=='object'||Array.isArray(input.externalProfileHashes))throw Object.assign(Error('External approval hashes required'),{statusCode:400});
+    await this.external.service.assertApproval(task.id,input.revision as number,input.externalProfileHashes as Record<string,string>);
+   }
+   if(operation==='resume')await this.external.service.approve(task.id);
+   const result=input.result as {outcome?:string}|undefined;
+   const ending=operation==='finishUnstartedCloud'||['finish','finishCloud'].includes(operation)&&(result?.outcome==='complete'||result?.outcome==='failed'||input.checksPassed===false||task.iteration>=task.spec.maxIterations);
+   if(operation==='cancel'||operation==='revise'||ending)await this.stopExternalAdmission(task,operation==='revise'?'revise':operation==='cancel'?'cancel':'finish');
+  }
+  try{const output=await this.autonomy.execute(operation,input);if(operation==='approve'&&task?.spec.externalProfiles?.length)await this.external!.service.approve(task.id);return output;}
+  finally{if(id)await this.syncCanonicalExternalStop(id);}
+ }
+ private async scheduleExternalWake(at:number){
+  const next=Math.max(Date.now()+2000,Math.min(this.externalCleanupWake??Infinity,at));this.externalCleanupWake=next;
+  await this.ctx.storage.put('externalCleanupWake',next);const alarm=await this.ctx.storage.getAlarm();if(alarm===null||alarm>next||alarm<=Date.now())await this.ctx.storage.setAlarm(next);
+ }
+ private async externalCleanup(){
+  if(!this.external)return;
+  const result=await this.external.cleanupDue(4);this.externalCleanupWake=result.needsWork?result.nextWake:undefined;
+  if(this.externalCleanupWake!==undefined)await this.ctx.storage.put('externalCleanupWake',this.externalCleanupWake);else await this.ctx.storage.delete('externalCleanupWake');
+ }
+ private longRunningReady(){return this.env.AUTONOMOUS_LONG_RUNNING_ENABLED==='true'&&this.autonomy.supportsLongRunning===true;}
+ private async nativeApprovalReady(task:AutonomousTask):Promise<boolean>{
+  if(task.spec.externalProfiles?.length){try{if(!this.external?.enabled)return false;await this.external.service.approve(task.id);}catch{return false;}}
+  if(task.spec.execution?.mode==='long_running'&&!this.longRunningReady())return false;
+  const saved=await this.ctx.storage.get<{revision:number;fingerprint:string;web?:AutonomousWebPolicy}>(nativeApprovalKey(task.id));
+  try{const web=approveAutonomousWeb(Reflect.get(task.spec,'web'),this.env,controlOrigin(this.env));
+   return saved?.revision===task.revision&&saved.fingerprint===this.nativeConfigurationFingerprint()&&JSON.stringify(saved.web)===JSON.stringify(web);
+  }catch{return false;}
+ }
+ private cloudPorts(){return new LegacyAutonomousCloudPorts({scheduler:this.scheduler,storage:this.ctx.storage,enabled:()=>cloudReadiness(this.env).ready,configurationReady:task=>this.nativeApprovalReady(task),configurationFingerprint:()=>this.nativeConfigurationFingerprint(),sourceReady:id=>this.nativeSourceReady(id),save:()=>this.save()});}
+ private async nativeSourceReady(id:string):Promise<boolean>{try{const snapshot=await this.snapshot(id);return snapshot.files.length<=32&&snapshot.files.reduce((n,f)=>n+Buffer.from(f.content,'base64').length,0)<=65536;}catch{return false;}}
+ private cloudController(){return new AutonomousCloudController({storage:this.ctx.storage,service:{execute:(operation,input)=>this.executeAutonomous(operation,input)},ports:this.cloudPorts(),enabled:cloudReadiness(this.env).ready});}
+ private sessionStore(){return new EncryptedSessionStore({key:sessionKey(this.env),blobs:new R2PrivateBlobStore({bucket:this.env.CREDENTIALS})});}
+ private async autonomousSummaries():Promise<AutonomousTaskSummary[]>{
+  const tasks:AutonomousTaskSummary[]=[];let cursor:string|undefined;
+  // Core permits at most 1000 tasks. No history arrays enter the alarm working set.
+  for(let page=0;page<20;page++){
+   const result=await this.autonomy.execute('listPage',{limit:50,...(cursor?{cursor}:{})}) as {items:AutonomousTaskSummary[];nextCursor?:string};
+   if(result.items.length>50)throw Error('Invalid autonomous page');
+   tasks.push(...result.items);cursor=result.nextCursor;
+   if(!cursor)return tasks;
+  }
+  throw Error('Autonomous catalog exceeds scheduler bound');
+ }
+ private async cloudTaskDue(task:AutonomousTaskSummary,now:number):Promise<boolean>{
+  if(!task.spec.execution)return false;
+  if(task.lease||task.status==='running')return true;
+  if(task.status==='stopping'||task.status==='awaiting_input'){
+   const record=await this.ctx.storage.get<AutonomousCloudRecord>('autonomous-cloud:'+task.id);
+   return !!record&&record.phase!=='done'&&(record.phase!=='paused'||!record.recoveryComplete);
+  }
+  if(task.spec.execution.mode==='long_running'&&!this.longRunningReady())return false;
+  return task.status==='ready'||(task.status==='waiting'&&task.nextRunAt!==undefined&&task.nextRunAt<=now);
+ }
+ private async advanceAutonomy(){
+  const tasks=await this.autonomousSummaries(),now=Date.now();
+  const saved=await this.ctx.storage.get<number>('autonomousCloudCursor');
+  let cursor=typeof saved==='number'&&Number.isSafeInteger(saved)&&saved>=0?saved:0;
+  const selected:AutonomousTaskSummary[]=[];
+  for(let scanned=0;scanned<tasks.length&&selected.length<8;scanned++){
+   const task=tasks[cursor%tasks.length]!;cursor=(cursor+1)%tasks.length;
+   if(await this.cloudTaskDue(task,now))selected.push(task);
+  }
+  await this.ctx.storage.put('autonomousCloudCursor',tasks.length?cursor%tasks.length:0);
+  for(const task of selected){
+   try{
+    if(task.spec.execution?.mode==='long_running'&&!this.longRunningReady()&&task.status!=='stopping')await this.executeAutonomous('cancel',{id:task.id,reason:'Long running execution disabled'});
+    await this.cloudController().step(task.id);
+   }catch{/* One unavailable task must not starve the remaining bounded batch. */}
+  }
+ }
+ private async scheduleAutonomy(){
+  const tasks=await this.autonomousSummaries(),now=Date.now();
+  await scheduleAutonomousAlarm(this.ctx.storage,tasks,now);
+  const cleanupWake=this.externalCleanupWake??await this.ctx.storage.get<number>('externalCleanupWake');
+  if(cleanupWake!==undefined&&Number.isSafeInteger(cleanupWake)){const next=Math.max(now+2000,cleanupWake),current=await this.ctx.storage.getAlarm();if(current===null||current>next||current<=now)await this.ctx.storage.setAlarm(next);}
+  if(cloudReadiness(this.env).ready)for(const task of tasks)if(await this.cloudTaskDue(task,now)){await ensureSchedulerAlarm(this.ctx.storage,now);break;}
+ }
+ constructor(ctx:DurableObjectState,env:Env){super(ctx,env);this.externalReady=ctx.blockConcurrencyWhile(async()=>{
+  const state=await this.schedulerStorage.load();this.scheduler=new Scheduler(state,{exclusiveOwnership:true});
+  this.externalCleanupWake=await this.ctx.storage.get<number>('externalCleanupWake');
+  // Durable Object startup is the ownership barrier: recover once, never per request.
+  try{
+   if(this.ctx.storage.sql&&typeof this.ctx.storage.transactionSync==='function'){
+    this.external=createAutonomousExternalRuntime({env:this.env,core:this.autonomy,sql:{exec:(query,...bindings)=>this.ctx.storage.sql.exec(query,...bindings),transactionSync:fn=>this.ctx.storage.transactionSync(fn)},artifacts:this.env.ARTIFACTS,extraSecretValues:this.extraSecretValues()});
+    const pending=await this.external?.recover();if(pending?.needsWork)await this.scheduleExternalWake(pending.nextWake??Date.now()+2000);else {this.externalCleanupWake=undefined;await this.ctx.storage.delete('externalCleanupWake');}
+   }
+  }catch{this.external=undefined;/* Invalid server configuration disables external actions. */}
+ });}
+ private async save(){
+  try{await this.schedulerStorage.save(this.scheduler.state,{recovery:true});}
+  catch(error){const restored=await this.schedulerStorage.load();this.scheduler=new Scheduler(restored,{exclusiveOwnership:true});throw error;}
+ }
+ private async schedule(){if(Object.values(this.scheduler.state.computeGroups??{}).some(g=>g.status==='RUNNING'||g.status==='INTEGRATING')||Object.values(this.scheduler.state.workflows??{}).some(w=>w.status==='RUNNING'||w.status==='INTEGRATING')||Object.values(this.scheduler.state.carbonCampaigns??{}).some(c=>c.phase!=='done')||Object.values(this.scheduler.state.jobs).some(job=>job.status==='QUEUED'||!job.containerStopped||!terminal(job.status)))await ensureSchedulerAlarm(this.ctx.storage);}
+ async fetch(request:Request){
+  const externalPath=new URL(request.url).pathname;
+  if(/^\/v1\/autonomous-tasks\/[^/]+\/external-(?:action|profiles|actions|approval|cancel|artifact)(?:\/[^/]+\/(?:reconcile|cleanup|billing))?$/.test(externalPath)){
+   const denied=authorizeAutonomousRoute(request,this.env.CONTROL_TOKEN,this.env.AUTONOMOUS_WORKER_TOKEN,this.env.AUTONOMOUS_REPORTER_TOKEN);if(denied)return denied;
+   await this.externalReady;
+   // Provider I/O must not hold blockConcurrencyWhile: cancellation remains available.
+   const response=await handleAutonomousExternalApi(request,this.external?{operatorToken:this.env.CONTROL_TOKEN??'',workerToken:this.env.AUTONOMOUS_WORKER_TOKEN??'',service:this.external.service}:undefined);
+   await this.syncCanonicalExternalStop(decodeURIComponent(externalPath.split('/')[3]!));
+   if(response.ok&&request.method==='POST'){await this.scheduleExternalWake(Date.now()+2000);await this.scheduleAutonomy();}
+   return response;
+  }
+  await this.externalReady;
+  return this.ctx.blockConcurrencyWhile(async()=>{
+  const path=new URL(request.url).pathname;
+  if(path==='/v1/autonomous-readiness'||/^\/v1\/autonomous-tasks\/[A-Za-z0-9_-]+\/cloud-(status|result)$/.test(path)){
+   const denied=authorize(request,this.env.CONTROL_TOKEN);if(denied)return denied;
+   if(request.method!=='GET')return json({error:'Method not allowed'},405);
+   if(path==='/v1/autonomous-readiness')return json(cloudReadiness(this.env));
+   const id=path.split('/')[3]!,status=await this.cloudController().status(id);
+   if(path.endsWith('/cloud-status'))return json(status);
+   const job=status.jobId?this.scheduler.state.jobs[status.jobId]:undefined;
+   return json({taskId:id,phase:status.phase,...(job?{jobId:job.id,status:job.status,stopped:job.containerStopped,authSynced:job.authSynced,checksPassed:job.status==='SUCCEEDED',snapshotId:job.outputSnapshotId}: {})});
+  }
+  if(isAutonomousPath(new URL(request.url).pathname)){
+   const denied=authorizeAutonomousRoute(request,this.env.CONTROL_TOKEN,this.env.AUTONOMOUS_WORKER_TOKEN,this.env.AUTONOMOUS_REPORTER_TOKEN);if(denied)return denied;
+   if(request.method==='POST'&&path.endsWith('/resume')){
+    const status=await this.cloudController().status(path.split('/')[3]!);
+    if(status.phase==='paused')return json({error:'Cloud execution is paused. Create a new task after manual recovery.'},409);
+   }
+   if(request.method==='POST'&&/\/(approve|resume)$/.test(path)){
+    const task=await this.autonomy.execute('get',{id:path.split('/')[3]}) as AutonomousTask;
+    if(task.spec.externalProfiles?.length&&!this.external?.enabled)return json({error:'External bridge unavailable'},503);
+    if(Reflect.get(task.spec,'web')!==undefined)try{approveAutonomousWeb(Reflect.get(task.spec,'web'),this.env,controlOrigin(this.env));}catch{return json({error:'Web policy denied'},422);}
+    if(task.spec.execution&&((task.spec.execution.mode==='long_running'&&!this.longRunningReady())||!cloudReadiness(this.env).ready||!await this.nativeSourceReady(task.spec.execution.snapshotId)))return json({error:'Cloud execution is not ready'},503);
+   }
+   const response=await handleAutonomousApi(request,{operatorToken:this.env.CONTROL_TOKEN??'',workerToken:this.env.AUTONOMOUS_WORKER_TOKEN??'',reporterToken:this.env.AUTONOMOUS_REPORTER_TOKEN,service:{execute:async(operation,input)=>{
+    return this.executeAutonomous(operation,input);
+   }}});
+   if(response.ok&&request.method==='POST'&&/\/(approve|resume)$/.test(path)){
+    const task=await this.autonomy.execute('get',{id:path.split('/')[3]}) as AutonomousTask;
+    if(task.spec.execution){const web=approveAutonomousWeb(Reflect.get(task.spec,'web'),this.env,controlOrigin(this.env));await this.ctx.storage.put(nativeApprovalKey(task.id),{revision:task.revision,fingerprint:this.nativeConfigurationFingerprint(),...(web?{web}:{})});}
+   }
+   await this.scheduleAutonomy();return response;
+  }
   if(new URL(request.url).pathname==='/v1/terra-auth-readiness'&&request.method==='GET'){
    const denied=authorize(request,this.env.CONTROL_TOKEN);if(denied)return denied;
    const credential=terraCredential(this.env.TERRA_BENCHMARK_AUTH);
    return json({present:typeof this.env.TERRA_BENCHMARK_AUTH==='string',valid:!!credential,
      enough:!!credential&&credential.expires-Date.now()>=1500000});
   }
-  const response=await handleApi(request,this.env.CONTROL_TOKEN,this);await this.save();await this.schedule();return response;});}
+  const response=await handleApi(request,this.env.CONTROL_TOKEN,this);if(request.method!=='GET')await this.save();await this.schedule();return response;});}
  private artifactStore(){return new LargeArtifactStore(this.env.ARTIFACTS,this.ctx.storage);}
  async beginLargeArtifact(ref:LargeArtifactRef){return this.artifactStore().begin(ref);}
  async putLargeArtifactPart(id:string,part:number,data:Uint8Array){return this.artifactStore().part(id,part,data);}
@@ -232,18 +581,32 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
   if(!authorizeArtifactRead(grant,job,digest,Date.now()))return null;
   return job!.largeArtifacts!.find(r=>r.sha256===digest)!;
  }
+ async duckdbCacheGrant(token:string,write:boolean):Promise<string|null>{
+  if(!/^hma_[a-f0-9]{64}$/.test(token))return null;
+  const grant=await this.ctx.storage.get<ArtifactReadGrant>('large-cap:'+sha256(token));
+  const job=grant?this.scheduler.state.jobs[grant.jobId]:undefined;
+  const identity=duckdbCacheIdentity(job,runtimeBuild.digest);
+  if(!identity||!job?.largeArtifacts?.[0]||typeof write!=='boolean'||
+     !authorizeArtifactRead(grant,job,job.largeArtifacts[0].sha256,Date.now()))return null;
+  return identity.mode===(write?'seed':'warm')?identity.key:null;
+ }
  async putSnapshot(snapshot:Snapshot){const key=snapshotKey(snapshot.digest);const old=await this.env.ARTIFACTS.get(key);if(old){const value=validateSnapshot(await old.json());if(JSON.stringify(value)!==JSON.stringify(snapshot))throw new ApiError(409);}else await this.env.ARTIFACTS.put(key,JSON.stringify(snapshot),{onlyIf:{etagDoesNotMatch:'*'},httpMetadata:{contentType:'application/json'}});return {snapshotId:snapshot.digest};}
+ private preflightCredential(record:CredentialRecord){
+  // Validation only mutates its credentials map. Jobs/control history are shared
+  // read-only; exclusive construction seeds string references without assigning jobs.
+  new Scheduler({...this.scheduler.state,credentials:{...this.scheduler.state.credentials}},{exclusiveOwnership:true}).registerCredential(record);
+ }
  async registerCredential(id:string,provider:'codex'|'claude',auth:string){
   const prior=Object.hasOwn(this.scheduler.state.credentials,id)?this.scheduler.state.credentials[id]:undefined;
   let generation=(prior?.generation??-1)+1;
   const candidate=():CredentialRecord=>({id,provider,generation,objectKey:credentialKey(id,generation),quarantined:false});
   // Reject provider changes or live owners before touching credential storage.
-  new Scheduler(this.scheduler.state).registerCredential(candidate());
+  this.preflightCredential(candidate());
   // A failed writeback may have saved a generation that metadata never adopted.
   // Registration allocates a fresh immutable object; it never rewrites that evidence.
   for(let scanned=0;scanned<64;scanned++,generation++){
    const record=candidate();if(await this.env.CREDENTIALS.head(record.objectKey))continue;
-   new Scheduler(this.scheduler.state).registerCredential(record);
+   this.preflightCredential(record);
    await this.storeCredential(auth,id,generation,record.objectKey);this.scheduler.registerCredential(record);return record;
   }
   throw new ApiError(409);
@@ -455,7 +818,8 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
    advanceCarbonCampaign(campaign,id=>outcomes.get(id),(effort,instance,cacheMode)=>this.enqueueCarbon(campaign,effort,instance,cacheMode));
   }
  }
- async jobs(){return this.scheduler.list();}
+ async jobs(){if(this.schedulerStorage.legacyByteLength(this.scheduler.state)>SCHEDULER_STATE_LEGACY_BYTES)throw Object.assign(new ApiError(413),{code:'PAGE_REQUIRED'});return this.scheduler.list();}
+ async jobsPage(query:SchedulerJobQuery){return this.schedulerStorage.pageJobs(this.scheduler.state,query);}
  async job(id:string){return this.scheduler.get(id);}
  async cancel(id:string){const now=Date.now();for(const job of this.scheduler.requestCancel(id,now))if(!job.containerStopped)await this.ctx.storage.put(`cancelAt:${job.id}`,now);return this.scheduler.get(id);}
  private async snapshot(digest:string){const object=await this.env.ARTIFACTS.get(snapshotKey(digest));if(!object)throw new ApiError(404);return validateSnapshot(await object.json());}
@@ -469,8 +833,11 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
  }
  private runner(job:JobRecord){return this.env.RUNNER.getByName(`${job.id}:${job.attempt}`);}
  private async hardDeadline(job:JobRecord){if(job.cancellationRequested&&job.errorCode==='CANCELLED')return (await this.ctx.storage.get<number>(`cancelAt:${job.id}`)??job.deadline)+10000;return job.deadline+10000;}
- async alarm(){return this.ctx.blockConcurrencyWhile(async()=>{
-  try{this.scheduler.expire(Date.now());this.scheduler.dispatch(Date.now());await this.save();
+ async alarm(){await this.externalReady;return this.ctx.blockConcurrencyWhile(async()=>{
+  try{await this.autonomy.tick();
+   await this.externalCleanup();
+   await this.advanceAutonomy();
+   this.scheduler.expire(Date.now());this.scheduler.dispatch(Date.now());await this.save();
    const active=this.scheduler.list().filter(job=>!job.containerStopped),cursor=await this.ctx.storage.get<number>('alarmCursor')??0;
    // Bound one alarm below the Durable Object concurrency lock deadline.
    const selected=active.length?Array.from({length:Math.min(2,active.length)},(_,i)=>active[(cursor+i)%active.length]!):[];
@@ -489,9 +856,10 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
     await this.ctx.storage.put('workflowCursor',(turn+1)%plans.length);
     await advanceWorkflow(plans[turn%plans.length]!,this.scheduler,{read:id=>this.snapshot(id),write:s=>this.putSnapshot(s)},Date.now());
    }
-  }finally{await this.save();await this.schedule();}
+  }finally{await this.save();await this.schedule();await this.scheduleAutonomy();}
  });}
  private async advance(job:JobRecord){
+  if(job.autonomous){await this.advanceNative(job);return;}
   const runner=this.runner(job);
   const pending=await this.ctx.storage.get<Completion>(`completion:${job.id}`);if(pending){await this.finish(job,pending);return;}
   if(job.status==='AUTH_SYNC_FAILED'){const stopped=await runner.stop();this.scheduler.quarantine(job.id,job.attempt,job.errorCode??'AUTH_SYNC_FAILED',Date.now(),stopped);return;}
@@ -542,6 +910,123 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
   else if(job.ralph&&job.status==='RUNNING'&&!job.cancellationRequested)await this.advanceRalph(job,runner);
 
  }
+ private assertNativeModelDataSafe(goal:string,data:unknown,snapshot:Snapshot|undefined,auth:string,leaseToken:string){
+  const secretValues=[auth,...this.extraSecretValues(),...(this.external?.configuredSecretValues()??[]),leaseToken].filter((v):v is string=>!!v);
+  const secrets=secretValues.map(v=>Buffer.from(v));
+  const check=(value:string|Buffer)=>{const bytes=typeof value==='string'?Buffer.from(value):value;if(secrets.some(secret=>bytes.includes(secret))||/sk-ant-(?:oat01|api03)-[A-Za-z0-9_-]+/.test(bytes.toString('utf8')))throw Error('Native material rejected');};
+  const seen=new Set<object>();
+  const visit=(value:unknown):void=>{if(typeof value==='string'){check(value);return;}if(!value||typeof value!=='object')return;if(seen.has(value))throw Error('Native material rejected');seen.add(value);for(const [key,item]of Object.entries(value)){check(key);visit(item);}seen.delete(value);};
+  check(goal);visit(data);
+  const checkSnapshot=(value:Snapshot)=>{for(const file of value.files)check(Buffer.from(file.content,'base64'));};
+  if(snapshot)checkSnapshot(snapshot);
+  // Resumed bundles contain base64 source bytes as well as plain transcript text.
+  if(data&&typeof data==='object'&&'snapshot'in data)checkSnapshot(validateSnapshot((data as {snapshot:unknown}).snapshot));
+ }
+ private async advanceNative(job:JobRecord){
+  const runner=this.runner(job);
+  const quarantine=async(code:string)=>{
+   let stopped=false;try{stopped=await runner.stop();}catch{}
+   if(stopped){
+    try{
+     const proof=await runner.nativeLifecycle();
+     if(proof.native&&proof.neverLaunched===true&&proof.containerStopped===true){this.scheduler.failUnstartedNative(job.id,job.attempt,code,Date.now(),{containerStopped:true,neverLaunched:true});return;}
+    }catch{/* Missing, raced or uncertain lifecycle proof retains the existing quarantine path. */}
+   }
+   this.scheduler.quarantine(job.id,job.attempt,code,Date.now(),stopped);
+  };
+  try{
+   const pending=await this.ctx.storage.get<Completion>(`completion:${job.id}`);if(pending){await this.finish(job,pending);return;}
+   const recovery=await this.ctx.storage.get<NativeRecovery>(nativeRecoveryKey(job.id));if(recovery){await this.resumeNativeCompletion(job,recovery);return;}
+   if(job.status==='AUTH_SYNC_FAILED'){await quarantine(job.errorCode??'AUTH_SYNC_FAILED');return;}
+   if(!cloudReadiness(this.env).ready){await quarantine('NATIVE_CONFIGURATION_UNAVAILABLE');return;}
+   const pinned=await this.ctx.storage.get<NativeJobPrivate>(nativeJobKey(job.id));
+   if(pinned?.task.spec.execution?.mode==='long_running'&&!this.longRunningReady()){await quarantine('NATIVE_LONG_RUNNING_DISABLED');return;}
+   if(pinned?.configurationFingerprint!==undefined&&pinned.configurationFingerprint!==this.nativeConfigurationFingerprint()){await quarantine('NATIVE_CONFIGURATION_CHANGED');return;}
+   const webGrant=pinned?.webPolicy?{...pinned.webPolicy,taskId:pinned.task.id,jobId:job.id,attempt:job.attempt,expiresAt:Math.min(job.deadline,pinned.task.spec.endsAt)}:undefined;
+   const readiness=await runner.ensure(job,webGrant);
+   if(readiness.lost){await quarantine('CONTAINER_LOST');return;}
+   if(!readiness.ready){if(Date.now()>await this.hardDeadline(job))await quarantine('RUNTIME_START_TIMEOUT');return;}
+   if(job.cancellationRequested&&!readiness.launchIssued){await quarantine('NATIVE_CANCELLED_BEFORE_LAUNCH');return;}
+   if(!readiness.prepared){
+    const row=await this.ctx.storage.get<NativeJobPrivate>(nativeJobKey(job.id));if(!row)throw Error('Native private state missing');
+    const credential=this.scheduler.state.credentials[job.credentialId!]!;
+    if(credential.activeJobId!==job.id||credential.generation!==job.credentialGeneration||credential.quarantined)throw Error('Credential ownership mismatch');
+    const object=await this.env.CREDENTIALS.get(credential.objectKey);if(!object)throw Error('Credential unavailable');
+    const auth=validateAuth('claude',await openCredential(await object.json() as StoredCredential,credential.id,credential.generation,this.env.AUTH_STORAGE_KEY));
+    const session=row.checkpoint?await this.sessionStore().load(row.task.id,row.checkpoint):{sessionId:row.sessionId,model:row.task.spec.model,sequence:0,data:null};
+    if(!session)throw Error('Native session unavailable');
+    const input:AutonomousCloudInput={version:1,jobId:job.id,attempt:job.attempt,runtimeId:row.runtimeId,request:{version:1,taskId:row.task.id,executionLease:row.lease,model:row.task.spec.model,subagentModel:row.task.spec.subagentModel??row.task.spec.model,tools:row.task.spec.tools,...(row.task.spec.web?{web:row.task.spec.web}:{}),...(row.task.spec.externalProfiles?{externalProfiles:row.task.spec.externalProfiles}:{}),goal:row.task.spec.goal,session,subscriptionAuth:auth,maxRunMs:row.task.spec.maxRunMs,...(row.checkpoint?{}:{initialSnapshot:await this.snapshot(job.snapshotId)})},control:{origin:controlOrigin(this.env),workerToken:this.env.AUTONOMOUS_WORKER_TOKEN!,reporterToken:this.env.AUTONOMOUS_REPORTER_TOKEN!},authReturnPublicKey:this.env.AUTH_RETURN_PUBLIC_KEY,claudeNestedCompatible:this.env.CLAUDE_NESTED_APPROVED==='true',quotaPauseEnabled:this.env.AUTONOMOUS_QUOTA_PAUSE_ENABLED==='true',allowWebFetch:!!row.webPolicy&&this.env.AUTONOMOUS_WEB_ENABLED==='true'&&!!await nativeWebConnector()};
+    this.assertNativeModelDataSafe(input.request.goal,input.request.session.data,input.request.initialSnapshot,auth,row.lease.token);
+    await runner.prepareNative(validateAutonomousCloudInput(input));return;
+   }
+   if(job.cancellationRequested||job.status==='CANCELLING')await runner.cancel();
+   if(!readiness.launchIssued)await runner.launchNative();
+   const polled=JSON.parse(await runner.pollNative()) as {lost:boolean;state?:{started:boolean};result?:unknown};
+   if(polled.lost){await quarantine('CONTAINER_LOST');return;}
+   if(polled.state?.started&&job.status==='STARTING')this.scheduler.running(job.id,job.attempt,Date.now());
+   if(polled.result){await this.completeNative(job,polled.result);return;}
+   if(Date.now()>await this.hardDeadline(job))await quarantine('NATIVE_RESULT_MISSING');
+  }catch{if(await this.ctx.storage.get(nativeRecoveryKey(job.id)))return;await quarantine('NATIVE_EXECUTION_UNCERTAIN');}
+ }
+ private async completeNative(job:JobRecord,value:unknown){
+  const current=this.scheduler.state.jobs[job.id],credential=this.scheduler.state.credentials[job.credentialId!];
+  if(!current||current.attempt!==job.attempt||!current.autonomous||current.authSynced||!credential||credential.activeJobId!==job.id||credential.generation!==job.credentialGeneration||credential.quarantined)throw Error('Credential ownership mismatch');
+  const output=validateAutonomousCloudOutput(value);
+  if(!output.ok||output.jobId!==job.id||output.attempt!==job.attempt||!output.authReturn)throw Error('Native result identity mismatch');
+  const row=await this.ctx.storage.get<NativeJobPrivate>(nativeJobKey(job.id));if(!row)throw Error('Native private state missing');
+  if(row.task.id!==job.autonomous!.taskId||row.lease.taskId!==row.task.id||row.lease.runId!==job.autonomous!.runId)throw Error('Native recovery identity mismatch');
+  const auth=validateAuth('claude',await openAuthReturn(output.authReturn,this.env.AUTH_RETURN_PRIVATE_KEY));
+  let outputSnapshotId:string|undefined;
+  if(output.ok&&output.response){
+   const response=output.response,session=response.session;
+   if(session.sessionId!==(row.checkpoint?.sessionId??row.sessionId)||session.model!==row.task.spec.model||session.sequence!==(row.checkpoint?.sequence??0)+1)throw Error('Native session identity mismatch');
+   const bundle=session.data as {version:number;sessionId:string;model:string;workspacePath:string;snapshot:Snapshot;transcripts:unknown[]};
+   if(!bundle||bundle.version!==1||bundle.sessionId!==session.sessionId||bundle.model!==session.model||bundle.workspacePath!=='/workspace'||!Array.isArray(bundle.transcripts)||bundle.transcripts.length<1||bundle.transcripts.length>65)throw Error('Invalid native session');
+   if(Object.keys(bundle).sort().join(',')!=='model,sessionId,snapshot,transcripts,version,workspacePath')throw Error('Invalid native bundle');
+   const paths=new Set<string>();let transcriptBytes=0;
+   for(const item of bundle.transcripts){
+    const t=item as {path:string;content:string};
+    if(!t||Object.keys(t).sort().join(',')!=='content,path'||typeof t.path!=='string'||typeof t.content!=='string'||paths.has(t.path)||!(t.path===session.sessionId+'.jsonl'||new RegExp('^'+session.sessionId+'/subagents/agent-[A-Za-z0-9_-]{1,128}\\.jsonl$').test(t.path)))throw Error('Invalid native transcript');
+    paths.add(t.path);transcriptBytes+=Buffer.byteLength(t.content);if(transcriptBytes>4*1024*1024)throw Error('Native transcript limit');
+    for(const line of t.content.split('\n').filter(Boolean)){const v=JSON.parse(line);if(!v||typeof v!=='object'||Array.isArray(v))throw Error('Invalid transcript JSONL');}
+   }
+   if(!paths.has(session.sessionId+'.jsonl'))throw Error('Missing native transcript');
+   const snapshot=validateSnapshot(bundle.snapshot);
+   if(snapshot.files.length>32||snapshot.files.reduce((n,f)=>n+Buffer.from(f.content,'base64').length,0)>65536)throw Error('Native snapshot limit');
+   this.assertNativeModelDataSafe('',bundle,snapshot,auth,row.lease.token);
+   const checkpoint=row.result?.checkpoint??await this.sessionStore().save(row.task.id,session);
+   if(response.quota&&this.env.AUTONOMOUS_QUOTA_PAUSE_ENABLED!=='true')throw Error('Quota pause disabled');
+   row.result={outcome:response.outcome,usage:response.usage,costMicros:null,checkpoint,...(response.quota?{quota:{...response.quota}}:{}),...(response.usageUnavailable===true?{usageUnavailable:true}:{}),...(response.wakeAt===undefined?{}:{wakeAt:response.wakeAt})};
+   await this.ctx.storage.put(nativeJobKey(job.id),boundedNativeJobPrivate(row));
+   await this.putSnapshot(snapshot);outputSnapshotId=snapshot.digest;
+  }
+  const generation=job.credentialGeneration!+1,key=credentialKey(job.credentialId!,generation),artifact=resultKey(job);
+  const recovery:NativeRecovery={jobId:job.id,attempt:job.attempt,taskId:row.task.id,runId:row.lease.runId,credentialId:job.credentialId!,generation:job.credentialGeneration!,sealedAuthReturn:output.authReturn,artifact:JSON.stringify({version:1,jobId:job.id,attempt:job.attempt,provider:'claude',model:row.task.spec.model,inputSnapshotId:job.snapshotId,outputSnapshotId,ok:output.ok,...(output.response?{usage:output.response.usage,outcome:output.response.outcome,...(output.response.usageUnavailable===true?{usageUnavailable:true}:{}),...(output.response.quota?{quota:{kind:output.response.quota.kind,resetsAt:output.response.quota.resetsAt,evidence:output.response.quota.evidence}}:{})}:{errorCode:'NATIVE_EXECUTION_FAILED'})}),completion:{kind:'agent',outcome:{success:output.ok,outputSnapshotId,authGeneration:generation,authObjectKey:key,containerStopped:true,resultKey:artifact,...(output.ok?{}:{errorCode:'NATIVE_EXECUTION_FAILED'})}},stopped:false};
+  // Private durable staging precedes destruction; no auth return enters public state.
+  await this.ctx.storage.put(nativeRecoveryKey(job.id),recovery);
+  await this.resumeNativeCompletion(job,recovery);
+ }
+ private async resumeNativeCompletion(job:JobRecord,recovery:NativeRecovery){
+  const current=this.scheduler.state.jobs[job.id],credential=this.scheduler.state.credentials[recovery.credentialId];
+  const row=await this.ctx.storage.get<NativeJobPrivate>(nativeJobKey(job.id));
+  if(!current||job.attempt!==recovery.attempt||current.attempt!==recovery.attempt||job.id!==recovery.jobId||current.authSynced||!row||row.task.id!==recovery.taskId||row.lease.taskId!==recovery.taskId||row.lease.runId!==recovery.runId||current.autonomous?.taskId!==recovery.taskId||current.autonomous.runId!==recovery.runId||current.credentialId!==recovery.credentialId||current.credentialGeneration!==recovery.generation||!credential||credential.activeJobId!==job.id||credential.generation!==recovery.generation||credential.quarantined)throw Error('Native recovery ownership mismatch');
+  if(!recovery.stopped){
+   if(!await this.runner(job).stop())throw Error('Native stop not confirmed');
+   recovery.stopped=true;await this.ctx.storage.put(nativeRecoveryKey(job.id),recovery);
+  }
+  const auth=validateAuth('claude',await openAuthReturn(recovery.sealedAuthReturn,this.env.AUTH_RETURN_PRIVATE_KEY));
+  await this.storeCredential(auth,recovery.credentialId,recovery.generation+1,credentialKey(recovery.credentialId,recovery.generation+1));
+  if(!recovery.artifactStored){
+   const artifact=resultKey(job);
+   // Only a rejected conditional create proves there is an existing receipt to compare.
+   const saved=await this.env.ARTIFACTS.put(artifact,recovery.artifact,{onlyIf:{etagDoesNotMatch:'*'},httpMetadata:{contentType:'application/json'}});
+   if(!saved){const object=await this.env.ARTIFACTS.get(artifact);if(!object||JSON.stringify(await object.json())!==recovery.artifact)throw Error('Conflicting native result');}
+   recovery.artifactStored=true;await this.ctx.storage.put(nativeRecoveryKey(job.id),recovery);
+  }
+  await this.queueCompletion(job,recovery.completion);
+  await this.ctx.storage.delete(nativeRecoveryKey(job.id));
+ }
+
  private async advanceRalph(job:JobRecord,runner:DurableObjectStub<RunnerDO>){
   const raw=await runner.checkpoint();
   if(!raw)return;
@@ -644,9 +1129,16 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
      !Number.isSafeInteger(receipt.files)||receipt.files<1||receipt.files>ref.maxFiles)throw new InvalidRuntimeResult();
    }
   }else if(job.largeArtifacts&&result.process.status==='passed')throw new InvalidRuntimeResult();
+  const cacheIdentity=duckdbCacheIdentity(job,runtimeBuild.digest);
+  let buildCache;
+  if(result.buildCache!==undefined){
+   if(!cacheIdentity)throw new InvalidRuntimeResult();
+   try{buildCache=validateDuckdbCacheEvidence(result.buildCache,cacheIdentity.mode);}catch{throw new InvalidRuntimeResult();}
+  }
+  if(cacheIdentity&&result.process.status==='passed'&&(!buildCache||cacheIdentity.mode==='seed'&&!buildCache.published))throw new InvalidRuntimeResult();
   if(output)await this.putSnapshot(output);
   // Only allowlisted result fields enter normal artifacts. The sealed auth return stays private.
-  const safe={version:1,jobId:result.jobId,attempt:result.attempt,inputSnapshotId:result.inputSnapshotId,outputSnapshotId:output?.digest,process:result.process,summary:result.summary,errorCode:result.errorCode,sourceUnchanged:result.sourceUnchanged,credentialsAbsent:result.credentialsAbsent,provider:result.provider,sessionId:result.sessionId,usage:result.usage,claudeResultMetrics,subagentReceipts:result.subagentReceipts,mcpReceipts,sandboxReceipts,ralphRounds,carbon:result.carbon,resources:result.resources,largeArtifacts:result.largeArtifacts,sandboxPolicy:result.sandboxPolicy,boundary};
+  const safe={version:1,jobId:result.jobId,attempt:result.attempt,inputSnapshotId:result.inputSnapshotId,outputSnapshotId:output?.digest,process:result.process,summary:result.summary,errorCode:result.errorCode,sourceUnchanged:result.sourceUnchanged,credentialsAbsent:result.credentialsAbsent,provider:result.provider,sessionId:result.sessionId,usage:result.usage,claudeResultMetrics,subagentReceipts:result.subagentReceipts,mcpReceipts,sandboxReceipts,ralphRounds,carbon:result.carbon,resources:result.resources,largeArtifacts:result.largeArtifacts,buildCache,sandboxPolicy:result.sandboxPolicy,boundary};
   const key=resultKey(job);await this.env.ARTIFACTS.put(key,JSON.stringify(safe),{httpMetadata:{contentType:'application/json'}});
   if(job.kind==='agent'){
    if(!result.authReturn)throw new InvalidRuntimeResult();
@@ -661,7 +1153,7 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
  private async finish(job:JobRecord,completion:Completion){
   if(!await this.runner(job).stop())return;
   if(completion.kind==='agent')this.scheduler.agentFinished(job.id,job.attempt,completion.outcome,Date.now());else this.scheduler.computeFinished(job.id,job.attempt,completion.outcome,Date.now());
-  await this.save();await this.ctx.storage.delete(`completion:${job.id}`);
+  await this.save();await this.ctx.storage.delete(`completion:${job.id}`);if(job.autonomous)await this.ctx.storage.delete(nativeRecoveryKey(job.id));
  }
 }
 async function diagnoseCarbon(env:Env):Promise<Response>{
@@ -690,4 +1182,9 @@ async function diagnoseCarbon(env:Env):Promise<Response>{
    inputTokenLimit:value.inputTokenLimit,outputTokenLimit:value.outputTokenLimit,thinking:value.thinking===true});
  }catch{return json({http:response.status,modelAvailable:false,category:'INVALID_METADATA'});}
 }
-export default {async fetch(request:Request,env:Env){const path=new URL(request.url).pathname;if(path==='/health'&&request.method==='GET')return json({ok:true,service:'hivemind-cloudflare',workerVersion:env.CF_VERSION_METADATA?.id,expectedRuntimeRevision:runtimeBuild.digest});if(!path.startsWith('/v1/'))return json({error:'Not found'},404);const denied=authorize(request,env.CONTROL_TOKEN);if(denied)return denied;if(path==='/v1/carbon-diagnostics'&&request.method==='GET')return diagnoseCarbon(env);try{return await env.SCHEDULER.getByName('owner').fetch(request);}catch{return json({error:'Service is unavailable'},503);}}};
+export default {async fetch(request:Request,env:Env){const path=new URL(request.url).pathname;if(path==='/health'&&request.method==='GET')return json({ok:true,service:'hivemind-cloudflare',workerVersion:env.CF_VERSION_METADATA?.id,expectedRuntimeRevision:runtimeBuild.digest});if(!path.startsWith('/v1/'))return json({error:'Not found'},404);const denied=isAutonomousPath(path)?authorizeAutonomousRoute(request,env.CONTROL_TOKEN,env.AUTONOMOUS_WORKER_TOKEN,env.AUTONOMOUS_REPORTER_TOKEN):authorize(request,env.CONTROL_TOKEN);if(denied)return denied;if(path==='/v1/boundary-diagnostics'){
+ if(request.method!=='POST')return json({error:'Method not allowed'},405);
+ const key=request.headers.get('idempotency-key');
+ if(!key||! /^[A-Za-z0-9_-]{8,80}$/.test(key)||new URL(request.url).search||request.body!==null)return json({error:'Empty body and bounded idempotency-key required'},400);
+ try{return json(await env.RUNNER.getByName('boundary-diagnostic:'+runtimeBuild.digest+':'+key).boundaryDiagnostic());}catch{return json({error:'Diagnostic unavailable'},503);}
+ }if(path==='/v1/carbon-diagnostics'&&request.method==='GET')return diagnoseCarbon(env);try{return await env.SCHEDULER.getByName('owner').fetch(request);}catch{return json({error:'Service is unavailable'},503);}}};

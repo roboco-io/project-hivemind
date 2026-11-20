@@ -1,6 +1,8 @@
+import ts from 'typescript';
+import {isBuiltin} from 'node:module';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
-import {lstat,readdir,readFile,open} from 'node:fs/promises';
+import {lstat,readdir,readFile,open,mkdir} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {join,extname} from 'node:path';
 export interface RuntimeBuildManifest {version:1;digest:string;files:Record<string,string>}
@@ -17,6 +19,36 @@ async function checkedPath(root:string,path:string,directory=false){
  let absolute=root;const parts=path.split('/');let info;
  for(let i=0;i<parts.length;i++){if(!parts[i]||parts[i]==='.'||parts[i]==='..')throw invalid();absolute=join(absolute,parts[i]!);info=await lstat(absolute);if(info.isSymbolicLink()||(i<parts.length-1&&!info.isDirectory()))throw invalid();}
  if(!info||(directory?!info.isDirectory():!info.isFile()))throw invalid();return info;
+}
+/** Explicit CLI seam; pure manifest fixture builders do not read the parent repository. */
+export async function syncRuntimeAutonomousContract(options:{sourceRoot:string;runtimeRoot:string;check:boolean}):Promise<{sourceHash:string;path:string}>{
+ const sourcePath='packages/contracts/src/autonomous.ts',path='backend/src/runtime-shared/autonomous.ts';
+ const info=await checkedPath(options.sourceRoot,sourcePath);if(info.size>maxFileBytes||info.nlink!==1)throw invalid();
+ const bytes=await readFile(join(options.sourceRoot,sourcePath));if(bytes.length>maxFileBytes)throw invalid();
+ const source=ts.createSourceFile('autonomous.ts',new TextDecoder('utf-8',{fatal:true}).decode(bytes),ts.ScriptTarget.Latest,true);
+ const moduleAllowed=(node:ts.Node|undefined)=>{if(!node||!ts.isStringLiteral(node)||!isBuiltin(node.text))throw invalid();};
+ const visit=(node:ts.Node):void=>{
+  if(ts.isImportDeclaration(node)&&!node.importClause?.isTypeOnly){
+   const bindings=node.importClause?.namedBindings;
+   const typeOnly=!node.importClause?.name&&bindings&&ts.isNamedImports(bindings)&&bindings.elements.length>0&&bindings.elements.every(item=>item.isTypeOnly);
+   if(!typeOnly)moduleAllowed(node.moduleSpecifier);
+  }
+  if(ts.isExportDeclaration(node)&&node.moduleSpecifier&&!node.isTypeOnly)moduleAllowed(node.moduleSpecifier);
+  if(ts.isImportEqualsDeclaration(node)&&!node.isTypeOnly)throw invalid();
+  if(ts.isCallExpression(node)&&(node.expression.kind===ts.SyntaxKind.ImportKeyword||ts.isIdentifier(node.expression)&&node.expression.text==='require'))moduleAllowed(node.arguments[0]);
+  ts.forEachChild(node,visit);
+ };
+ visit(source);
+ if(options.check){await checkedPath(options.runtimeRoot,path);if(!(await readFile(join(options.runtimeRoot,path))).equals(bytes))throw invalid();}
+ else{
+  await checkedPath(options.runtimeRoot,'backend/src',true);
+  try{await mkdir(join(options.runtimeRoot,'backend/src/runtime-shared'));}catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
+  await checkedPath(options.runtimeRoot,'backend/src/runtime-shared',true);
+  try{const existing=await lstat(join(options.runtimeRoot,path));if(!existing.isFile()||existing.isSymbolicLink()||existing.nlink!==1)throw invalid();}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
+  const file=await open(join(options.runtimeRoot,path),constants.O_WRONLY|constants.O_CREAT|constants.O_TRUNC|constants.O_NOFOLLOW,0o644);
+  try{await file.writeFile(bytes);}finally{await file.close();}
+ }
+ return {sourceHash:hash(bytes),path};
 }
 export async function buildRuntimeManifest(root=defaultRoot):Promise<RuntimeBuildManifest>{
  const paths=new Set<string>(RUNTIME_FIXED_INPUTS);let visited=0;
@@ -46,6 +78,8 @@ export async function checkRuntimeManifest(root=defaultRoot):Promise<boolean>{
 if(process.argv[1]&&pathToFileURL(process.argv[1]).href===import.meta.url){
  try{
   const mode=process.argv[2];if(process.argv.length!==3||(mode!=='--write'&&mode!=='--check'))throw new Error('Invalid mode');
+  const shared=await syncRuntimeAutonomousContract({sourceRoot:fileURLToPath(new URL('../../../',import.meta.url)),runtimeRoot:defaultRoot,check:mode==='--check'});
+  if(mode==='--write')process.stdout.write(`runtime-contract: ${shared.sourceHash}\n`);
   if(mode==='--write'){const manifest=await writeRuntimeManifest();process.stdout.write(`runtime-build: ${manifest.digest}\n`);}
   else if(!await checkRuntimeManifest()){process.stderr.write('Runtime build manifest is missing or stale; run npm run runtime:stamp\n');process.exitCode=1;}
   else process.stdout.write('runtime-build: current\n');

@@ -40,3 +40,47 @@
 !docs/
 !docs/bubblewrap-compatibility.md
 !scripts/phase0/claude-command-concurrency-probe.ts
+# Public runtime benchmark prerequisites required by backend/Dockerfile.
+!backend/benchmark/
+!backend/benchmark/agent/
+!backend/benchmark/agent/models.json
+!backend/benchmark/agent/settings.json
+!backend/benchmark/pi-shell
+# Never reinclude private source/config artifacts through broad source rules.
+**/.env*
+**/.dev.vars*
+**/.credentials*
+**/auth.json
+**/credentials.json
+**/secrets.json
+**/*secrets*.json
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/__pycache__/**
+
+# Block private directories even when nested beneath included runtime sources.
+**/.git
+**/.git/**
+**/.ssh/**
+**/.aws/**
+**/.azure/**
+**/.docker/**
+**/.hivemind/**
+**/.superlite/**
+**/.wrangler/**
+**/.codex/**
+**/.claude/**
+**/.playwright-mcp/**
+**/node_modules/**
+**/.npmrc
+**/.pypirc
+**/.netrc
+**/.gitconfig
+**/.git-credentials
+**/id_rsa*
+**/id_ed25519*
+**/*.sqlite*
+**/*.log
+**/*.pyc

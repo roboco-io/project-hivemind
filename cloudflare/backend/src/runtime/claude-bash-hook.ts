@@ -1,3 +1,4 @@
+import {autonomousToolGate,loadAutonomousPolicy} from './autonomous-tool-hook.ts';
 import {pathToFileURL} from 'node:url';
 import {createHash} from 'node:crypto';
 import {constants} from 'node:fs';
@@ -24,7 +25,7 @@ export function parseSandboxReceipts(raw:string):SandboxReceipt[] {
  try{return lines.map(line=>checkedReceipt(JSON.parse(line)));}catch{throw new Error('Invalid sandbox audit metadata');}
 }
 export async function auditedBashHookReply(value:unknown,timestamp:string,append:(receipt:SandboxReceipt)=>Promise<void>):Promise<unknown> {
- const reply=bashHookReply(value),receipt=sandboxReceipt(value,timestamp);
+ autonomousToolGate(value,await loadAutonomousPolicy());const reply=bashHookReply(value),receipt=sandboxReceipt(value,timestamp);
  try{await append(receipt);}catch{throw new Error('Sandbox audit could not be persisted');}return reply;
 }
 async function appendAudit(receipt:SandboxReceipt):Promise<void> {

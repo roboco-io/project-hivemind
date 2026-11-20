@@ -1,3 +1,5 @@
+import {duckdbCacheMode,duckdbCacheOutputChars} from '../duckdb-build-cache.ts';
+import {prepareDuckdbCache} from './duckdb-cache.ts';
 import {prepareLargeArtifacts} from './large-artifacts.ts';
 import {measureBenchmarkResources} from './benchmark-resources.ts';
 import {mkdtemp,rm,mkdir,readFile,writeFile,open,rename,readdir,stat,lstat} from 'node:fs/promises';
@@ -82,6 +84,7 @@ export async function executeRuntime(raw:unknown,options:RuntimeOptions={}):Prom
  const result:RuntimeResult&{boundary?:RuntimeBoundary}={version:1,jobId:input.jobId,attempt:input.attempt,inputSnapshotId:input.snapshot.digest,process:notRun(),summary:'Execution did not start',sourceUnchanged:true,sandboxPolicy:input.mode==='compute'?'compute-workspace':input.provider==='codex'?'codex-workspace':input.claudeNestedCompatible?'claude-nested-compatible':'claude-strict',...(input.provider?{provider:input.provider}:{})};
  let temporaryComputeHome:string|undefined;
  let temporaryArtifactDirectory:string|undefined;
+ let cacheDirectory:string|undefined;
  let resourceMeasurement:Awaited<ReturnType<typeof measureBenchmarkResources>>|undefined;
  let latestAuth=input.auth,codexAuthWritten=false,materialized=false,providerFailureDiagnostic:string|undefined;
  try {
@@ -102,8 +105,14 @@ export async function executeRuntime(raw:unknown,options:RuntimeOptions={}):Prom
    result.credentialsAbsent=forbidden.every(k=>!env[k])&&!await has(join(home,'.codex','auth.json'))&&!await has(join(home,'.claude','.credentials.json'));
    if(!result.credentialsAbsent)throw new Error('Compute credential boundary failed');
    const computeStarted=Date.now();
+   const computeSignal=AbortSignal.any([controller.signal,AbortSignal.timeout(input.timeoutMs)]);
    // Linux sandbox denies the entire runtime subtree, including nested read grants.
-   if(input.largeArtifacts)temporaryArtifactDirectory=await mkdtemp(join(home,'hivemind-inputs-'));
+   const cacheMode=input.largeArtifacts?duckdbCacheMode(input.argv):undefined;
+   if(cacheMode){
+    const path=join(home,'hivemind-duckdb-inputs');
+    await mkdir(path,{mode:0o700});
+    temporaryArtifactDirectory=path;
+   }else if(input.largeArtifacts)temporaryArtifactDirectory=await mkdtemp(join(home,'hivemind-inputs-'));
    const prepared=input.largeArtifacts&&temporaryArtifactDirectory
     ?await prepareLargeArtifacts(input.largeArtifacts,{directory:temporaryArtifactDirectory,signal:controller.signal,timeoutMs:input.timeoutMs,fetchImpl:options.artifactFetch})
     :undefined;
@@ -112,13 +121,26 @@ export async function executeRuntime(raw:unknown,options:RuntimeOptions={}):Prom
     if(prepared.paths.data)env.HIVEMIND_ARTIFACT_DATA=prepared.paths.data;
     result.largeArtifacts={durationMs:prepared.durationMs,receipts:prepared.receipts};
    }
-   const remaining=input.timeoutMs-(Date.now()-computeStarted);if(remaining<1)throw Error('Artifact preparation consumed compute deadline');
+   const timeLeft=()=>input.timeoutMs-(Date.now()-computeStarted);
+   let cache;
+   if(cacheMode&&input.largeArtifacts){
+    const remaining=timeLeft();if(remaining<1)throw Error('Input preparation consumed cache deadline');
+    cacheDirectory=await mkdtemp('/tmp/hivemind-ccache-dir-');
+    cache=await prepareDuckdbCache({directory:cacheDirectory,mode:cacheMode,capability:input.largeArtifacts.capability,
+      signal:computeSignal,timeoutMs:remaining});
+    env.HIVEMIND_CCACHE_DIR=cache.cacheDir;
+    result.buildCache={mode:cacheMode,restoreMs:cache.restoreMs,
+      ...(cache.restoredSha256?{restoredSha256:cache.restoredSha256,restoredBytes:cache.restoredBytes}:{})};
+   }
+   const remaining=timeLeft();if(remaining<1)throw Error('Artifact preparation consumed compute deadline');
    const prefix=options.computePrefix??computeSandboxArgs(prepared?{readOnly:[prepared.root],deny:[runtimeDir]}:undefined);
    if(input.carbon){
     const benchmark=await runCarbon(input.carbon,workspace,runtimeDir,input.timeoutMs,controller.signal);
     result.process=benchmark.process;result.carbon=benchmark.evidence;
-   }else result.process=await runProcess([...prefix,...input.argv!],{cwd:workspace,env,timeoutMs:remaining,signal:controller.signal,maxBytes:32768,captureDirectory:join(runtimeDir,'compute-output')});
+   }else result.process=await runProcess([...prefix,...input.argv!],{cwd:workspace,env,timeoutMs:remaining,signal:controller.signal,maxBytes:cacheMode?100_000:32768,captureDirectory:join(runtimeDir,'compute-output')});
    const current=await readSnapshot(workspace);result.sourceUnchanged=sourceEqual(input.snapshot.files,current.files);
+   if(cache&&cacheMode==='seed'&&result.process.status==='passed'&&result.sourceUnchanged)
+    result.buildCache!.published=await cache.publish();
    result.summary=result.sourceUnchanged?'Configured verification finished.':'Verification modified its immutable input source.';
    if(!result.sourceUnchanged&&result.process.status==='passed')result.process={...result.process,status:'error',stderr:result.process.stderr+'\nVerification source integrity failed'};
   }else{
@@ -193,6 +215,7 @@ export async function executeRuntime(raw:unknown,options:RuntimeOptions={}):Prom
   if(input.mode==='agent'&&materialized)result.snapshot=await readSnapshot(workspace).catch(()=>undefined);
  }finally{
   if(timer)clearInterval(timer);
+  if(cacheDirectory)await rm(cacheDirectory,{recursive:true,force:true});
   if(temporaryArtifactDirectory)await rm(temporaryArtifactDirectory,{recursive:true,force:true});
   if(temporaryComputeHome)await rm(temporaryComputeHome,{recursive:true,force:true});
   if(resourceMeasurement)result.resources=await resourceMeasurement();
@@ -211,9 +234,10 @@ export async function executeRuntime(raw:unknown,options:RuntimeOptions={}):Prom
  const scrubValue=(value:unknown):unknown=>typeof value==='string'?scrub(value):Array.isArray(value)?value.map(scrubValue):value&&typeof value==='object'?Object.fromEntries(Object.entries(value).map(([k,v])=>[k,scrubValue(v)])):value;
  if(result.subagentReceipts)result.subagentReceipts=scrubValue(result.subagentReceipts) as unknown[];
  if(result.sandboxReceipts)result.sandboxReceipts=scrubValue(result.sandboxReceipts) as SandboxReceipt[];
- result.summary=scrub(result.summary).slice(0,12000);result.process.stdout=scrub(result.process.stdout).slice(0,16000);
+ const outputChars=input.largeArtifacts&&duckdbCacheMode(input.argv)?duckdbCacheOutputChars:16_000;
+ result.summary=scrub(result.summary).slice(0,12000);result.process.stdout=scrub(result.process.stdout).slice(0,outputChars);
  const safeStderr=scrub(result.process.stderr),diagnostic=providerFailureDiagnostic?scrub(providerFailureDiagnostic):'',separator=safeStderr&&diagnostic?'\n':'';
- result.process.stderr=safeStderr.slice(0,16000-diagnostic.length-separator.length)+separator+diagnostic;
+ result.process.stderr=safeStderr.slice(0,outputChars-diagnostic.length-separator.length)+separator+diagnostic;
  return result;
 }
 export async function runFromFile(runtimeDir='/runtime',options:RuntimeOptions={}):Promise<RuntimeResult|null> {

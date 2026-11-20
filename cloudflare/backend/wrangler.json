@@ -16,6 +16,8 @@
     ]
   },
   "vars": {
+    "AUTONOMOUS_CLOUD_ENABLED": "false",
+    "AUTONOMOUS_CONTROL_ORIGIN": "https://hivemind-cloudflare-backend.roboco.workers.dev",
     "CLAUDE_NESTED_APPROVED": "true",
     "CODEX_SANDBOX_APPROVED": "true"
   },
