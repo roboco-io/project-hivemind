@@ -116,3 +116,6 @@ export interface ExternalBrokerOptions<Credential=unknown> {
   resolver:ExternalCredentialResolver<Credential>; transport:ExternalProviderTransport<Credential>;
   now?:()=>number;
 }
+
+/** Bounded operator audit of private OIDC/GSC issuance or denied consumption. Never a credential. */
+export interface ExternalOidcAuditEvent {sequence:number;at:number;taskId:string;revision:number;profileId:string;profileHash:string;actionId:string;purpose:'execute'|'inspect'|'cleanup';roleArn:string;kid?:string;status:'scoped'|'denied'}

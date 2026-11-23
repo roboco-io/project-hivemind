@@ -1,3 +1,11 @@
+import {workloadFingerprint,inputManifestDigest} from '../../../packages/core/src/delegated.ts';
+import {parseDelegatedConfiguration,assertDelegatedLaunchAdmission} from './delegated-runtime.ts';
+import {createCanonicalOidcAuthority,createOidcAuditStore,parseExternalOidcSettings,type ExternalOidcSettings} from './autonomous-oidc-runtime.ts';
+import {createAwsWebIdentityResolver,awsOidcTargetHash,type AwsScopedCredentialControl} from '../../../packages/adapters/src/aws-web-identity.ts';
+import {oidcSubject} from '../../../packages/core/src/oidc.ts';
+import type {OidcSignerPort} from '../../../packages/contracts/src/oidc.ts';
+import type {AutonomousTask} from '../../../packages/contracts/src/autonomous.ts';
+import {assertAwsRegion,awsPlacement} from '../../../packages/adapters/src/autonomous-aws-region.ts';
 import {createAwsCostExplorerReader,createExternalCostCache,type AwsCostExplorerOptions,type ExternalCostReader} from '../../../packages/adapters/src/autonomous-external-cost.ts';
 import {createAwsTtlGuardPort,type AwsGuardOptions} from '../../../packages/adapters/src/autonomous-aws-guard.ts';
 import {createHash} from 'node:crypto';
@@ -15,6 +23,8 @@ import type {ExternalProfile,ExternalCredentialScope,ExternalInvocation} from '.
 import {createExternalProviderTransport,createExternalR2ArtifactLoader,createExternalR2ArtifactPublisher,type ExternalArtifactPublisher,type ExternalArtifactLoader,type ExternalProviderCredential,type ExternalProviderOptions,type ExternalHfLfsConfig,type AwsTtlGuardPort} from '../../../packages/adapters/src/autonomous-external.ts';
 
 export interface ExternalEnvironment {
+ AUTONOMOUS_DELEGATED_CONFIG?:string;AUTONOMOUS_DELEGATED_ENABLED?:string;
+ AUTONOMOUS_EXTERNAL_OIDC_CONFIG?:string;
  AUTONOMOUS_EXTERNAL_COST_CONFIG?:string;
  AUTONOMOUS_AWS_GUARD_CONFIG?:string;
  AUTONOMOUS_EXTERNAL_ENABLED?:string;
@@ -52,6 +62,8 @@ interface Configuration {version:1;profiles:ExternalProfile[];providers:Configur
 const credentialKind=(provider:string)=>provider==='s3'?'aws':provider;
 const LFS_MAX_FILE_BYTES=5*1024**3,LFS_MAX_TOTAL_BYTES=64*1024**3,LARGE_MAX_FILES=32;
 export interface ExternalRuntimeOptions {
+ admitDelegated?:(taskId:string,input:{lease:import('../../../packages/contracts/src/autonomous.ts').AutonomousLease;runtimeId:string;profileId:string;launchRequestId:string;inputManifest:unknown})=>Promise<unknown>;
+ oidcSigner?:OidcSignerPort;
  env:ExternalEnvironment;core?:AutonomousApiService;sql?:ExternalSqlPort;artifacts?:ExternalArtifactBucket;
  /** Optional trusted fixture port. Production uses AUTONOMOUS_EXTERNAL_CREDENTIALS. */
  secrets?:{get(reference:string):Promise<string|null>};
@@ -66,6 +78,9 @@ export interface AutonomousExternalRuntime {
  large?:{store:ExternalLargeStore;limits:ExternalLargeLimits};
  /** PRIVATE safety scanner input only. Never include in HTTP/UI/model data. */
  configuredSecretValues():readonly string[];
+ /** Private composition ports. Never exposed by HTTP or model tools. */
+ withOwnedAwsCredential<T>(taskId:string,revision:number,actionId:string,purpose:'inspect'|'cleanup',consume:(credential:Extract<ExternalProviderCredential,{provider:'aws'}>,control?:AwsScopedCredentialControl)=>Promise<T>):Promise<T>;
+ resolveHfToken(reference:string):Promise<string>;
  recover():Promise<{needsWork:boolean;nextWake?:number}>;
  cleanupDue(limit?:number):Promise<{visited:number;needsWork:boolean;nextWake?:number}>;
 }
@@ -89,7 +104,8 @@ function configuration(raw:string):Configuration {
   const allowed=({aws:['aws.spot.start','aws.spot.inspect'],hf:['hf.model.commit','hf.model.lfs_commit'],github:['github.branch.push'],s3:['aws.s3.put','aws.s3.inspect']} as Record<string,string[]>)[String(p.provider)]!;
   if(!Array.isArray(p.operations)||!p.operations.length||new Set(p.operations).size!==p.operations.length||p.operations.some(op=>!allowed.includes(op)))unavailable();
   if(p.provider==='aws'){
-   const target=object(p.target,['accountId','region','workloadId']),a=object(providers.aws,['enabled','accountId','region','workloadId','imageId','instanceType','subnetId','instanceProfileArn','maxLifetimeMs','credentialRef','maxUpperBoundMicros'],['billingPolicy']);
+   const target=object(p.target,['accountId','region','workloadId']),a=object(providers.aws,['enabled','accountId','region','workloadId','imageId','instanceType','subnetId','instanceProfileArn','maxLifetimeMs','credentialRef','maxUpperBoundMicros'],['billingPolicy','allowedRegions','availabilityZoneId']);
+   try{assertAwsRegion(String(a.region),a.allowedRegions as readonly string[]|undefined);awsPlacement(String(a.region),a.availabilityZoneId as string|undefined);}catch{unavailable();}
    if(a.billingPolicy!==undefined&&!['reserved_ceiling_only','verified_cost_source'].includes(String(a.billingPolicy)))unavailable();
    for(const key of ['accountId','region','workloadId','imageId','instanceType','subnetId','instanceProfileArn','credentialRef'])text(a[key]);
    if(typeof a.enabled!=='boolean'||!/^\d{12}$/.test(String(a.accountId))||!/^[a-z]{2}-[a-z]+-\d$/.test(String(a.region))||!/^ami-[a-f0-9]+$/.test(String(a.imageId))||!/^subnet-[a-f0-9]+$/.test(String(a.subnetId))||!/^[a-z0-9]+\.[a-z0-9]+$/.test(String(a.instanceType))||!String(a.instanceProfileArn).startsWith(`arn:aws:iam::${a.accountId}:instance-profile/`))unavailable();
@@ -100,18 +116,19 @@ function configuration(raw:string):Configuration {
    let target:ExternalS3Target,provider:Record<string,unknown>;
    try{target=validateExternalS3Target(p.target);provider=object(providers.s3,['enabled','target']);if(typeof provider.enabled!=='boolean')unavailable();if(hash(validateExternalS3Target(provider.target))!==hash(target))unavailable();}catch{unavailable();}
   }else{
-   const ref=p.provider==='hf'?'revision':'branch',hf=p.provider==='hf',target=object(p.target,['repository',ref],hf?['visibility']:[]),provider=object(providers[String(p.provider)],['enabled','repository',ref],hf?['visibility','lfs']:[]);
+   const ref=p.provider==='hf'?'revision':'branch',hf=p.provider==='hf',target=object(p.target,['repository',ref],hf?['visibility','allowPublicLarge']:[]),provider=object(providers[String(p.provider)],['enabled','repository',ref],hf?['visibility','lfs']:[]);
    if(hf){
     for(const value of [target.visibility,provider.visibility])if(value!==undefined&&value!=='private'&&value!=='public')unavailable();
     // Omitted visibility means private, so the profile and provider must agree after resolving it.
     if((target.visibility??'private')!==(provider.visibility??'private'))unavailable();
+    if(Object.hasOwn(target,'allowPublicLarge')&&(target.allowPublicLarge!==true||target.visibility!=='public'||!(p.operations as string[]).includes('hf.model.lfs_commit')))unavailable();
     if(provider.lfs!==undefined){
      const lfs=object(provider.lfs,['maxFileBytes','maxTotalBytes','uploadHosts']);integer(lfs.maxFileBytes,1);integer(lfs.maxTotalBytes,1);
      if(lfs.maxFileBytes>LFS_MAX_FILE_BYTES||lfs.maxTotalBytes<lfs.maxFileBytes||lfs.maxTotalBytes>LFS_MAX_TOTAL_BYTES||!Array.isArray(lfs.uploadHosts)||!lfs.uploadHosts.length||lfs.uploadHosts.length>8||new Set(lfs.uploadHosts).size!==lfs.uploadHosts.length)unavailable();
      for(const host of lfs.uploadHosts){text(host,253);if(!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(host)||host==='huggingface.co')unavailable();}
     }
-    // A large commit needs server-owned limits and may never target a public repository.
-    if((p.operations as string[]).includes('hf.model.lfs_commit')&&(provider.lfs===undefined||(provider.visibility??'private')!=='private'))unavailable();
+    // A large commit needs server-owned limits and explicit acknowledgement for public targets.
+    if((p.operations as string[]).includes('hf.model.lfs_commit')&&(provider.lfs===undefined||(target.visibility==='public'&&target.allowPublicLarge!==true)))unavailable();
    }
    text(provider.repository);text(provider[ref],128);if(typeof provider.enabled!=='boolean'||!/^[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+$/.test(provider.repository)||!/^[A-Za-z0-9][A-Za-z0-9_./-]*$/.test(String(provider[ref]))||String(provider[ref]).includes('..')||String(provider[ref]).includes('//')||String(provider[ref]).endsWith('.lock')||String(provider[ref]).endsWith('/')||target.repository!==provider.repository||target[ref]!==provider[ref])unavailable();
   }
@@ -121,21 +138,23 @@ function configuration(raw:string):Configuration {
 /** Private descriptor only. No credentials, functions, endpoints or commands accepted. */
 type GuardConfiguration=Omit<AwsGuardOptions,'enabled'|'credentials'|'fetchImpl'|'now'> & {credentialRef:string};
 function guardConfiguration(raw:string,config:Configuration):GuardConfiguration {
- const g=object(json(raw),['accountId','region','guardArn','functionArn','scheduleGroupArn','schedulerRoleArn','expectedCodeSha256','manifest','rolePolicies','credentialRef']),aws=config.providers.aws;
- if(!aws||g.accountId!==aws.accountId||g.region!==aws.region||g.region!=='ap-northeast-2'||g.guardArn!==config.ttlGuard?.guardArn)unavailable();
+ const g=object(json(raw),['accountId','region','guardArn','functionArn','scheduleGroupArn','schedulerRoleArn','expectedCodeSha256','manifest','rolePolicies','credentialRef'],['allowedRegions']),aws=config.providers.aws;
+ if(!aws||g.accountId!==aws.accountId||g.region!==aws.region||g.guardArn!==config.ttlGuard?.guardArn)unavailable();
+ try{assertAwsRegion(String(g.region),g.allowedRegions as readonly string[]|undefined);}catch{unavailable();}
  for(const key of ['guardArn','functionArn','scheduleGroupArn','schedulerRoleArn','expectedCodeSha256','credentialRef'])text(g[key]);
  if(!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(String(g.credentialRef))||!new RegExp(`^arn:aws:events:${g.region}:${g.accountId}:rule/[A-Za-z0-9_-]{1,64}$`).test(String(g.guardArn))||!String(g.functionArn).startsWith(`arn:aws:lambda:${g.region}:${g.accountId}:function:`)||!String(g.scheduleGroupArn).startsWith(`arn:aws:scheduler:${g.region}:${g.accountId}:schedule-group/`)||!String(g.schedulerRoleArn).startsWith(`arn:aws:iam::${g.accountId}:role/`)||!/^[A-Za-z0-9+/]{43}=$/.test(String(g.expectedCodeSha256)))unavailable();
- const m=object(g.manifest,['schemaVersion','ownershipMode','registryTableArn','guardArn','validUntil','profiles']);integer(m.validUntil,1);
+ const m=object(g.manifest,['schemaVersion','ownershipMode','registryTableArn','guardArn','validUntil','profiles'],['region','allowedRegions','delegatedUpload']);integer(m.validUntil,1);
  if(m.schemaVersion!==1||m.ownershipMode!=='broker_uuid_registry_v1'||m.guardArn!==g.guardArn||typeof m.registryTableArn!=='string'||!m.registryTableArn.startsWith(`arn:aws:dynamodb:${g.region}:${g.accountId}:table/`)||!Array.isArray(m.profiles)||!m.profiles.length||m.profiles.length>16||!Array.isArray(g.rolePolicies)||g.rolePolicies.length!==3)unavailable();
- for(const value of m.profiles){const p=object(value,['workloadId','configurationHash','parameterPolicy','instanceProfileArn','maxLifetimeMs','launchHeadroomMs','quote']);text(p.workloadId,128);text(p.instanceProfileArn);integer(p.maxLifetimeMs,60000);integer(p.launchHeadroomMs);if(p.parameterPolicy!=='opaque_broker_sha256'||typeof p.configurationHash!=='string'||!/^[a-f0-9]{64}$/.test(p.configurationHash)||p.maxLifetimeMs>86400000||p.launchHeadroomMs>60000||!p.instanceProfileArn.startsWith(`arn:aws:iam::${g.accountId}:instance-profile/`))unavailable();const quote=object(p.quote,['source','maxExposureMicros','validUntil']);text(quote.source,2048);integer(quote.maxExposureMicros,1);integer(quote.validUntil,1);}
+ for(const value of m.profiles){const p=object(value,['workloadId','configurationHash','parameterPolicy','instanceProfileArn','maxLifetimeMs','launchHeadroomMs','quote'],['availabilityZoneId']);text(p.workloadId,128);text(p.instanceProfileArn);integer(p.maxLifetimeMs,60000);integer(p.launchHeadroomMs);if(p.parameterPolicy!=='opaque_broker_sha256'||typeof p.configurationHash!=='string'||!/^[a-f0-9]{64}$/.test(p.configurationHash)||p.maxLifetimeMs>86400000||p.launchHeadroomMs>60000||!p.instanceProfileArn.startsWith(`arn:aws:iam::${g.accountId}:instance-profile/`))unavailable();if(p.workloadId===aws.workloadId&&p.availabilityZoneId!==aws.availabilityZoneId)unavailable();const quote=object(p.quote,['source','maxExposureMicros','validUntil']);text(quote.source,2048);integer(quote.maxExposureMicros,1);integer(quote.validUntil,1);}
  const kinds=new Set<string>();for(const value of g.rolePolicies){const role=object(value,['kind','roleArn','boundaryArn','inlinePolicyName']);for(const key of ['roleArn','boundaryArn','inlinePolicyName'])text(role[key]);if(!['guard','scheduler','workload'].includes(String(role.kind))||kinds.has(String(role.kind))||!String(role.roleArn).startsWith(`arn:aws:iam::${g.accountId}:role/`)||!String(role.boundaryArn).startsWith(`arn:aws:iam::${g.accountId}:policy/`)||role.kind==='scheduler'&&role.roleArn!==g.schedulerRoleArn)unavailable();kinds.add(String(role.kind));}
  return structuredClone(g) as unknown as GuardConfiguration;
 }
 /** CE remains non-final without verified coverage for query and non-EC2/EBS fees. */
 type CostConfiguration=Omit<AwsCostExplorerOptions,'enabled'|'cache'|'credentials'|'supplement'|'fetch'|'now'> & {credentialRef:string};
 function costConfiguration(raw:string,config:Configuration):CostConfiguration {
- const c=object(json(raw),['accountId','resourceRegion','workloadId','queryUpperBoundMicros','maxQueryCount','resourceUpperBoundMicros','tagActivation','credentialRef']),aws=config.providers.aws;
- if(!aws||c.accountId!==aws.accountId||c.resourceRegion!==aws.region||c.resourceRegion!=='ap-northeast-2'||c.workloadId!==aws.workloadId)unavailable();text(c.credentialRef,128);if(!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(c.credentialRef))unavailable();
+ const c=object(json(raw),['accountId','resourceRegion','workloadId','queryUpperBoundMicros','maxQueryCount','resourceUpperBoundMicros','tagActivation','credentialRef'],['allowedRegions']),aws=config.providers.aws;
+ if(!aws||c.accountId!==aws.accountId||c.resourceRegion!==aws.region||c.workloadId!==aws.workloadId)unavailable();text(c.credentialRef,128);if(!/^[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(c.credentialRef))unavailable();
+ try{assertAwsRegion(String(c.resourceRegion),c.allowedRegions as readonly string[]|undefined);}catch{unavailable();}
  integer(c.queryUpperBoundMicros,1);integer(c.maxQueryCount,2);integer(c.resourceUpperBoundMicros);const exposure=c.queryUpperBoundMicros*c.maxQueryCount+c.resourceUpperBoundMicros;
  if(c.maxQueryCount>14||!Number.isSafeInteger(exposure)||exposure>aws.maxUpperBoundMicros!||config.profiles.some(p=>p.provider==='aws'&&exposure>p.upperBoundMicros))unavailable();
  const t=object(c.tagActivation,['evidenceId','activeSince','observedAt','validUntil']);text(t.evidenceId);integer(t.activeSince);integer(t.observedAt);integer(t.validUntil,1);if(t.activeSince>t.observedAt||t.observedAt>=t.validUntil)unavailable();
@@ -188,12 +207,16 @@ export function createAutonomousExternalRuntime(options:ExternalRuntimeOptions):
  const {env}=options,enabled=env.AUTONOMOUS_EXTERNAL_ENABLED==='true';
  if(!env.AUTONOMOUS_EXTERNAL_CONFIG){if(enabled)unavailable();return undefined;}
  const config=configuration(env.AUTONOMOUS_EXTERNAL_CONFIG);
+ const delegated=env.AUTONOMOUS_DELEGATED_CONFIG?parseDelegatedConfiguration(env.AUTONOMOUS_DELEGATED_CONFIG):undefined;
+ const oidcSettings=env.AUTONOMOUS_EXTERNAL_OIDC_CONFIG?parseExternalOidcSettings(env.AUTONOMOUS_EXTERNAL_OIDC_CONFIG):undefined;
+ for(const id of Object.keys(oidcSettings?.oidc.roles??{})){const p=config.profiles.find(p=>p.id===id);if(!p||!['aws','s3'].includes(p.provider))unavailable();}
  if(!options.sql||!options.core||!options.artifacts)unavailable();
  const credentials=configuredCredentialMap(env);
  const guardSettings=env.AUTONOMOUS_AWS_GUARD_CONFIG?guardConfiguration(env.AUTONOMOUS_AWS_GUARD_CONFIG,config):undefined;
  const costSettings=env.AUTONOMOUS_EXTERNAL_COST_CONFIG?costConfiguration(env.AUTONOMOUS_EXTERNAL_COST_CONFIG,config):undefined;
  const descriptors=config.profiles.map(p=>({credentialRef:p.credentialRef,provider:credentials[p.credentialRef]?.provider??credentialKind(p.provider),target:p.target,operations:p.operations}));
- const configurationFingerprint=hash({config,credentialPolicyRevision:config.credentialPolicyRevision??hash(descriptors),descriptors,enabled,costSettings,costReaderConfigured:!!options.costReader,guardSettings,guardConfigured:!!options.awsTtlGuard||!!guardSettings}),now=options.now??Date.now;
+ const configurationFingerprint=hash({...(delegated?{delegated,delegatedEnabled:env.AUTONOMOUS_DELEGATED_ENABLED==='true'}:{}),...(oidcSettings?{oidcSettings}:{}),config,credentialPolicyRevision:config.credentialPolicyRevision??hash(descriptors),descriptors,enabled,costSettings,costReaderConfigured:!!options.costReader,guardSettings,guardConfigured:!!options.awsTtlGuard||!!guardSettings}),now=options.now??Date.now;
+ const credentialControls=new WeakMap<object,AwsScopedCredentialControl>();
  const resolved:Record<string,ExternalProviderCredential>={...credentials},knownSecretValues=new Set<string>();
  function refreshSecretValues(){
   knownSecretValues.clear();for(const value of [...Object.values(resolved).flatMap(c=>Object.entries(c).filter(([key])=>key!=='provider').map(([,value])=>String(value))),...(options.extraSecretValues??[])]){
@@ -217,9 +240,11 @@ export function createAutonomousExternalRuntime(options:ExternalRuntimeOptions):
   const {credentialRef,...settings}=costSettings;
   costReader=createAwsCostExplorerReader({...settings,enabled:true,cache:createExternalCostCache(options.sql),credentials:async()=>{const c=await resolveCredential(credentialRef,'aws');if(c.provider!=='aws')unavailable();return {accessKeyId:c.accessKeyId,secretAccessKey:c.secretAccessKey,...(c.sessionToken?{sessionToken:c.sessionToken}:{})};},fetch:options.fetch,now});
  }
- const available=(p:ExternalProfile)=>!!((credentials[p.credentialRef]?.provider===credentialKind(p.provider)||options.secrets)&&enabled&&p.enabled===true&&config.providers[p.provider]?.enabled===true&&(p.provider!=='aws'||config.ttlGuard&&guardPort&&(!guardSettings||guardSettings.manifest.validUntil>now())&&(config.providers.aws?.billingPolicy==='reserved_ceiling_only'||config.providers.aws?.billingPolicy==='verified_cost_source'&&!!costReader)));
+ const oidcFor=(p:ExternalProfile)=>!!oidcSettings?.oidc.roles[p.id]&&['aws','s3'].includes(p.provider);
+ const delegatedReady=(p:ExternalProfile)=>!delegated?.workloads.some(w=>w.profileId===p.id)||(env.AUTONOMOUS_DELEGATED_ENABLED==='true'&&!!options.admitDelegated);
+ const available=(p:ExternalProfile)=>!!(delegatedReady(p)&&(oidcFor(p)?options.oidcSigner:(credentials[p.credentialRef]?.provider===credentialKind(p.provider)||options.secrets))&&enabled&&p.enabled===true&&config.providers[p.provider]?.enabled===true&&(p.provider!=='aws'||config.ttlGuard&&(guardPort||oidcFor(p)&&guardSettings&&guardSettings.credentialRef===p.credentialRef)&&(!guardSettings||guardSettings.manifest.validUntil>now())&&(config.providers.aws?.billingPolicy==='reserved_ceiling_only'||config.providers.aws?.billingPolicy==='verified_cost_source'&&(oidcFor(p)?costSettings&&costSettings.credentialRef===p.credentialRef:!!costReader))));
  const registry={get(id:string){const p=config.profiles.find(p=>p.id===id);return p?{...structuredClone(p),enabled:available(p)}:undefined;}};
- const store=createExternalSqlStore(options.sql);
+ const store=createExternalSqlStore(options.sql),oidcAudit=createOidcAuditStore(options.sql,now);
  function recoveryIssue(actionId:string,issue?:'historical_policy_missing'|'historical_credential_unavailable'){
   const owner=store.transaction(s=>{const a=s.actions[actionId],p=a?s.approvals[a.approvalId]:undefined;return a&&p?{taskId:p.taskId,revision:p.revision,requestId:a.requestId}:undefined;});
   if(owner){const j=store.getJournal(owner.taskId,owner.revision,owner.requestId);if(j)store.putJournal({...j,recoveryIssue:issue});}
@@ -227,12 +252,38 @@ export function createAutonomousExternalRuntime(options:ExternalRuntimeOptions):
  function historical(i:Pick<ExternalInvocation,'taskId'|'revision'|'profile'|'actionId'>){
   const raw=store.getProviderPolicy(i.taskId,i.revision,i.profile.id);
   try{
-   const p=object(raw,['version','profileHash','configurationFingerprint','config'],['costSettings','injectedCostReader']);
+   const p=object(raw,['version','profileHash','configurationFingerprint','config'],['costSettings','injectedCostReader','oidcSettings','guardSettings']);
    if(p.version!==1||p.profileHash!==hash(i.profile)||typeof p.configurationFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(p.configurationFingerprint))unavailable();
    const saved=configuration(JSON.stringify(p.config)),profile=saved.profiles.find(p=>p.id===i.profile.id);
    if(!profile||hash({...profile,enabled:true})!==p.profileHash)unavailable();
-   return {config:saved,costSettings:p.costSettings?costConfiguration(JSON.stringify(p.costSettings),saved):undefined,injectedCostReader:p.injectedCostReader===true,configurationFingerprint:p.configurationFingerprint};
+   return {config:saved,...(p.oidcSettings?{oidcSettings:parseExternalOidcSettings(JSON.stringify(p.oidcSettings))}:{}),costSettings:p.costSettings?costConfiguration(JSON.stringify(p.costSettings),saved):undefined,injectedCostReader:p.injectedCostReader===true,configurationFingerprint:p.configurationFingerprint};
   }catch{recoveryIssue(i.actionId,'historical_policy_missing');unavailable();}
+ }
+ const settingsFor=(scope:Readonly<ExternalCredentialScope>,profile:ExternalProfile):ExternalOidcSettings=>{
+  const settings=scope.purpose==='execute'?oidcSettings:historical({taskId:scope.taskId,revision:scope.revision,profile,actionId:scope.actionId}).oidcSettings;
+  if(!settings?.oidc.roles[profile.id])unavailable();return settings;
+ };
+ const oidcAuthority=createCanonicalOidcAuthority({core:options.core,store,now,currentProfile:id=>registry.get(id),config:(scope,profile)=>settingsFor(scope,profile).oidc});
+ async function scopedPolicy(scope:Readonly<ExternalCredentialScope>){
+  // Full facts are revalidated independently of caller-held invocation data.
+  await oidcAuthority.grant(scope);
+  const saved=store.transaction(s=>{const action=s.actions[scope.actionId];const approval=action?s.approvals[action.approvalId]:undefined;if(!action||!approval)unavailable();return {action,profile:approval.profile,endsAt:approval.endsAt};});
+  const template=settingsFor(scope,saved.profile).scoping[saved.profile.id]?.[scope.purpose];if(!template)unavailable();
+  const task=await options.core!.execute('get',{id:scope.taskId}) as AutonomousTask;
+  let expiresAt=now()+template.durationSeconds*1000;
+  if(scope.purpose==='execute'){
+   if(!Number.isSafeInteger(task.activeRunStartedAt)||!task.lease||task.lease.expiresAt<=now()||task.status!=='running'||task.stopReason)unavailable();
+   expiresAt=Math.min(expiresAt,task.spec.endsAt,saved.endsAt,saved.action.expiresAt,task.activeRunStartedAt!+task.spec.maxRunMs);
+  }
+  return {...template,targetHash:awsOidcTargetHash(scope.target),expiresAt};
+ }
+ async function withOidc<T>(scope:Readonly<ExternalCredentialScope>,consume:(c:ExternalProviderCredential)=>Promise<T>){
+  if(!options.oidcSigner||!('region'in scope.target))unavailable();
+  const saved=store.transaction(s=>{const a=s.actions[scope.actionId],p=a?s.approvals[a.approvalId]:undefined;if(!p)unavailable();return p.profile;});
+  const cfg=scope.purpose==='execute'?config:historical({taskId:scope.taskId,revision:scope.revision,profile:saved,actionId:scope.actionId}).config;
+  let auditRecorded=false;const audit=(value:import('../../../packages/adapters/src/aws-web-identity.ts').OidcStsAudit)=>{if(!oidcAudit)unavailable();const raw=JSON.stringify(value);for(const secret of knownSecretValues)if(secret&&(raw.includes(secret)||raw.includes(JSON.stringify(secret).slice(1,-1))))unavailable();oidcAudit.record(value);auditRecorded=true;};
+  const resolver=createAwsWebIdentityResolver({audit,region:scope.target.region,allowedRegions:cfg.providers.aws?.allowedRegions??[scope.target.region],signer:options.oidcSigner,authority:{grant:oidcAuthority.grant,scoping:scopedPolicy},fetch:options.fetch,now});
+  try{return await resolver.withCredentials(scope,async (credentials,control)=>{const value:ExternalProviderCredential={provider:'aws',...credentials};credentialControls.set(value,control);const values=Object.values(credentials);for(const v of values)knownSecretValues.add(v);try{return await consume(value);}finally{for(const v of values)knownSecretValues.delete(v);}});}catch(error){if(!auditRecorded){const facts=store.transaction(s=>{const a=s.actions[scope.actionId],p=a?s.approvals[a.approvalId]:undefined;if(!a||!p)unavailable();return {a,p};});const settings=settingsFor(scope,facts.p.profile),roles=settings.oidc.roles[facts.p.profileId]!;audit({taskId:scope.taskId,revision:scope.revision,profileId:facts.p.profileId,profileHash:facts.p.profileHash,actionId:scope.actionId,purpose:scope.purpose,roleArn:scope.purpose==='execute'?roles.executeRoleArn:roles.cleanupRoleArn,status:'denied'});}throw error;}
  }
  const resolver={async withCredential<T>(reference:string,scope:Readonly<ExternalCredentialScope>,consume:(c:ExternalProviderCredential)=>Promise<T>):Promise<T>{
   const durable=store.transaction(s=>{const a=s.actions[scope.actionId];return a?s.approvals[a.approvalId]:undefined;});
@@ -241,7 +292,10 @@ export function createAutonomousExternalRuntime(options:ExternalRuntimeOptions):
    const p=config.profiles.find(p=>p.id===durable.profileId&&p.credentialRef===reference&&p.provider===scope.provider&&hash(p.target)===hash(scope.target));
    if(!p||!available(p)||now()>=scope.expiresAt)unavailable();
   }else historical({taskId:scope.taskId,revision:scope.revision,profile:durable.profile,actionId:scope.actionId});
-  try{const value=await resolveCredential(reference,credentialKind(scope.provider));if(scope.purpose!=='execute')recoveryIssue(scope.actionId);return consume(structuredClone(value));}
+  try{
+   const savedSettings=scope.purpose==='execute'?oidcSettings:historical({taskId:scope.taskId,revision:scope.revision,profile:durable.profile,actionId:scope.actionId}).oidcSettings;
+   if(savedSettings?.oidc.roles[durable.profileId])return await withOidc(scope,consume);
+   const value=await resolveCredential(reference,credentialKind(scope.provider));if(scope.purpose!=='execute')recoveryIssue(scope.actionId);return consume(structuredClone(value));}
   catch(error){if(scope.purpose!=='execute')recoveryIssue(scope.actionId,'historical_credential_unavailable');throw error;}
  }};
  // Large uploads: R2 multipart bucket + durable ledger + manifest ledger. All three or none.
@@ -267,12 +321,29 @@ export function createAutonomousExternalRuntime(options:ExternalRuntimeOptions):
   const noLaunch:AwsTtlGuardPort={async attest(){unavailable();},async arm(){unavailable();}};
   return createExternalProviderTransport({enabled:true,artifacts:createExternalArtifactLoader(options.artifacts!),now,fetch:options.fetch,forbiddenValues:[...knownSecretValues],costReader:reader,...providerSet(saved.providers),...(saved.ttlGuard?{awsTtlGuard:{guardArn:saved.ttlGuard.guardArn,port:noLaunch}}:{})});
  }
- const transport:GuardedExternalProviderTransport<ExternalProviderCredential>={execute:(i,c,authority)=>provider().execute(i,c,authority),inspect:(i,c)=>recoveryProvider(i).inspect(i,c),cleanup:(i,r,c)=>recoveryProvider(i).cleanup(i,r,c),confirmAbsent:(i,r,c)=>recoveryProvider(i).confirmAbsent(i,r,c)};
+ function invocationProvider(i:ExternalInvocation,c:ExternalProviderCredential,purpose:ExternalCredentialScope['purpose']){
+  const w=delegated?.workloads.find(w=>w.profileId===i.profile.id);if(purpose==='execute'&&i.operation==='aws.spot.start'&&w){if(env.AUTONOMOUS_DELEGATED_ENABLED!=='true')unavailable();const aws=config.providers.aws;if(!aws||aws.imageId!==w.descriptor.amiId||aws.instanceProfileArn!==w.descriptor.iam.instanceProfileArn||aws.availabilityZoneId!==w.descriptor.availabilityZoneId)unavailable();assertDelegatedLaunchAdmission(options.sql!,i.taskId,i.revision,i.profile.id,store.transaction(s=>s.actions[i.actionId]?.requestId??unavailable()),w.descriptor,w.inputManifest);}
+  const cfg=purpose==='execute'?config:historical(i).config;
+  const launchMetadata=w&&purpose==='execute'&&i.operation==='aws.spot.start'?{taskId:i.taskId,revision:i.revision,profileId:i.profile.id,descriptorHash:workloadFingerprint(w.descriptor),inputManifestDigest:inputManifestDigest(w.inputManifest)}:undefined;
+  const saved=purpose==='execute'?oidcSettings:historical(i).oidcSettings;
+  if(!saved?.oidc.roles[i.profile.id])return purpose==='execute'?(launchMetadata?createExternalProviderTransport({...providerOptions,delegatedLaunch:launchMetadata,forbiddenValues:[...knownSecretValues]}):provider()):recoveryProvider(i);
+  if(c.provider!=='aws')unavailable();
+  const scope:ExternalCredentialScope={taskId:i.taskId,revision:i.revision,actionId:i.actionId,provider:i.profile.provider,target:i.profile.target,operation:i.operation,purpose,expiresAt:i.expiresAt};
+  const control=credentialControls.get(c);if(!control)unavailable();
+  const scopedFetch:typeof fetch=async(input,init)=>{await oidcAuthority.grant(scope);control.assertValid();const response=await (options.fetch??globalThis.fetch)(input,init);await oidcAuthority.grant(scope);control.assertValid();return response;};
+  // Only final GSC credentials reach these callbacks. They never resolve a key or ARWI parent.
+  const credentials=async()=>{await oidcAuthority.grant(scope);control.assertValid();return {accessKeyId:c.accessKeyId,secretAccessKey:c.secretAccessKey,...(c.sessionToken?{sessionToken:c.sessionToken}:{})};};
+  const guarded=purpose==='execute'?(options.awsTtlGuard??(guardSettings?createAwsTtlGuardPort({...guardSettings,enabled:true,credentials,fetchImpl:scopedFetch,now}):undefined)):undefined;
+  const costs=purpose==='execute'?costSettings:historical(i).costSettings;
+  const reader=costs?createAwsCostExplorerReader({...costs,enabled:true,cache:createExternalCostCache(options.sql!),credentials,fetch:scopedFetch,now}):undefined;
+  return createExternalProviderTransport({enabled:true,...(launchMetadata?{delegatedLaunch:launchMetadata}:{}),artifacts:createExternalArtifactLoader(options.artifacts!),...providerSet(cfg.providers),now,fetch:scopedFetch,forbiddenValues:[...knownSecretValues],costReader:reader,...(cfg.ttlGuard&&guarded?{awsTtlGuard:{guardArn:cfg.ttlGuard.guardArn,port:guarded}}:{})});
+ }
+ const transport:GuardedExternalProviderTransport<ExternalProviderCredential>={execute:(i,c,authority)=>invocationProvider(i,c,'execute').execute(i,c,authority),inspect:(i,c)=>invocationProvider(i,c,'inspect').inspect(i,c),cleanup:(i,r,c)=>invocationProvider(i,c,'cleanup').cleanup(i,r,c),confirmAbsent:(i,r,c)=>invocationProvider(i,c,'cleanup').confirmAbsent(i,r,c)};
  const broker=new ExternalBroker({store,registry,resolver,transport,now});
  const serverApprove=broker.serverApprove.bind(broker);
  broker.serverApprove=request=>{
   const approval=serverApprove(request);
-  store.bindProviderPolicy(request.taskId,request.revision,request.profileId,{version:1,profileHash:approval.profileHash,configurationFingerprint,config,...(costSettings?{costSettings}:{}),...(options.costReader?{injectedCostReader:true}:{})});
+  store.bindProviderPolicy(request.taskId,request.revision,request.profileId,{version:1,profileHash:approval.profileHash,configurationFingerprint,config,...(guardSettings?{guardSettings}:{}),...(oidcSettings?{oidcSettings}:{}),...(costSettings?{costSettings}:{}),...(options.costReader?{injectedCostReader:true}:{})});
   return approval;
  };
  // Budget watch: cancel live approvals first, then stop the canonical task through the budget stop. Never an HTTP route.
@@ -287,9 +358,11 @@ export function createAutonomousExternalRuntime(options:ExternalRuntimeOptions):
   async get(key){const object=await artifactBucket.get(key);if(!object)return null;return {size:object.size,async arrayBuffer(){if(!Number.isSafeInteger(object.size)||object.size<1||object.size>2*1024*1024)unavailable();const reader=object.body.getReader(),chunks:Uint8Array[]=[];let size=0;try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>object.size){await reader.cancel();unavailable();}chunks.push(part.value);}}finally{reader.releaseLock();}if(size!==object.size)unavailable();return new Uint8Array(Buffer.concat(chunks)).buffer;}};},
   put:(key,value,condition)=>artifactBucket.put!(key,value,condition),
  }):undefined);
- const service=createAutonomousExternalService({core:options.core,broker,registry,store,configurationFingerprint,artifactPublisher,...(manifests&&largeStore?{manifestStore:{save:(m,d)=>manifests.save(m,d)},largeStore:{abortOwner:(t,r)=>largeStore.abortOwner(t,r)}}:{}),knownSecretValues:()=>[...knownSecretValues]});
+ const service=createAutonomousExternalService({...(oidcAudit?{oidcAudit:async(id,query)=>oidcAudit.page(id,query)}:{}),beforeExecute:async(id,body)=>{const w=delegated?.workloads.find(w=>w.profileId===body.request.profileId);if(w&&body.request.operation==='aws.spot.start'){if(env.AUTONOMOUS_DELEGATED_ENABLED!=='true'||!options.admitDelegated)unavailable();await options.admitDelegated(id,{lease:body.lease,runtimeId:body.runtimeId,profileId:w.profileId,launchRequestId:body.request.requestId,inputManifest:w.inputManifest});}},profileMetadata:(task,p)=>{const w=delegated?.workloads.find(w=>w.profileId===p.id),display=w?{delegated:{descriptorHash:workloadFingerprint(w.descriptor),inputManifestDigest:inputManifestDigest(w.inputManifest),descriptor:w.descriptor}}:{};if(!oidcFor(p))return display;const settings=oidcSettings!,roles=settings.oidc.roles[p.id]!,templates=settings.scoping[p.id]!;return {...display,oidc:{issuer:settings.oidc.issuer,audience:settings.oidc.audience,...Object.fromEntries((['execute','inspect','cleanup'] as const).map(purpose=>[purpose,{roleArn:purpose==='execute'?roles.executeRoleArn:roles.cleanupRoleArn,subject:oidcSubject(task.id,task.revision,hash(p),purpose),policyHash:templates[purpose].policyHash,durationSeconds:templates[purpose].durationSeconds}]))} as import('../../../apps/control-plane/src/autonomous-external-api.ts').ExternalOidcDisplay};},core:options.core,broker,registry,store,configurationFingerprint,artifactPublisher,...(manifests&&largeStore?{manifestStore:{save:(m,d)=>manifests.save(m,d)},largeStore:{abortOwner:(t,r)=>largeStore.abortOwner(t,r)}}:{}),knownSecretValues:()=>[...knownSecretValues]});
  let cursor=0;
  return {enabled:config.profiles.some(available),service,configurationFingerprint,...(largeStore&&config.providers.hf?.lfs?{large:{store:largeStore,limits:limitsOf(config.providers.hf.lfs)}}:{}),configuredSecretValues:()=>Object.freeze([...knownSecretValues]),
+  async resolveHfToken(reference){const c=await resolveCredential(reference,'hf');if(c.provider!=='hf')unavailable();return c.token;},
+  async withOwnedAwsCredential(taskId,revision,actionId,purpose,consume){const facts=store.transaction(s=>{const a=s.actions[actionId],p=a?s.approvals[a.approvalId]:undefined;if(!a||!p||p.taskId!==taskId||p.revision!==revision||p.profile.provider!=='aws'||!a.resource||a.providerReceipt?.resource?.id!==a.resource.id)unavailable();return {a,p};});const {a,p}=facts;return resolver.withCredential(p.profile.credentialRef,{taskId,revision,actionId,provider:p.profile.provider,target:p.profile.target,operation:a.operation,purpose,expiresAt:a.expiresAt},async c=>{if(c.provider!=='aws')unavailable();return consume(c,credentialControls.get(c));});},
   async recover(){
    await service.recover();const pending=store.listJournal().filter(j=>!['settled','cleaned'].includes(j.phase));
    if(!pending.length)return {needsWork:false};

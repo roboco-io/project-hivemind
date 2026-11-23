@@ -161,3 +161,24 @@ test('R9 audit accepts current producer typed parameters wire name through the s
   const h=await session(t);h.setExternalActions([{requestId:'producer-wire',phase:'broker',parameterHash:'a'.repeat(64),parameters:{artifactDigest:'b'.repeat(64),message:'NEVER_MESSAGE'},providerResult:{kind:'hf_commit',oid:'c'.repeat(40)}}]);
   const result=await h.call('audit',{taskId:'autonomous-1'}),a=(result.structuredContent as any).externalActions[0];assert.deepEqual(a.parametersSubset,{artifactDigest:'b'.repeat(64)});assert.equal(a.parameters,undefined);assert.ok(!JSON.stringify(result).includes('NEVER_'));
 });
+
+test('MCP public large metadata preserves boolean consent and rejects malformed acknowledgement',async t=>{
+ const h=await session(t),current=task();(current.spec as any).externalProfiles=['hf-ref'];h.setTask(current);
+ const p={id:'hf-ref',enabled:true,profileHash:'b'.repeat(64),provider:'hf',target:{repository:'owner/model',revision:'main',visibility:'public',allowPublicLarge:true},operations:['hf.model.lfs_commit'],upperBoundMicros:100,hfVisibilityDisplay:{visibility:'public',publicEffect:true,notice:'공개 저장소'}};
+ h.setProfiles({profiles:[p]});const result=await h.call('get',{taskId:current.id});
+ const view=result.structuredContent as any;assert.equal(view.task.externalProfilesMetadata[0].target.allowPublicLarge,true);assert.equal(view.task.externalProfilesMetadata[0].publicEffect,true);
+ h.setExternalActions([{requestId:'old',operation:'hf.model.lfs_commit',phase:'broker',approvedTarget:p.target}]);const audit=await h.call('audit',{taskId:current.id});assert.equal((audit.structuredContent as any).externalActions[0].approvedTarget.allowPublicLarge,true);
+ for(const flag of [undefined,false,'true',null]){
+  h.setProfiles({profiles:[{...p,target:{...p.target,allowPublicLarge:flag}}]});const bad=await h.call('get',{taskId:current.id});assert.equal((bad.structuredContent as any).task.externalProfileMetadataAvailable,false);
+ }
+});
+
+test('MCP mixed HF profile preserves consent for inline and LFS audit targets',async t=>{
+ const h=await session(t),current=task();(current.spec as any).externalProfiles=['hf-ref'];h.setTask(current);
+ const target={repository:'owner/model',revision:'main',visibility:'public',allowPublicLarge:true};
+ h.setProfiles({profiles:[{id:'hf-ref',enabled:true,profileHash:'b'.repeat(64),provider:'hf',target,operations:['hf.model.commit','hf.model.lfs_commit'],upperBoundMicros:100,hfVisibilityDisplay:{visibility:'public',publicEffect:true,notice:'공개 대형 게시 허용'}}]});
+ for(const operation of ['hf.model.commit','hf.model.lfs_commit']){
+  h.setExternalActions([{requestId:'audit',phase:'broker',operation,approvedTarget:target}]);const audit=await h.call('audit',{taskId:current.id});assert.deepEqual((audit.structuredContent as any).externalActions[0].approvedTarget,target);
+  for(const allowPublicLarge of [false,'true',null]){h.setExternalActions([{requestId:'audit',phase:'broker',operation,approvedTarget:{...target,allowPublicLarge}}]);const bad=await h.call('audit',{taskId:current.id});assert.equal((bad.structuredContent as any).externalActions[0].approvedTarget,undefined);}
+ }
+});

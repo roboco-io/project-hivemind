@@ -9,6 +9,8 @@ import {validateSnapshot} from '../snapshot.ts';
 import {validateWorkflowSpec,type WorkflowSpec} from '../workflow.ts';
 import {validateAuth} from '../crypto.ts';
 
+/** Only these routes delegate authentication to the team protocol handler. */
+export const isTeamRoute=(path:string)=>/^\/v1\/workflows\/[a-f0-9-]{36}\/team(?:\/(?:tasks|events|notes|block|review|claim|heartbeat|submit))?$/.test(path);
 export const MAX_BODY_BYTES=8*1024*1024;
 export class ApiError extends Error {statusCode:number;constructor(statusCode:number){super('Request failed');this.statusCode=statusCode;}}
 export interface ApiService {

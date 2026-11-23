@@ -61,3 +61,17 @@ test('large wiring exists only with lfs settings and a multipart bucket',()=>{
  assert.equal(make(config(),credentials,{async get(){return null;},async put(){return {};}}).large,undefined);
  assert.equal(make(config({hf:{lfs:undefined},ops:['hf.model.commit']})).large,undefined);
 });
+
+test('public large configuration requires target opt-in and server limits',()=>{
+ const publicConfig=()=>config({hfTarget:{visibility:'public',allowPublicLarge:true},hf:{visibility:'public'}});
+ assert.equal(make(publicConfig()).enabled,true);
+ assert.ok(make(publicConfig()).large);
+ for(const flag of [false,null,'true',1])assert.throws(()=>make(config({hfTarget:{visibility:'public',allowPublicLarge:flag},hf:{visibility:'public'}})),/unavailable/);
+ for(const visibility of [undefined,'private'])assert.throws(()=>make(config({hfTarget:{visibility,allowPublicLarge:true}})),/unavailable/);
+ assert.throws(()=>make(config({hfTarget:{visibility:'public',allowPublicLarge:true},hf:{visibility:'public',lfs:undefined}})),/unavailable/);
+ assert.notEqual(make(publicConfig()).configurationFingerprint,make(config()).configurationFingerprint);
+});
+
+test('public large flag cannot be configured without the large operation',()=>{
+ assert.throws(()=>make(config({hfTarget:{visibility:'public',allowPublicLarge:true},hf:{visibility:'public'},ops:['hf.model.commit']})),/unavailable/);
+});

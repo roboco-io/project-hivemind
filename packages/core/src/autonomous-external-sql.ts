@@ -59,7 +59,7 @@ function intent(j:ExternalJournal){
  if(j.reservation!==undefined){const r=j.reservation;fields(r,['tool','system','operation','estimatedCostMicros']);const allowed:Record<string,string[]>={aws:['aws.spot.start','aws.spot.inspect'],hf:['hf.model.commit','hf.model.lfs_commit'],github:['github.branch.push'],s3:['aws.s3.put','aws.s3.inspect']};if(r.tool!=='mcp__hivemind__action'||!allowed[r.system]?.includes(r.operation)||!Number.isSafeInteger(r.estimatedCostMicros)||r.estimatedCostMicros<0||j.request&&r.operation!==j.request.operation)invalid();}
 }
 function providerPolicy(value:unknown){
- fields(value,['version','profileHash','configurationFingerprint','config'],['costSettings','injectedCostReader']);if(value.version!==1||typeof value.profileHash!=='string'||!/^[a-f0-9]{64}$/.test(value.profileHash)||typeof value.configurationFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(value.configurationFingerprint))invalid();
+ fields(value,['version','profileHash','configurationFingerprint','config'],['costSettings','injectedCostReader','oidcSettings','guardSettings']);if(value.version!==1||typeof value.profileHash!=='string'||!/^[a-f0-9]{64}$/.test(value.profileHash)||typeof value.configurationFingerprint!=='string'||!/^[a-f0-9]{64}$/.test(value.configurationFingerprint))invalid();
  fields(value.config,['version','profiles','providers'],['ttlGuard','credentialPolicyRevision']);if(value.config.version!==1||!Array.isArray(value.config.profiles)||value.config.profiles.length<1||value.config.profiles.length>4)invalid();
  if(value.injectedCostReader!==undefined&&typeof value.injectedCostReader!=='boolean')invalid();
 }

@@ -172,3 +172,25 @@ test('profile metadata shows a public Hugging Face notice and s3 bucket and pref
   hidden.setProfiles({profiles:[{...base,id:'hf-ref',profileHash:'b'.repeat(64),provider:'hf',target:{repository:'owner/model',revision:'main',visibility:'public'},operations:['hf.model.commit']}]});
   await hidden.select();assert.match(hidden.get('autonomous-profiles').textContent,/미확인/);assert.equal(hidden.get('autonomous-approve').disabled,true);
 });
+
+test('public large consent stays a boolean in profile and approved target metadata',async()=>{
+ const ui=await operatorDashboard(),current=draft();current.spec.externalProfiles=['hf-ref'] as never;ui.setTask(current);
+ const p={id:'hf-ref',enabled:true,profileHash:'b'.repeat(64),provider:'hf',target:{repository:'owner/model',revision:'main',visibility:'public',allowPublicLarge:true},operations:['hf.model.lfs_commit'],upperBoundMicros:100,hfVisibilityDisplay:{visibility:'public',publicEffect:true,notice:'공개 저장소'}};
+ ui.setProfiles({profiles:[p]});ui.setExternalActions([{operation:'hf.model.lfs_commit',requestId:'old',revision:1,approvedTarget:p.target}]);await ui.select();
+ assert.match(ui.get('autonomous-profiles').textContent,/"allowPublicLarge":true/);assert.match(ui.get('autonomous-profiles').textContent,/공개 대형 게시 허용/);
+ assert.match(ui.get('autonomous-cleanup').textContent,/"allowPublicLarge":true/);
+ for(const patch of [{allowPublicLarge:'true'},{allowPublicLarge:false},{allowPublicLarge:undefined},{visibility:'private'}]){
+  ui.setProfiles({profiles:[{...p,target:{...p.target,...patch}}]});await ui.select();assert.equal(ui.get('autonomous-approve').disabled,true);
+ }
+ ui.setProfiles({profiles:[{...p,operations:['hf.model.commit']}]});await ui.select();assert.equal(ui.get('autonomous-approve').disabled,true);
+});
+
+test('mixed HF profile preserves consent in inline and LFS action audit targets',async()=>{
+ const ui=await operatorDashboard(),current=draft();current.spec.externalProfiles=['hf-ref'] as never;ui.setTask(current);
+ const target={repository:'owner/model',revision:'main',visibility:'public',allowPublicLarge:true};
+ ui.setProfiles({profiles:[{id:'hf-ref',enabled:true,profileHash:'b'.repeat(64),provider:'hf',target,operations:['hf.model.commit','hf.model.lfs_commit'],upperBoundMicros:100,hfVisibilityDisplay:{visibility:'public',publicEffect:true,notice:'공개 대형 게시 허용'}}]});
+ for(const operation of ['hf.model.commit','hf.model.lfs_commit']){
+  ui.setExternalActions([{requestId:'audit',revision:1,operation,approvedTarget:target}]);await ui.select();assert.match(ui.get('autonomous-cleanup').textContent,/"allowPublicLarge":true/);assert.match(ui.get('autonomous-cleanup').textContent,/owner\/model/);
+  for(const allowPublicLarge of [false,'true',null]){ui.setExternalActions([{requestId:'audit',revision:1,operation,approvedTarget:{...target,allowPublicLarge}}]);await ui.select();assert.match(ui.get('autonomous-cleanup').textContent,/승인 당시 대상 미보고/);}
+ }
+});

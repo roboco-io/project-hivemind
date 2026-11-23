@@ -134,14 +134,19 @@ test('an HF profile without visibility keeps its previous profileHash',()=>{
   // Value computed with the code before the visibility field existed.
   assert.equal(b.serverApprove({taskId:'t',revision:1,profileId:'hf1',endsAt:5000,budgetMicros:100}).profileHash,'7b706d7c08beb836eca8d7cf6c2ba39d58beefa8c83c0105e54a17c44327a743');
 });
-test('HF visibility is validated, bound into the profile and public profiles cannot use lfs_commit',()=>{
+test('HF visibility binds acknowledgement into the profile and denies public LFS without it',()=>{
   const approve=(profile:unknown)=>new ExternalBroker<unknown>({store:{transaction:fn=>fn({version:1,approvals:{},actions:{}} as never)},registry:{get:()=>profile as ExternalProfile},resolver:{} as never,transport:{} as never,now:()=>1000}).serverApprove({taskId:'t',revision:1,profileId:(profile as {id:string}).id,endsAt:5000,budgetMicros:100});
   const t={repository:'o/r',revision:'main'};
   const pub=approve({...hfBase,target:{...t,visibility:'public'},operations:['hf.model.commit']});
   const priv=approve({...hfBase,target:{...t,visibility:'private'},operations:['hf.model.commit']});
   assert.notEqual(pub.profileHash,priv.profileHash);
   for(const bad of ['Public','PRIVATE','',true,null,1])assert.throws(()=>approve({...hfBase,target:{...t,visibility:bad},operations:['hf.model.commit']}),Error,String(bad));
-  assert.throws(()=>approve({...hfBase,target:{...t,visibility:'public'},operations:['hf.model.commit','hf.model.lfs_commit']}),/private/);
+  assert.throws(()=>approve({...hfBase,target:{...t,visibility:'public'},operations:['hf.model.commit','hf.model.lfs_commit']}),/acknowledgement/);
+  const publicLarge=approve({...hfBase,target:{...t,visibility:'public',allowPublicLarge:true},operations:['hf.model.commit','hf.model.lfs_commit']});
+  const privateLarge=approve({...hfBase,target:{...t,visibility:'private'},operations:['hf.model.commit','hf.model.lfs_commit']});
+  assert.notEqual(publicLarge.profileHash,privateLarge.profileHash);
+  assert.equal((publicLarge.profile.target as {allowPublicLarge?:boolean}).allowPublicLarge,true);
+  assert.throws(()=>approve({...hfBase,target:{...t,visibility:'public',allowPublicLarge:true},operations:['hf.model.commit']}),/Invalid public large acknowledgement/);
   assert.doesNotThrow(()=>approve({...hfBase,target:t,operations:['hf.model.commit','hf.model.lfs_commit']}));
   assert.doesNotThrow(()=>approve({...hfBase,target:{...t,visibility:'private'},operations:['hf.model.lfs_commit']}));
 });
@@ -248,39 +253,77 @@ test('the provider transport delegates S3 put and inspect, and rejects cleanup a
   assert.equal(fake.calls.length,before);
 });
 
-const HF_PARENT='a'.repeat(40),HF_COMMIT='b'.repeat(40),lfsBytes=Buffer.from('large-file-content');
+const HF_PARENT='a'.repeat(40),HF_COMMIT='b'.repeat(40),lfsBytes=Buffer.from('large-file-content'),configBytes=Buffer.from('{"model_type":"fixture"}');
 function lfsManifest():ExternalLargeManifest{
   const owner=largeOwnerKey('t1',1,'hfp'),oid=sha(lfsBytes);
-  return {version:1,taskId:'t1',revision:1,profileId:'hfp',files:[{path:'models/a.bin',size:lfsBytes.byteLength,sha256:oid,storageRef:largeStorageRef(owner,oid)}]};
+  return {version:1,taskId:'t1',revision:1,profileId:'hfp',files:[{path:'models/a.bin',size:lfsBytes.byteLength,sha256:oid,storageRef:largeStorageRef(owner,oid)},{path:'config.json',size:configBytes.length,sha256:sha(configBytes),storageRef:largeStorageRef(owner,sha(configBytes))}]};
 }
 function hfFake(visibility:boolean=true){
-  const calls:{url:string;method:string;auth?:string}[]=[];const st={committed:false};
+  const calls:{url:string;method:string;auth?:string}[]=[];
+  const st={committed:false,uploadedHash:'',uploadedSize:0,regularHash:'',preuploads:0,commits:0};
   const mark=(i:ExternalInvocation)=>'hivemind:'+sha(JSON.stringify([i.ownershipToken,i.idempotencyKey,i.parametersHash]));let current:ExternalInvocation|undefined;
   const f=(async(url:string|URL|Request,init:RequestInit={})=>{
-    const u=String(url),headers=Object.fromEntries(Object.entries((init.headers??{}) as Record<string,string>).map(([k,v])=>[k.toLowerCase(),v]));
-    calls.push({url:u,method:init.method??'GET',auth:headers.authorization});
-    if(init.body&&typeof init.body==='object'&&'getReader' in init.body)for await(const _c of init.body as unknown as AsyncIterable<Uint8Array>){/* drain */}
-    const json=(v:unknown)=>new Response(JSON.stringify(v),{status:200});
+    const u=String(url),method=init.method??'GET',headers:Record<string,string>={};
+    new Headers(init.headers).forEach((value,key)=>{headers[key]=value;});
+    calls.push({url:u,method,auth:headers.authorization});
+    assert.equal(init.redirect,'manual');
+    const chunks:Buffer[]=[];
+    if(init.body&&typeof init.body==='object'&&'getReader' in init.body){
+      for await(const c of init.body as unknown as AsyncIterable<Uint8Array>)chunks.push(Buffer.from(c));
+    }else if(typeof init.body==='string')chunks.push(Buffer.from(init.body));
+    const body=Buffer.concat(chunks),json=(v:unknown)=>new Response(JSON.stringify(v),{status:200});
+    if(u.startsWith('https://huggingface.co/'))assert.equal(headers.authorization,`Bearer ${hfToken.token}`);
     if(u.endsWith('/commits/main'))return json(st.committed?[{id:HF_COMMIT,title:mark(current!)}]:[]);
     if(u.includes('/revision/main?'))return json({private:visibility,sha:HF_PARENT});
-    if(u.includes(`/revision/${HF_COMMIT}?`))return json({private:visibility,sha:HF_COMMIT,siblings:[{rfilename:'models/a.bin',lfs:{sha256:sha(lfsBytes),size:lfsBytes.byteLength}}]});
-    if(u.endsWith('.git/info/lfs/objects/batch'))return json({objects:[{oid:sha(lfsBytes),size:lfsBytes.byteLength,actions:{upload:{href:'https://lfs-bucket.example.test/up'}}}]});
-    if((init.method??'GET')==='PUT')return new Response('',{status:200});
-    if(u.endsWith('/commit/main')){st.committed=true;return json({commitOid:HF_COMMIT});}
-    return new Response('no',{status:404});
+    if(u.includes(`/revision/${HF_COMMIT}?`))return json({private:visibility,sha:HF_COMMIT,siblings:[
+      {rfilename:'models/a.bin',lfs:{sha256:st.uploadedHash,size:st.uploadedSize}},
+      {rfilename:'config.json',size:configBytes.length,blobId:createHash('sha1').update(`blob ${configBytes.length}\0`).update(configBytes).digest('hex')},
+    ]});
+    if(u.endsWith('/preupload/main')){
+      assert.equal(method,'POST');
+      assert.deepEqual(JSON.parse(body.toString()),{files:lfsManifest().files.map(file=>({path:file.path,size:file.size,sample:(file.path==='config.json'?configBytes:lfsBytes).subarray(0,512).toString('base64')}))});
+      st.preuploads++;
+      return json({files:lfsManifest().files.map(file=>({path:file.path,uploadMode:file.path==='config.json'?'regular':'lfs',shouldIgnore:false}))});
+    }
+    if(u.endsWith('.git/info/lfs/objects/batch')){
+      assert.deepEqual(JSON.parse(body.toString()),{operation:'upload',transfers:['basic','multipart'],hash_algo:'sha256',ref:{name:'main'},objects:[{oid:sha(lfsBytes),size:lfsBytes.length}]});
+      return json({transfer:'basic',objects:[{oid:sha(lfsBytes),size:lfsBytes.byteLength,actions:{upload:{href:'https://lfs-bucket.example.test/up?signature=fixture',header:{'x-signed-fixture':'upload'}},verify:{href:'https://huggingface.co/o/r.git/info/lfs/verify'}}}]});
+    }
+    if(u==='https://lfs-bucket.example.test/up?signature=fixture'){
+      assert.equal(method,'PUT');assert.equal(headers.authorization,undefined);assert.equal(headers['x-signed-fixture'],'upload');
+      assert.equal(headers['content-length'],String(lfsBytes.length));
+      st.uploadedHash=sha(body);st.uploadedSize=body.length;
+      assert.equal(st.uploadedHash,sha(lfsBytes));assert.equal(st.uploadedSize,lfsBytes.length);
+      return new Response(null,{status:200});
+    }
+    if(u.endsWith('.git/info/lfs/verify')){
+      assert.deepEqual(JSON.parse(body.toString()),{oid:st.uploadedHash,size:st.uploadedSize});return new Response(null,{status:200});
+    }
+    if(u.endsWith('/commit/main')){
+      assert.equal(method,'POST');assert.equal(headers['content-type'],'application/x-ndjson');assert.equal(st.preuploads,1);
+      assert.equal(st.uploadedHash,sha(lfsBytes));
+      const lines=body.toString().trimEnd().split('\n').map(line=>JSON.parse(line));
+      assert.deepEqual(lines,[{key:'header',value:{summary:mark(current!),description:'weights',parentCommit:HF_PARENT}},
+        {key:'lfsFile',value:{path:'models/a.bin',algo:'sha256',oid:sha(lfsBytes),size:lfsBytes.length}},
+        {key:'file',value:{path:'config.json',encoding:'base64',content:configBytes.toString('base64')}}]);
+      const encoded=lines[2]?.value.content;assert.ok(typeof encoded==='string');
+      st.regularHash=sha(Buffer.from(encoded,'base64'));
+      assert.equal(st.regularHash,sha(configBytes));st.commits++;st.committed=true;return json({commitOid:HF_COMMIT});
+    }
+    assert.fail(`unexpected fixture request: ${method} ${u}`);
   }) as typeof fetch;
-  return {f,calls,use:(i:ExternalInvocation)=>{current=i;}};
+  return {f,calls,st,use:(i:ExternalInvocation)=>{current=i;}};
 }
-const hfToken:ExternalProviderCredential={provider:'hf',token:'TEST_ONLY_HF_TOKEN_CANARY_0001'};
-function lfsInvocation(manifest:ExternalLargeManifest,visibility?:'private'|'public'):ExternalInvocation{
-  const profile:ExternalProfile={...hfBase,id:'hfp',target:{repository:'o/r',revision:'main',...(visibility?{visibility}:{})},operations:['hf.model.commit','hf.model.lfs_commit']} as ExternalProfile;
+const hfToken:ExternalProviderCredential&{provider:'hf';token:string}={provider:'hf',token:'TEST_ONLY_HF_TOKEN_CANARY_0001'};
+function lfsInvocation(manifest:ExternalLargeManifest,visibility?:'private'|'public',allowPublicLarge?:true):ExternalInvocation{
+  const profile:ExternalProfile={...hfBase,id:'hfp',target:{repository:'o/r',revision:'main',...(visibility?{visibility}:{}),...(allowPublicLarge?{allowPublicLarge}:{})},operations:['hf.model.commit','hf.model.lfs_commit']} as ExternalProfile;
   const parameters={manifestDigest:externalLargeManifestDigest(manifest),message:'weights'};
   return {actionId:'h1',taskId:'t1',revision:1,profile,operation:'hf.model.lfs_commit',parameters,parametersHash:externalParametersHash(profile,'hf.model.lfs_commit',parameters),ownershipToken:'ho',idempotencyKey:'hi',expiresAt:NOW+60000};
 }
-function lfsTransport(fake:ReturnType<typeof hfFake>,over:{manifest?:ExternalLargeManifest;visibility?:'private'|'public'}={}){
+function lfsTransport(fake:ReturnType<typeof hfFake>,over:{manifest?:ExternalLargeManifest;visibility?:'private'|'public';forbiddenValues?:readonly string[]}={}){
   const loads:string[]=[];
-  const transport=createExternalProviderTransport({enabled:true,hf:{enabled:true,repository:'o/r',revision:'main',...(over.visibility?{visibility:over.visibility}:{}),
-    lfs:{uploadHosts:['lfs-bucket.example.test'],limits:{maxFileBytes:1024,maxTotalBytes:4096,maxFiles:4},loadManifest:async d=>{loads.push(d);return structuredClone(over.manifest??lfsManifest());},open:async()=>blobStream(lfsBytes)}},
+  const transport=createExternalProviderTransport({enabled:true,forbiddenValues:over.forbiddenValues??['-----BEGIN PRIVATE KEY-----\n'+'A'.repeat(4096)+'\n-----END PRIVATE KEY-----'],hf:{enabled:true,repository:'o/r',revision:'main',...(over.visibility?{visibility:over.visibility}:{}),
+    lfs:{uploadHosts:['lfs-bucket.example.test'],limits:{maxFileBytes:1024,maxTotalBytes:4096,maxFiles:4},loadManifest:async d=>{loads.push(d);return structuredClone(over.manifest??lfsManifest());},open:async file=>blobStream(file.path==='config.json'?configBytes:lfsBytes)}},
     artifacts:loader,fetch:fake.f,now:()=>NOW});
   return {transport,loads};
 }
@@ -288,20 +331,23 @@ test('hf.model.lfs_commit runs through the provider transport with a manifest bo
   const fake=hfFake(),{transport,loads}=lfsTransport(fake),inv=lfsInvocation(lfsManifest());fake.use(inv);
   const r=await transport.execute(inv,hfToken);
   assert.deepEqual([r.outcome,r.effect,r.evidenceId],['succeeded','retained','hf:'+HF_COMMIT]);assert.deepEqual(loads,[(inv.parameters as {manifestDigest:string}).manifestDigest]);
+  assert.deepEqual(r.billing,{verifiedCostMicros:null,final:false});
+  assert.deepEqual(fake.st,{committed:true,uploadedHash:sha(lfsBytes),uploadedSize:lfsBytes.length,regularHash:sha(configBytes),preuploads:1,commits:1});
   assert.ok(fake.calls.filter(c=>c.url.startsWith('https://lfs-bucket.example.test')).every(c=>c.auth===undefined),'the token never reaches the upload host');
   const again=await transport.inspect(inv,hfToken) as {evidenceId:string};assert.equal(again.evidenceId,'hf:'+HF_COMMIT);
 });
 test('hf.model.lfs_commit refuses a manifest whose digest, owner or shape differs, before any request',async()=>{
   const fake=hfFake(),good=lfsManifest(),inv=lfsInvocation(good);fake.use(inv);
   const tampered={...good,files:[{...good.files[0]!,size:good.files[0]!.size+1}]};
+  const otherProfile={...good,profileId:'other-profile'};
   const other={...good,taskId:'t2'};// digest differs and owner key no longer matches
-  for(const manifest of [tampered,other,{...good,extra:1} as never]){
+  for(const manifest of [tampered,other,otherProfile,{...good,extra:1} as never]){
     const {transport}=lfsTransport(fake,{manifest});
     await assert.rejects(transport.execute(inv,hfToken));assert.equal(await transport.inspect(inv,hfToken),null);
   }
   assert.equal(fake.calls.length,0);
 });
-test('hf visibility is enforced: LFS needs private, repository and profile must agree with the server option',async()=>{
+test('hf visibility defaults to private and rejects repository or server option mismatches',async()=>{
   const fake=hfFake(true),inv=lfsInvocation(lfsManifest());fake.use(inv);
   // The server option says public and the profile says nothing (private): mismatch.
   await assert.rejects(lfsTransport(fake,{visibility:'public'}).transport.execute(inv,hfToken));
@@ -310,6 +356,23 @@ test('hf visibility is enforced: LFS needs private, repository and profile must 
   await assert.rejects(lfsTransport(publicRepo).transport.execute(inv,hfToken));
   assert.equal(publicRepo.calls.filter(c=>c.method!=='GET').length,0);
   assert.equal(fake.calls.length,0);
+});
+test('acknowledged public LFS uses the approved public profile and matching repository scope',async()=>{
+  const fake=hfFake(false),inv=lfsInvocation(lfsManifest(),'public',true);fake.use(inv);
+  const {transport}=lfsTransport(fake,{visibility:'public'});
+  const result=await transport.execute(inv,hfToken);
+  assert.equal(result.outcome,'succeeded');assert.deepEqual(result.billing,{verifiedCostMicros:null,final:false});
+  assert.equal(fake.st.commits,1);
+  const privateRepo=hfFake(true);privateRepo.use(inv);
+  await assert.rejects(lfsTransport(privateRepo,{visibility:'public'}).transport.execute(inv,hfToken));
+  assert.equal(privateRepo.calls.filter(c=>c.method!=='GET').length,0);
+});
+test('LFS secret preflight rejects matching manifest bytes before any provider request',async()=>{
+  const fake=hfFake(),inv=lfsInvocation(lfsManifest());fake.use(inv);
+  const {transport,loads}=lfsTransport(fake,{forbiddenValues:[lfsBytes.toString()]});
+  await assert.rejects(transport.execute(inv,hfToken));
+  assert.deepEqual(loads,[(inv.parameters as {manifestDigest:string}).manifestDigest]);
+  assert.equal(fake.calls.length,0);assert.equal(fake.st.commits,0);
 });
 test('the SQL upload ledger bounds listTask and the store caps begin and abort cycles on it',async()=>{
   const port=createExternalLargeRecordPort(sqlPort());

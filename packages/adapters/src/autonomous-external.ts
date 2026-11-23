@@ -1,5 +1,6 @@
 import {createHash,createHmac} from 'node:crypto';
 import {AsyncLocalStorage} from 'node:async_hooks';
+import {assertAwsRegion,awsPlacement,assertAwsPlacement} from './autonomous-aws-region.ts';
 import type {ExternalInvocation,ExternalProviderReceipt,ExternalResource} from '../../contracts/src/autonomous-external.js';
 import {externalParametersHash,externalRecoveryBinding,parseExternalRecoveryCursor,type ExternalDispatchAuthority,type GuardedExternalProviderTransport} from '../../core/src/autonomous-external.ts';
 import type {ExternalCostReader} from './autonomous-external-cost.ts';
@@ -8,7 +9,7 @@ import type {ExternalS3Target} from '../../contracts/src/autonomous-external-s3.
 import {externalLargeManifestDigest,validateExternalLargeManifest} from '../../core/src/autonomous-external-large.ts';
 import {externalS3PutOf} from '../../core/src/autonomous-external-s3.ts';
 import {createExternalS3Transport,type ExternalS3Transport} from './autonomous-external-s3.ts';
-import {assertHfVisibility,resolveHfVisibility,type HfVisibility} from './autonomous-external-hf-visibility.ts';
+import {assertHfLfsAllowed,assertHfVisibility,resolveHfVisibility,type HfVisibility} from './autonomous-external-hf-visibility.ts';
 import {hfLfsCommit,hfLfsProof,type HfLfsOptions} from './autonomous-external-hf-lfs.ts';
 export type ExternalProviderCredential={provider:'aws';accessKeyId:string;secretAccessKey:string;sessionToken?:string}|{provider:'hf'|'github';token:string};
 export interface ExternalArtifact {files:{path:string;contentBase64:string}[]}
@@ -86,10 +87,12 @@ export interface AwsTtlGuardPort {
  arm(request:Readonly<AwsTtlGuardRequest>,guard:Readonly<AwsTtlGuardEvidence>,signal?:AbortSignal):Promise<AwsOwnershipTimerEvidence>;
 }
 export interface ExternalProviderOptions {
+ /** Trusted per-launch bootstrap locator. Never accepted in model action parameters. */
+ delegatedLaunch?:{taskId:string;revision:number;profileId:string;descriptorHash:string;inputManifestDigest:string};
  enabled?:boolean;
  /** Trusted factory-known secret values, never task input or persisted public policy. */
  forbiddenValues?:readonly string[];
- aws?:{enabled?:boolean;accountId:string;region:string;workloadId:string;imageId:string;instanceType:string;subnetId:string;instanceProfileArn:string;maxLifetimeMs:number;credentialRef?:string;maxUpperBoundMicros?:number;billingPolicy?:'reserved_ceiling_only'|'verified_cost_source'};
+ aws?:{enabled?:boolean;allowedRegions?:readonly string[];availabilityZoneId?:string;accountId:string;region:string;workloadId:string;imageId:string;instanceType:string;subnetId:string;instanceProfileArn:string;maxLifetimeMs:number;credentialRef?:string;maxUpperBoundMicros?:number;billingPolicy?:'reserved_ceiling_only'|'verified_cost_source'};
  awsTtlGuard?:{guardArn:string;port:AwsTtlGuardPort};
  costReader?:ExternalCostReader;
  hf?:{enabled?:boolean;repository:string;revision:string;
@@ -109,12 +112,12 @@ export interface ExternalHfLfsConfig {
  open(file:Parameters<HfLfsOptions['open']>[0],i:ExternalInvocation):ReturnType<HfLfsOptions['open']>;
 }
 export type ExternalAwsLaunchPolicy=Pick<NonNullable<ExternalProviderOptions['aws']>,
- 'accountId'|'region'|'workloadId'|'imageId'|'instanceType'|'subnetId'|'instanceProfileArn'|'maxLifetimeMs'|'maxUpperBoundMicros'>;
+ 'accountId'|'region'|'workloadId'|'imageId'|'instanceType'|'subnetId'|'instanceProfileArn'|'maxLifetimeMs'|'maxUpperBoundMicros'|'availabilityZoneId'>;
 /** Schema v1: sorted-key JSON of only the fixed launch scope and limit fields.
  * enabled, credentialRef/values, billingPolicy and per-action data are not launch policy.
  * Equivalent to awsGuardDigest(normalizedPolicy); no configuration spread is hashed. */
 export function externalAwsConfigurationHash(config:ExternalAwsLaunchPolicy):string {
- const policy={schemaVersion:1,accountId:config.accountId,region:config.region,workloadId:config.workloadId,imageId:config.imageId,instanceType:config.instanceType,subnetId:config.subnetId,instanceProfileArn:config.instanceProfileArn,maxLifetimeMs:config.maxLifetimeMs,maxUpperBoundMicros:config.maxUpperBoundMicros};
+ const policy={schemaVersion:1,accountId:config.accountId,region:config.region,workloadId:config.workloadId,imageId:config.imageId,instanceType:config.instanceType,subnetId:config.subnetId,instanceProfileArn:config.instanceProfileArn,maxLifetimeMs:config.maxLifetimeMs,maxUpperBoundMicros:config.maxUpperBoundMicros,...(config.availabilityZoneId!==undefined?{availabilityZoneId:config.availabilityZoneId}:{})};
  for(const key of ['accountId','region','workloadId','imageId','instanceType','subnetId','instanceProfileArn'] as const)text(policy[key],256);
  requireThat(/^\d{12}$/.test(policy.accountId)&&Number.isSafeInteger(policy.maxLifetimeMs)&&policy.maxLifetimeMs>0&&Number.isSafeInteger(policy.maxUpperBoundMicros)&&policy.maxUpperBoundMicros!>0);
  return sha256(JSON.stringify(Object.fromEntries(Object.keys(policy).sort().map(key=>[key,policy[key as keyof typeof policy]]))));
@@ -147,7 +150,10 @@ const value=(n:Xml,key:string)=>child(n,key)?.text??'';
 const items=(n:Xml|undefined)=>n?.children.filter(c=>c.name==='item')??[];
 export function createExternalProviderTransport(options:ExternalProviderOptions):GuardedExternalProviderTransport<ExternalProviderCredential>{
  // Snapshot trusted configuration: later caller mutation cannot change an in-flight target.
+ const delegatedLaunch=options.delegatedLaunch?structuredClone(options.delegatedLaunch):undefined;
+ if(delegatedLaunch){for(const k of ['taskId','profileId'] as const)requireThat(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/.test(delegatedLaunch[k]));requireThat(Number.isSafeInteger(delegatedLaunch.revision)&&delegatedLaunch.revision>0&&[delegatedLaunch.descriptorHash,delegatedLaunch.inputManifestDigest].every(h=>/^[a-f0-9]{64}$/.test(h)));}
  const config={enabled:options.enabled,aws:options.aws?structuredClone(options.aws):undefined,hf:options.hf?{...structuredClone({...options.hf,lfs:undefined}),lfs:options.hf.lfs}:undefined,github:options.github?structuredClone(options.github):undefined};
+ if(config.aws){assertAwsRegion(config.aws.region,config.aws.allowedRegions);awsPlacement(config.aws.region,config.aws.availabilityZoneId);}
  const now=options.now??Date.now,fetcher=options.fetch??globalThis.fetch;
  const dispatch=new AsyncLocalStorage<ExternalDispatchAuthority & {expiresAt:number}>();
  const guardArn=options.awsTtlGuard?.guardArn,guardPort=options.awsTtlGuard?.port;
@@ -187,7 +193,7 @@ export function createExternalProviderTransport(options:ExternalProviderOptions)
   const signal=dispatch.getStore()?AbortSignal.any([controller.signal,dispatch.getStore()!.signal]):controller.signal;
   const operation=async()=>{
    if(expiresAt!==undefined)requireThat(now()<expiresAt);
-   active();const response=await fetcher(url,{method,headers,body,redirect:'error',signal});requireThat(response.ok&&!response.redirected);observeHeaders?.(response.headers);
+   active();const response=await fetcher(url,{method,headers,body,redirect:'manual',signal});requireThat(response.ok&&!response.redirected);observeHeaders?.(response.headers);
    const length=response.headers.get('content-length');if(length!==null)requireThat(/^\d+$/.test(length)&&Number(length)<=MAX_BODY);
    const reader=response.body?.getReader();requireThat(reader);const chunks:Uint8Array[]=[];let bytes=0;
    try{for(;;){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength;if(bytes>MAX_BODY){await reader.cancel();throw unavailable();}chunks.push(part.value);}}finally{reader.releaseLock();}
@@ -251,6 +257,7 @@ export function createExternalProviderTransport(options:ExternalProviderOptions)
   await account(c);const doc=await awsQuery('DescribeInstances',params,c);requireThat(child(doc,'reservationSet')&&!value(doc,'nextToken'));
   const found:{id:string;state:string;tags:Map<string,string>}[]=[];
   for(const reservation of items(child(doc,'reservationSet')))for(const instance of items(child(reservation,'instancesSet'))){
+   assertAwsPlacement(config.aws!.region,{availabilityZone:value(child(instance,'placement')??instance,'availabilityZone')||undefined,availabilityZoneId:value(child(instance,'placement')??instance,'availabilityZoneId')||undefined},config.aws!.availabilityZoneId);
    const tags=new Map(items(child(instance,'tagSet')).map(t=>[value(t,'key'),value(t,'value')]));
    requireThat(value(reservation,'ownerId')===config.aws!.accountId&&value(instance,'clientToken')===sha256(owner.idempotencyKey)&&tags.get('hivemind:owner')===owner.ownershipToken&&tags.get('hivemind:request')===sha256(owner.idempotencyKey)&&tags.get('hivemind:workload')===config.aws!.workloadId);
    if(i.operation!=='aws.spot.inspect')requireThat(tags.get('hivemind:parameters')===i.parametersHash);
@@ -330,13 +337,14 @@ export function createExternalProviderTransport(options:ExternalProviderOptions)
  /** hf.model.lfs_commit: the manifest is loaded, validated and bound to the approved digest before any request. */
  async function lfsContext(i:ExternalInvocation,c:Extract<ExternalProviderCredential,{token:string}>){
   const hf=config.hf!,lfs=hf.lfs;requireThat(lfs&&i.operation==='hf.model.lfs_commit'&&c.provider==='hf');
+  const target=record(i.profile.target);assertHfLfsAllowed(target.visibility,target.allowPublicLarge as boolean|undefined);
   const p=record(i.parameters);fields(p,['manifestDigest','message']);requireThat(typeof p.manifestDigest==='string'&&/^[a-f0-9]{64}$/.test(p.manifestDigest)&&typeof p.message==='string');
   const secrets=[...forbiddenValues,c.token].filter(v=>Buffer.byteLength(v)>=8).map(v=>Buffer.from(v)),bytes=Buffer.from(JSON.stringify(i.parameters));
   requireThat(!secrets.some(v=>bytes.includes(v)));
   const loaded=await lfs!.loadManifest(p.manifestDigest as string,structuredClone(i));active();
   const manifest=validateExternalLargeManifest(loaded,lfs!.limits);
   requireThat(externalLargeManifestDigest(manifest)===p.manifestDigest&&manifest.taskId===i.taskId&&manifest.revision===i.revision&&manifest.profileId===i.profile.id);
-  const options:HfLfsOptions={repository:hf.repository,revision:hf.revision,message:p.message as string,visibility:hf.visibility,fetch:fetcher,now,signal:dispatch.getStore()?.signal,uploadHosts:lfs!.uploadHosts,open:file=>lfs!.open(file,structuredClone(i))};
+  const options:HfLfsOptions={repository:hf.repository,revision:hf.revision,message:p.message as string,visibility:hf.visibility,...(target.allowPublicLarge===true?{allowPublicLarge:true}:{}),forbiddenValues:[...forbiddenValues,c.token],fetch:fetcher,now,signal:dispatch.getStore()?.signal,uploadHosts:lfs!.uploadHosts,open:file=>lfs!.open(file,structuredClone(i))};
   return {manifest,options};
  }
  async function execute(i:ExternalInvocation,c:ExternalProviderCredential){
@@ -347,9 +355,10 @@ export function createExternalProviderTransport(options:ExternalProviderOptions)
    requireThat(config.aws!.billingPolicy==='reserved_ceiling_only'||config.aws!.billingPolicy==='verified_cost_source');
    if(config.aws!.billingPolicy==='verified_cost_source'||readCost){const quote=quoteCost?.(i);requireThat(quote&&Number.isSafeInteger(quote.resourceUpperBoundMicros)&&quote.resourceUpperBoundMicros>=0&&Number.isSafeInteger(quote.maximumQueryFeeMicros)&&quote.maximumQueryFeeMicros>=0&&Number.isSafeInteger(quote.resourceUpperBoundMicros+quote.maximumQueryFeeMicros)&&quote.resourceUpperBoundMicros+quote.maximumQueryFeeMicros<=i.profile.upperBoundMicros);}
    requireThat(i.expiresAt-now()<=Number(ttl));const timer=await ttlProof(i);
-   const a=config.aws!,params:Record<string,string>={ImageId:a.imageId,InstanceType:a.instanceType,SubnetId:a.subnetId,'IamInstanceProfile.Arn':a.instanceProfileArn,MinCount:'1',MaxCount:'1',ClientToken:sha256(i.idempotencyKey),'InstanceMarketOptions.MarketType':'spot','InstanceMarketOptions.SpotOptions.SpotInstanceType':'one-time','InstanceMarketOptions.SpotOptions.InstanceInterruptionBehavior':'terminate','MetadataOptions.HttpTokens':'required','TagSpecification.1.ResourceType':'instance'};
+   const a=config.aws!,params:Record<string,string>={ImageId:a.imageId,InstanceType:a.instanceType,SubnetId:a.subnetId,'IamInstanceProfile.Arn':a.instanceProfileArn,MinCount:'1',MaxCount:'1',ClientToken:sha256(i.idempotencyKey),'InstanceMarketOptions.MarketType':'spot','InstanceMarketOptions.SpotOptions.SpotInstanceType':'one-time','InstanceMarketOptions.SpotOptions.InstanceInterruptionBehavior':'terminate','MetadataOptions.HttpTokens':'required','TagSpecification.1.ResourceType':'instance',...awsPlacement(a.region,a.availabilityZoneId)};
    for(const [index,[key,val]] of [['hivemind:owner',i.ownershipToken],['hivemind:request',sha256(i.idempotencyKey)],['hivemind:parameters',i.parametersHash],['hivemind:workload',a.workloadId],['hivemind:expires',String(i.expiresAt)],['hivemind:guard',timer.guardArn],['hivemind:timer',timer.timerArn]].entries()){params[`TagSpecification.1.Tag.${index+1}.Key`]=key!;params[`TagSpecification.1.Tag.${index+1}.Value`]=val!;}
-   params['TagSpecification.2.ResourceType']='volume';for(let n=1;n<=7;n++){params[`TagSpecification.2.Tag.${n}.Key`]=params[`TagSpecification.1.Tag.${n}.Key`]!;params[`TagSpecification.2.Tag.${n}.Value`]=params[`TagSpecification.1.Tag.${n}.Value`]!;}
+   if(delegatedLaunch){requireThat(delegatedLaunch.taskId===i.taskId&&delegatedLaunch.revision===i.revision&&delegatedLaunch.profileId===i.profile.id);params['MetadataOptions.InstanceMetadataTags']='enabled';const tags=[['hivemind:task',delegatedLaunch.taskId],['hivemind:revision',String(delegatedLaunch.revision)],['hivemind:profile',delegatedLaunch.profileId],['hivemind:descriptor',delegatedLaunch.descriptorHash],['hivemind:input',delegatedLaunch.inputManifestDigest]];for(const [n,[key,val]] of tags.entries()){params[`TagSpecification.1.Tag.${n+8}.Key`]=key!;params[`TagSpecification.1.Tag.${n+8}.Value`]=val!;}}
+   params['TagSpecification.2.ResourceType']='volume';for(let n=1;n<=(delegatedLaunch?12:7);n++){params[`TagSpecification.2.Tag.${n}.Key`]=params[`TagSpecification.1.Tag.${n}.Key`]!;params[`TagSpecification.2.Tag.${n}.Value`]=params[`TagSpecification.1.Tag.${n}.Value`]!;}
    await account(c,i.expiresAt);await awsQuery('RunInstances',params,c,i.expiresAt);const r=await awsInspect(i,c);requireThat(r);return r;
   }
   if(c.provider==='hf'&&i.operation==='hf.model.lfs_commit'){
