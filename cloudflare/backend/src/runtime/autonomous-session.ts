@@ -33,8 +33,13 @@ async function readTranscript(root:string,path:string,limit:number):Promise<stri
 export async function collectAutonomousSession(paths:AutonomousSessionPaths,sessionId:string,model:string,secrets:string[]=[]):Promise<AutonomousSessionBundle>{
  if(!sessionUUID(sessionId))throw Error('Invalid session');const root=autonomousProjectDirectory(paths.home),transcripts=[{path:sessionId+'.jsonl',content:await readTranscript(root,sessionId+'.jsonl',4*1024*1024)}];
  const children=join(root,sessionId,'subagents');let names:string[]=[];try{await safeDirectory(children);names=await readdir(children);}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
- if(names.length>64)throw Error('Transcript count limit');
- let remaining=4*1024*1024-Buffer.byteLength(transcripts[0]!.content);for(const name of names){if(!/^agent-[A-Za-z0-9_-]{1,128}\.jsonl$/.test(name))throw Error('Unexpected subagent file');const path=sessionId+'/subagents/'+name;const content=await readTranscript(root,path,remaining);remaining-=Buffer.byteLength(content);transcripts.push({path,content});}
+ // Claude Code 2.1.319 writes agent-<id>.meta.json (and may write other agent-<id>.<kind>.json) beside each subagent
+ // transcript. They are CLI metadata, not transcripts: skip regular files of that exact form, never bundle them.
+ if(names.length>256)throw Error('Transcript count limit');
+ const sidecar=/^agent-[A-Za-z0-9_-]{1,128}(?:\.[a-z][a-z-]{0,31}){1,2}\.json$/;
+ const kept:string[]=[];for(const name of names){if(sidecar.test(name)){const s=await lstat(join(children,name));if(!s.isFile()||s.isSymbolicLink())throw Error('Unexpected subagent file');continue;}kept.push(name);}
+ if(kept.length>64)throw Error('Transcript count limit');
+ let remaining=4*1024*1024-Buffer.byteLength(transcripts[0]!.content);for(const name of kept){if(!/^agent-[A-Za-z0-9_-]{1,128}\.jsonl$/.test(name))throw Error('Unexpected subagent file');const path=sessionId+'/subagents/'+name;const content=await readTranscript(root,path,remaining);remaining-=Buffer.byteLength(content);transcripts.push({path,content});}
  // readSnapshot excludes private source paths; reject hardlinks independently before reading.
  const entries=new Map<string,string>();
  const fingerprint=(s:Awaited<ReturnType<typeof lstat>>)=>[s.dev,s.ino,s.mode,s.nlink,s.size,s.mtimeMs,s.ctimeMs].join(':');

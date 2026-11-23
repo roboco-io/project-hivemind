@@ -39,3 +39,17 @@ test('workspace replaced by hardlink between preflight and snapshot read is refu
  await assert.rejects(collectAutonomousSession(paths,id,bundle.model));assert.ok(visits>=2);
  }finally{t.mock.restoreAll();syncBuiltinESMExports();await rm(root,{recursive:true,force:true});}
 });
+test('real Claude Code 2.1.319 subagent sidecar files are skipped, transcripts kept, unknown files still refused',async()=>{
+ const root=await mkdtemp(join(await realpath(tmpdir()),'session-sidecar-')),paths={home:join(root,'home'),workspace:join(root,'workspace')};
+ try{const project=autonomousProjectDirectory(paths.home),children=join(project,id,'subagents');await mkdir(children,{recursive:true});await mkdir(paths.workspace);await writeFile(join(project,id+'.jsonl'),'{}\n');
+ // 2.1.319 writes agent-<id>.meta.json beside each foreground subagent transcript.
+ await writeFile(join(children,'agent-a1b2c3.jsonl'),'{"type":"user"}\n');await writeFile(join(children,'agent-a1b2c3.meta.json'),'{"agentType":"worker","description":"Check counter value"}');
+ await writeFile(join(children,'agent-a1b2c3.prefix.json'),'{}');
+ const b=await collectAutonomousSession(paths,id,bundle.model);
+ assert.deepEqual(b.transcripts.map(t=>t.path).sort(),[id+'.jsonl',id+'/subagents/agent-a1b2c3.jsonl']);
+ for(const name of ['notes.txt','agent-a1b2c3.jsonl.bak','agent-a1b2c3.Info.json','agent-a1b2c3.a.b.c.json']){
+  await writeFile(join(children,name),'{}');await assert.rejects(collectAutonomousSession(paths,id,bundle.model));await rm(join(children,name));
+ }
+ await mkdir(join(children,'agent-dir.meta.json'));await assert.rejects(collectAutonomousSession(paths,id,bundle.model));
+ }finally{await rm(root,{recursive:true,force:true});}
+});
