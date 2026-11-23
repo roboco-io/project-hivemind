@@ -56,7 +56,7 @@ HIVEMIND_WORKER_TOKEN=local-worker-only npm run autonomous:mock
 | R6 대기 | 일일 시간대·DST·구조화 quota reset 대기·재시작 복원 구현. 실제 제한 도달 미검증 |
 | R7 자격 증명 | 구독 인증 직렬화, 서버 전용 AWS·HF·GitHub resolver. 새 실제 제공자 자격 미사용 |
 | R8 비용 상한 | task 전체 revision 예산·예약·정산·미확정 비용 차단. 외부 행동은 예약 기반 상한이며 실제 청구는 Cost Explorer로 사후 검증한다. 주기 점검이 상한 초과를 보면 작업을 중단한다. 실행 중 실제 청구 기반 집행은 만들지 않았다([비용 상한과 중단](#비용-상한과-중단)). 실제 청구·하드 상한 보장 미검증 |
-| R9 외부 행동 | AWS Spot·AWS S3 put·inspect·HF commit(private 또는 공개)·HF LFS commit(private만)·GitHub expected-head commit, 멱등 복구 구현. 모두 가짜 HTTP로만 검사했고 실제 AWS·Hugging Face·GitHub는 미검증 |
+| R9 외부 행동 | AWS Spot·AWS S3 put·inspect·HF commit(private 또는 공개)·HF LFS commit(private 기본, 명시 승인 시 공개)·GitHub expected-head commit, 멱등 복구 구현. 모두 가짜 HTTP로만 검사했고 실제 AWS·Hugging Face·GitHub는 미검증 |
 | R10 사람 개입 | operator MCP 19개 도구와 dashboard, 승인·변경·메시지·취소·청구 근거 기록 |
 | R11 정리 | 소유 자원 정리·재시작 복구·AWS TTL guard/CDK 구현. 실제 자원 정리 미검증 |
 
@@ -84,7 +84,7 @@ lease가 만료된 실행은 체크포인트가 있어도 자동 재실행하지
 
 워커는 `createClaudeAutonomousExecutor`와 `createClaudeRuntimeHttpPort`를 명시적으로 주입한다. private runtime URL·토큰은 신뢰하는 워커 설정에만 두며 작업 정책·공개 상태에 저장하지 않는다. private `/iteration`은 인증한 뒤 요청을 처리한다. 실행 요청에는 현재 `executionLease` 복사본을 포함한다. runtime은 자신의 runtime ID로 중앙 `native-start`를 호출해 유효한 claim을 확인하고, 응답의 정규 정책·체크포인트·deadline을 요청과 대조한 뒤 CLI를 시작한다. 같은 lease를 다른 runtime에 결속할 수 없다. 실행 중 중앙 heartbeat가 거절되면 중단한다. runtime의 중앙 authorizer는 신뢰하는 설정 `HIVEMIND_CONTROL_API_URL`과 `HIVEMIND_AUTONOMOUS_WORKER_TOKEN`을 사용한다. 워커가 private runtime에 보내는 토큰은 별도 `HIVEMIND_AUTONOMOUS_RUNTIME_TOKEN`이다. 운영자 토큰은 native-start를 호출할 수 없다. private 포트 인증만으로 중앙 승인을 대신할 수 없다. 전용 bootstrap 직접 실행은 `HIVEMIND_AUTONOMOUS_RUNTIME_TOKEN` 설정으로 명시적으로 선택하며 기본 loopback 포트는 3100이다. 기존 Docker CMD와 rollout 게이트는 유지한다. 로컬 호스트 CLI로 우회하지 않는다.
 
-native는 `durable === true`인 비공개 저장소를 요구한다. `EncryptedSessionStore`는 명시적인 32바이트 키와 durable blob 저장소를 받는다. 파일 저장소와 private R2는 불변 객체를 저장한다. 암호화 AAD는 작업·세션·모델·sequence·객체 키를 결속한다. 주·자식 transcript와 작업 snapshot을 보존하며 제공자 인증 파일은 bundle에서 제외한다. MemorySessionStore는 mock 전용이다.
+native는 `durable === true`인 비공개 저장소를 요구한다. `EncryptedSessionStore`는 명시적인 32바이트 키와 durable blob 저장소를 받는다. 파일 저장소와 private R2는 불변 객체를 저장한다. 암호화 AAD는 작업·세션·모델·sequence·객체 키를 결속한다. 주·자식 transcript와 작업 snapshot을 보존하며 제공자 인증 파일은 bundle에서 제외한다. Claude Code 2.1.319는 자식 transcript 옆에 `agent-<id>.meta.json` 같은 메타데이터 파일을 만든다. 수집기는 `agent-<id>.<종류>.json` 형식의 일반 파일을 건너뛰고 bundle에 넣지 않는다. 그 밖의 이름이나 일반 파일이 아닌 항목은 계속 거절한다. MemorySessionStore는 mock 전용이다.
 
 Claude native는 Bash를 필수로 두며 Agent·WebFetch·`mcp__hivemind__action`을 작업 허용 목록에 추가할 수 있다. WebFetch에는 승인한 exact host 목록, action에는 승인한 외부 profile 목록이 필요하다. 자식 모델은 `subagentModel ?? model`로 고정한다. 주 모델과 자식 모델은 별칭 대신 구체적인 모델 ID를 지정해야 한다. 실제 제공자의 해당 모델 가용성은 별도 검증이 필요하다. 주 세션의 승인 credential ID는 정확히 하나다. 외부 profile을 사용하면 승인한 aws·hf·github만 systems에 지정하며, 제공자 비밀은 서버 전용 resolver가 처리한다.
 
@@ -201,23 +201,23 @@ put은 기존 객체를 덮어쓰지 않으며 HIVEMIND는 객체를 삭제하�
 
 ## Hugging Face 공개 범위와 LFS commit
 
-HF target에는 선택 필드 `visibility`(`private` 또는 `public`)가 있다. 생략하면 private이다. 서버 설정의 visibility와 승인한 profile의 visibility가 다르거나, 저장소가 보고하는 `private` 값이 기대와 다르면 commit하지 않는다. visibility를 정하면 profile 해시가 바뀌므로 운영자는 정확한 공개 범위를 승인한다. 운영자 화면은 `hfVisibilityDisplay`(`visibility`, `publicEffect`, `notice`)를 보여 주어 공개 저장소에 commit한다는 사실을 승인 시점에 드러낸다. 비공개 저장소를 공개로 바꾸거나 저장소를 만드는 기능은 없다.
+HF target에는 선택 필드 `visibility`(`private` 또는 `public`)가 있다. 공개 대형 게시에는 `allowPublicLarge: true`와 `hf.model.lfs_commit` 허용이 추가로 필요하다. 이 boolean은 승인 hash·대시보드·MCP 검토에 보존된다. 생략하면 private이다. 서버 설정의 visibility와 승인한 profile의 visibility가 다르거나, 저장소가 보고하는 `private` 값이 기대와 다르면 commit하지 않는다. visibility를 정하면 profile 해시가 바뀌므로 운영자는 정확한 공개 범위를 승인한다. 운영자 화면은 `hfVisibilityDisplay`(`visibility`, `publicEffect`, `notice`)를 보여 주어 공개 저장소에 commit한다는 사실을 승인 시점에 드러낸다. 비공개 저장소를 공개로 바꾸거나 저장소를 만드는 기능은 없다.
 
 `hf.model.lfs_commit`은 inline 한도(총 1 MiB)를 넘는 큰 파일을 올리는 별도 작업이다. 매개변수는 `{manifestDigest, message}`다. 흐름은 다음과 같다. 워커가 `external-large/begin`, `part`, `complete`로 파일을 8 MiB 조각 단위로 올리고, `manifest`로 파일 목록을 묶어 digest를 받는다. 서버는 이 manifest가 승인된 작업·revision·profile의 것인지 확인해 grant로 기록한다. grant가 없는 digest로는 commit할 수 없다. 작업을 취소하거나 revision을 바꾸면 해당 작업의 진행 중 업로드를 모두 중단한다.
 
 | 항목 | 한도 또는 규칙 |
 |---|---|
-| 파일 크기 | 파일당 5 GiB(LFS basic transfer). LFS multipart는 지원하지 않는다 |
+| 파일 크기 | 파일당 5 GiB, 합계64 GiB, 최대32파일. LFS basic·multipart 지원. 일반 파일 합계16 MiB, commit wire24 MiB |
 | 조각 | 8 MiB. 마지막 조각을 뺀 모든 조각은 정확히 8 MiB |
 | 업로드 기록 수 | 작업·revision당 상태와 무관하게 최대 64개(`maxUploadRecords`, 설정 상한 256). 원장에는 행 삭제 경로가 없어서 `begin`과 `abort`를 반복하면 기록이 끝없이 늘 수 있으므로, 새 `begin`이 상한에서 413으로 거절된다. 같은 파일을 다시 `begin`해 기존 업로드를 이어 가는 호출은 새 기록을 만들지 않아 상한과 무관하게 통과한다. |
 | 무결성 | 조각마다 sha256을 기록하고, 완료 때 객체를 다시 읽어 전체 sha256과 크기를 확인한다. 다르면 객체를 지우고 409 |
 | 소유 | 저장 키는 작업·revision·profile에 묶인다. 다른 작업의 `storageRef`는 거절한다 |
-| 공개 저장소 | 거절한다. 여러 GiB 파일은 기존 중첩 디코드 비밀 검사를 할 수 없기 때문이다 |
-| 비밀 검사 | 대형 파일의 내용은 비밀 값 검사를 거치지 않는다. 서버는 commit 매개변수와 파일 경로만 검사한다. 그래서 대형 파일은 private 저장소에만 올릴 수 있고, 파일에 비밀이 없다는 보증은 하지 않는다 |
+| 공개 저장소 | 기본 거절. public target과 allowPublicLarge:true가 승인된 프로필만 허용. 저장소 생성·공개 전환은 하지 않는다 |
+| 비밀 검사 | 게시 전 bounded stream으로 전체 파일의 크기·SHA256·알려진 비밀의 raw/base64/URL/JSON 변형과 credential 패턴을 검사한다. 메시지·경로도 검사한다. 완전한 DLP나 모든 은닉 정보의 부재를 보증하지 않는다 |
 | 업로드 검증 | manifest는 `complete`로 hash 검증을 마친 파일만 담을 수 있다. 객체가 저장소에 있다는 사실만으로는 받지 않는다 |
 | 업로드 주소 | 서버가 정한 허용 호스트의 https만 받고, redirect를 따르지 않으며, 그 요청에 Authorization 헤더를 보내지 않는다 |
 
-Hugging Face LFS API의 동작은 공식 문서로 확인하지 않은 가정이다. 가짜 HTTP로만 검사했으며 실제 Hugging Face는 미검증이다. 다중 GiB 객체를 Worker에서 다시 읽어 hash를 확인할 때의 CPU 한도도 검증하지 않았다.
+2026-11-21 공식 HF 문서·huggingface_hub v2.4.0 프로토콜 소스와 공개 모델 metadata를 대조해 multipart·혼합 regular/LFS·빈 verify·중복 OID·만료 후 읽기 복구를 보완했다. 가짜 HTTP로 검사했으며 실제 Hugging Face는 미검증이다. 다중 GiB 객체의 사전 검사·재읽기에 필요한 실제 Worker CPU·시간은 별도 검증해야 한다. [조사와 사용법](hugging-face-publication.md)을 따른다.
 
 ## 실제 프로젝트 검증 이관
 
@@ -225,4 +225,4 @@ Hugging Face LFS API의 동작은 공식 문서로 확인하지 않은 가정이
 
 HF/GitHub action에는 선택적 `artifact: {files:[{path,contentBase64}]}`를 함께 보낼 수 있다. 기존 action의 `parameters.artifactDigest`는 canonical artifact digest여야 한다. 모델 sidecar는 같은 승인 프로필로 파일을 등록한 뒤 반환 digest와 일치할 때만 원래 requestId의 action을 호출한다. 등록 자체는 외부 게시가 아니다. 파일이 다른 작업/revision/profile에서 등록되었다면 그 digest를 알아도 게시할 수 없다.
 
-현재 inline 상한은 총1MiB·32파일·파일당256KiB다. revision당32개·32MiB까지 저장을 예약하며 실패한 업로드도 할당량에 포함한다. HF commit은 서버가 정한 visibility(생략하면 private)를 따르며, 대형 파일은 private 저장소의 LFS commit만 지원한다. 비공개에서 공개로의 전환과 저장소 생성, 범용 S3 API는 지원하지 않는다. S3는 `aws.s3.put`·`aws.s3.inspect`만 제공한다. 이 범위를 넘어선 모델 배포를 완료했다고 표시하지 않는다.
+현재 inline 상한은 총1MiB·32파일·파일당256KiB다. revision당32개·32MiB까지 저장을 예약하며 실패한 업로드도 할당량에 포함한다. HF commit은 서버가 정한 visibility(생략하면 private)를 따르며, 대형 파일은 LFS 호환 전송을 사용하며 private가 기본이고 공개는 명시적 allowPublicLarge 승인 때만 허용한다. 비공개에서 공개로의 전환과 저장소 생성, 범용 S3 API는 지원하지 않는다. S3는 `aws.s3.put`·`aws.s3.inspect`만 제공한다. 이 범위를 넘어선 모델 배포를 완료했다고 표시하지 않는다.

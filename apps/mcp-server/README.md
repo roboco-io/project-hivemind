@@ -44,10 +44,30 @@ Cloudflare proxy `/api/cloudflare/autonomous-tasks`만 사용한다. 미설정·
 기록 응답 유실은 부재의 증거가 아니다. 자동 재시도하지 않고 동일 immutable key의 audit을 먼저 확인한다. native 모델 sidecar와 `ExternalOperation` 목록에는 이 billing 도구를 추가하지 않는다. 실제 비용 기록을 요청받지 않은 구현·테스트 과정에서 이 도구를 실행하지 않는다.
 
 
-외부 행동 audit의 `profileId`, `approvedTarget`, `approvedProfileHash`는 해당 행동의 영속 승인 근거다. `approvedTarget`은 “승인 당시 대상”으로 표시하며 AWS account/region/workload, S3 account/region/bucket/prefix, HF repository/revision(지정한 경우 `visibility` 포함), GitHub repository/branch만 제한된 텍스트로 투영한다. 현재 registry에서 같은 profile ID의 target이 바뀌어도 과거 행동의 대상·hash로 대체하지 않는다. 근거가 없으면 미보고로 두며 비용 출처·청구 확정과 별개다. Producer와 proxy가 이 필드를 전달해야 실제 조회에서 보인다.
+외부 행동 audit의 `profileId`, `approvedTarget`, `approvedProfileHash`는 해당 행동의 영속 승인 근거다. `approvedTarget`은 “승인 당시 대상”으로 표시하며 AWS account/region/workload, HF repository/revision(지정한 경우 `visibility` 포함), GitHub repository/branch만 제한된 텍스트로 투영한다. 현재 registry에서 같은 profile ID의 target이 바뀌어도 과거 행동의 대상·hash로 대체하지 않는다. 근거가 없으면 미보고로 두며 비용 출처·청구 확정과 별개다. Producer와 proxy가 이 필드를 전달해야 실제 조회에서 보인다.
 
 
 최종 로컬 연결 검사에서는 실제 MCP operator billing → proxy → C1 API → SQL broker/core를 합성 invoice로 검증했다. worker·live resource 거절, 부재 확인 뒤 정확한 revision 기록, 동일 입력 재전송의 인간 reconciliation 1건과 provenance 전달을 확인했다. 격리 root focused 61개와 backend focused 33개가 통과했으며 전체 프로젝트 gate·실제 24시간·과금·배포의 근거는 아니다.
 
 
-R9 행동별 공개 근거로 `parameterHash`, `parametersSubset`, `providerResult`를 제한적으로 전달한다. 현재 producer의 typed `parameters`도 같은 allowlist로 검사해 `parametersSubset`으로 정규화한다. subset은 lifetimeMs/startActionId/artifactDigest/expectedHead/manifestDigest/keySuffix/putActionId만, 결과는 aws_instance의 i-hex ID 또는 hf_commit/github_commit의 40/64자리 hex OID만 허용한다. 임의 message·raw provider evidence·auth·ownership은 전달하지 않는다. Dashboard는 JSON을 textContent로만 표시하며 새 도구·실행·비용 확정 동작은 없다.
+R9 행동별 공개 근거로 `parameterHash`, `parametersSubset`, `providerResult`를 제한적으로 전달한다. 현재 producer의 typed `parameters`도 같은 allowlist로 검사해 `parametersSubset`으로 정규화한다. proxy의 subset 허용 목록은 lifetimeMs/startActionId/artifactDigest/expectedHead/manifestDigest/keySuffix/putActionId다. 현재 MCP와 Dashboard는 lifetimeMs/startActionId/artifactDigest/expectedHead만 표시한다. 결과는 aws_instance의 i-hex ID 또는 hf_commit/github_commit의 40/64자리 hex OID만 허용한다. 임의 message·raw provider evidence·auth·ownership은 전달하지 않는다. Dashboard는 JSON을 textContent로만 표시하며 새 도구·실행·비용 확정 동작은 없다.
+
+## Interface
+
+- `[src/server.ts:createHivemindMcpServer]`, `[src/autonomous.ts:registerAutonomousOperatorTools]`, `[src/autonomous-tool-audit.ts:registerToolAuditTool]`가 총 19개 도구를 등록한다.
+
+## Invariants
+
+- 설정·프로토콜 오류는 일반 문구로 바꾸고, 초안 등록과 실행 승인은 별도 도구다 `[src/server.ts:SafeMcpServer]`, `[src/autonomous.ts:registerAutonomousOperatorTools]`.
+
+## Side Effects
+
+- 운영자 HTTP 요청과 stdin/stdout MCP 전송을 수행한다 `[src/server.ts:createHivemindMcpServer]`, `[src/main.ts:StdioServerTransport]`.
+
+## Verification
+
+- 저장소 루트에서 `npm run check`를 실행한다. 타입 검사 후 루트 테스트를 실행한다.
+
+## Workflow 팀 원장
+
+운영자 전용 `hivemind_workflow_team_get`·`hivemind_workflow_team_block`·`hivemind_workflow_team_review`를 제공한다. 등록된 원격 workflow binding을 확인하고 고정 경로로 호출하며 local fallback은 없다. block은 실제 정리 완료가 아니고 review는 재개가 아니다. 새 backend feature는 기본 비활성이다. [범위와 HTTP 계약](../../docs/team-coordination.md)을 따른다. 이 변경만으로 현재 연결된 앱 서버가 자동 재시작되거나 실제 모델에 team 도구가 주입되지는 않는다.

@@ -4,7 +4,7 @@
 
 이 디렉터리는 중앙 core가 정한 계약을 실제 실행으로 옮기는 어댑터를 담는다. 어댑터는 승인이나 상태 전이를 결정하지 않는다. 어댑터는 실행하고 근거를 반환하며, 근거를 받아들일지는 중앙 core가 판단한다. 계약 타입은 [`../../contracts/src/README.md`](../../contracts/src/README.md)에, 판단 규칙은 [`../../core/src/README.md`](../../core/src/README.md)에 있다.
 
-어댑터는 두 종류다. 첫째는 로컬 실행 어댑터다. `index.ts`가 `provider`에 맞는 어댑터를 고르고, `codex.ts`와 `claude.ts`가 각 CLI를 자식 프로세스로 실행하며, `local-execution.ts`가 worktree 생성, 설정 명령, 테스트 명령, diff 수집 순서를 공통으로 처리한다. 둘째는 Cloudflare 포트다. `cloudflare.ts`는 작업 한 건을 원격 백엔드에 제출하고 폴링하며, `cloud-workflow.ts`는 Codex와 Claude 두 워커의 워크플로를 원격 백엔드에 등록하고 조회한다. `process.ts`와 `workspace.ts`는 두 종류가 함께 쓰는 프로세스 실행과 Git worktree 도구다.
+기본 실행 어댑터는 두 종류이며, 장기 자율 작업·외부 행동 어댑터도 이 디렉터리에 있다. 첫째는 로컬 실행 어댑터다. `index.ts`가 `provider`에 맞는 어댑터를 고르고, `codex.ts`와 `claude.ts`가 각 CLI를 자식 프로세스로 실행하며, `local-execution.ts`가 worktree 생성, 설정 명령, 테스트 명령, diff 수집 순서를 공통으로 처리한다. 둘째는 Cloudflare 포트다. `cloudflare.ts`는 작업 한 건을 원격 백엔드에 제출하고 폴링하며, `cloud-workflow.ts`는 Codex와 Claude 두 워커의 워크플로를 원격 백엔드에 등록하고 조회한다. `process.ts`와 `workspace.ts`는 두 종류가 함께 쓰는 프로세스 실행과 Git worktree 도구다.
 
 ## Interface
 
@@ -21,6 +21,23 @@
 - `[workspace.ts:collectWorkspaceDiff]`: worktree의 변경을 기준 커밋과 비교한 diff와 `headCommit`을 반환한다.
 - `[cloudflare.ts:CloudPortOptions]`, `[cloudflare.ts:createCloudPort]`: `CloudPort`(`connection`, `prepare`, `submit`, `poll`, `cancel`) 구현.
 - `[cloud-workflow.ts:WorkflowChecks]`, `[cloud-workflow.ts:createCloudWorkflowPort]`: `CloudWorkflowPort`(`draft`, `approve`, `read`) 구현.
+
+- `[autonomous-runner.ts:createAutonomousHttpClient]`, `[autonomous-runner.ts:AutonomousWorkerClient]`, `[autonomous-runner.ts:runAutonomousIteration]`, `[autonomous-runner.ts:AutonomousIterationOptions]`, `[autonomous-runner.ts:AutonomousExecutor]`, `[autonomous-runner.ts:AutonomousExecutionContext]` - 워커 권한 HTTP, 단일 반복, 제한된 실행 context다. `PrivateSession`, `PrivateSessionStore`, `MemorySessionStore`, `UnsupportedAutonomousCapabilityError`는 비공개 세션과 미지원 경계를 정의한다.
+- `[autonomous-runner.ts:runAutonomousCleanup]`, `[autonomous-runner.ts:AutonomousCleanupClient]` - 실행자와 분리된 신뢰 정리 포트다.
+- `[autonomous-loop.ts:runAutonomousLoop]`, `[autonomous-loop.ts:AutonomousLoopOptions]`, `[autonomous-loop.ts:AutonomousLoopResult]`, `[autonomous-loop.ts:AutonomousLoopReason]` - 명시적 반복·idle 한도와 대기 간격을 가진 실행 루프다.
+- `[autonomous-session-store.ts:EncryptedSessionStore]`, `[autonomous-session-store.ts:PrivateBlobStore]`, `[autonomous-session-store.ts:MAX_PRIVATE_BLOB_BYTES]`, `[autonomous-session-store.ts:validatePrivateBlobKey]`, `[autonomous-session-file.ts:FilePrivateBlobStore]` - 암호화 세션 저장과 로컬 비공개 blob 저장 포트다.
+- `[autonomous-claude.ts:createClaudeAutonomousExecutor]`, `[autonomous-claude.ts:createClaudeRuntimeHttpPort]` - Claude 구독 인증과 고정 세션을 private runtime으로 전달하고 응답의 경계·identity·사용량을 검증한다.
+- `[autonomous-external.ts:ExternalProviderCredential]`, `[autonomous-external.ts:ExternalArtifact]`, `[autonomous-external.ts:validateExternalArtifact]`, `[autonomous-external.ts:externalArtifactDigest]`, `[autonomous-external.ts:ExternalArtifactPublisher]`, `[autonomous-external.ts:ExternalArtifactLoader]` - 외부 게시물과 인증 전용 타입·검증·digest 계약이다. `createExternalR2ArtifactPublisher`, `createExternalR2ArtifactLoader`는 `external-artifacts/` 저장 포트 구현이다.
+- `[autonomous-external.ts:createExternalProviderTransport]`, `[autonomous-external.ts:ExternalProviderOptions]`, `[autonomous-external.ts:ExternalHfLfsConfig]`, `[autonomous-external.ts:externalAwsConfigurationHash]`, `[autonomous-external.ts:ExternalAwsLaunchPolicy]` - 고정 AWS/HF/GitHub/S3 대상의 실행·조회·정리 구현과 launch 정책 digest다.
+- `[autonomous-external.ts:AwsTtlGuardPort]`, `[autonomous-external.ts:AwsTtlGuardRequest]`, `[autonomous-external.ts:AwsTtlGuardEvidence]`, `[autonomous-external.ts:AwsOwnershipTimerEvidence]` - 기존 AWS TTL guard 검증과 소유 만료 timer의 포트다.
+- `[autonomous-aws-guard.ts:createAwsTtlGuardPort]`, `[autonomous-aws-guard.ts:awsGuardPolicies]`, `[autonomous-aws-guard.ts:awsGuardCanonical]`, `[autonomous-aws-guard.ts:awsGuardDigest]` - 원격 guard 검증·timer 생성과 CDK가 공유하는 정책 함수다. `AwsGuardOptions`, `AwsGuardManifest`, `AwsGuardProfile`, `AwsGuardRole`은 서버 설정이다.
+- `[autonomous-external-cost.ts:createExternalCostCache]`, `[autonomous-external-cost.ts:createAwsCostExplorerReader]`, `[autonomous-external-cost.ts:ExternalCostReader]`, `[autonomous-external-cost.ts:ExternalCostCache]`, `[autonomous-external-cost.ts:AwsCostExplorerOptions]` - 영속 조회 횟수 제한과 선택적 AWS 비용 근거 포트다. `ExternalCostQuote`, `ExternalCostResult`는 상한과 확인 비용을 분리한다.
+- `[autonomous-external-s3.ts:signExternalS3Request]`, `[autonomous-external-s3.ts:createExternalS3Transport]`, `[autonomous-external-s3.ts:ExternalS3SignInput]`, `[autonomous-external-s3.ts:ExternalS3TransportOptions]`, `[autonomous-external-s3.ts:ExternalS3Transport]` - 고정 virtual-hosted S3 PUT/HEAD 서명과 전송이다.
+- `[autonomous-external-large-store.ts:createExternalLargeStore]`, `[autonomous-external-large-store.ts:ExternalLargeStore]`, `[autonomous-external-large-store.ts:ExternalLargeStoreOptions]`, `[autonomous-external-large-store.ts:ExternalLargeStoreError]` - `begin`, `part`, `complete`, `abort`, `abortOwner`, `open` 대형 파일 저장 API다. `ExternalLargeBucket`, `ExternalLargeMultipart`, `ExternalLargeRecordPort`, `ExternalLargeUploadRecord`, `ExternalLargeOwner`, `ExternalLargeBegin`, `ExternalLargePartInfo`가 주입·응답 계약이다.
+- `[autonomous-external-large-sql.ts:createExternalLargeRecordPort]` - SQL 업로드 원장이다. `[autonomous-external-large-store.ts:LARGE_MAX_UPLOAD_RECORDS]`, `[autonomous-external-large-store.ts:LARGE_UPLOAD_RECORDS_CEILING]`은 작업 revision별 기본 64개·최대 256개 레코드 한도다.
+- `[autonomous-external-hf-lfs.ts:hfLfsCommit]`, `[autonomous-external-hf-lfs.ts:hfLfsProof]`, `[autonomous-external-hf-lfs.ts:lfsPointer]`, `[autonomous-external-hf-lfs.ts:HfLfsInvocation]`, `[autonomous-external-hf-lfs.ts:HfLfsOptions]` - HTTP LFS 게시·읽기 복구·pointer 계약이다. `HF_REGULAR_MAX_BYTES`는 16MiB, `HF_LFS_MAX_FILE_BYTES`는 5GiB다.
+- `[autonomous-external-hf-preflight.ts:preflightHfFiles]` - 게시 전에 파일 크기·SHA-256·알려진 비밀과 일반 자격 증명 패턴을 스트리밍 검사한다.
+- `[autonomous-external-hf-visibility.ts:HfVisibility]`, `[autonomous-external-hf-visibility.ts:resolveHfVisibility]`, `[autonomous-external-hf-visibility.ts:assertHfVisibility]`, `[autonomous-external-hf-visibility.ts:hfVisibilityDisplay]`, `[autonomous-external-hf-visibility.ts:assertHfLfsAllowed]` - 생략 시 private 규칙과 공개 대형 게시의 명시적 동의를 검증한다.
 
 ## Invariants
 
@@ -62,6 +79,19 @@ Cloudflare 포트:
 - `[cloud-workflow.ts:createCloudWorkflowPort]`의 `read`는 상태가 `SUCCEEDED`인데 통합 검증 근거가 불완전하면 오류를 던진다. 통합 작업이 `SUCCEEDED`이고 컨테이너가 멈췄고, 프로세스가 `passed`이며 `exitCode`가 0이고, `credentialsAbsent`와 `sourceUnchanged`가 `true`이고, 출력 스냅샷이 있어야 한다.
 - `[cloud-workflow.ts:createCloudWorkflowPort]`의 `read`가 반환하는 `actualCostMicros`는 항상 `null`이다.
 
+- `[autonomous-runner.ts:runAutonomousIteration]`은 인증된 claim만 실행 입력으로 사용한다. 실제 제공자는 명시적 executor·정책 집행·영속 세션 복원이 필요하다. 세션 ID·모델·sequence가 정확히 이어져야 하며 공개 finish에는 허용된 결과와 checkpoint 참조만 보낸다. heartbeat·lease·deadline 실패는 실행을 중단하며 불명확한 실행을 자동 재시도하지 않는다.
+- `[autonomous-loop.ts:runAutonomousLoop]`는 운영자 인증 필드를 거부하고 반복·idle 한도를 양의 유한 정수로 요구한다. worker-state가 실행 가능한 상태일 때만 반복한다.
+- `[autonomous-session-store.ts:EncryptedSessionStore]`는 32바이트 키의 AES-GCM과 task·세션·모델·sequence·objectKey AAD를 쓴다. blob은 최대 12MiB다. `[autonomous-session-file.ts:FilePrivateBlobStore]`는 0700 소유 디렉터리·0600 단일 링크 일반 파일과 심볼릭 링크 거부를 검사한다.
+- `[autonomous-claude.ts:createClaudeAutonomousExecutor]`는 Claude 구독 인증 하나, 구체적인 모델 pin, 유효 lease, sequence 증가와 Linux 경계 보고를 검증한다. 보고값 검증 자체가 독립 attestation을 뜻하지 않는다.
+- `[autonomous-external.ts:validateExternalArtifact]`는 최대 32개 파일·파일당 256KiB·합계 1MiB와 canonical base64를 요구한다. 비밀 경로·알려진 비밀·일반 인증 패턴과 일부 중첩 인코딩을 거부한다. 완전한 DLP 보장은 아니다.
+- `[autonomous-external.ts:createExternalProviderTransport]`는 서버 설정과 승인 target·매개변수 hash를 대조한다. AWS 시작은 원격 TTL guard와 timer 근거가 필수이며 GitHub는 expected HEAD를 고정한다. 조회 실패·404·삭제 수락은 부재나 비용 0의 근거가 아니다.
+- `[autonomous-aws-guard.ts:createAwsTtlGuardPort]`는 비활성·미설정이면 AWS 호출 전 거부한다. region은 `ap-northeast-2`이며 원격 정책·Lambda 코드·실행 설정·DynamoDB·timer를 대조한다. guard 검증의 Lambda envelope는 55초·256MiB·x86_64·비VPC다.
+- `[autonomous-external-cost.ts:createAwsCostExplorerReader]`는 실제 부재 확인 뒤 확인 비용을 읽는다. Cost Explorer 조회·기타 비용의 별도 검증 supplement가 없으면 전체 최종 비용을 확정하지 않는다. `null`은 미확정이다.
+- `[autonomous-external-s3.ts:createExternalS3Transport]`는 `If-None-Match:*`, 소유 mark·checksum·고정 bucket owner를 사용한다. inspect는 같은 승인에 속한 put의 key·digest만 읽는다.
+- `[autonomous-external-large-store.ts:createExternalLargeStore]`는 완료 시 전체 객체를 다시 hash하고 크기를 대조한다. 소유자를 지정한 `open`은 검증 완료 원장을 요구한다. `abortOwner`의 취소 tombstone은 해당 revision의 새 업로드도 막는다.
+- `[autonomous-external-hf-lfs.ts:hfLfsCommit]`는 모든 파일의 사전 검사를 게시 전에 완료하고 upload 목적지를 서버 허용 HTTPS 호스트로 제한한다. 업로드 호스트에는 HF 인증을 전달하지 않는다. 최종 visibility·parent를 재확인하지만 HF visibility의 원자적 CAS는 보장하지 않는다.
+- `[autonomous-external-hf-visibility.ts:assertHfLfsAllowed]`는 공개 LFS 게시에 `allowPublicLarge:true`를 요구한다. 생략된 visibility는 private이며 기존 profile hash를 바꾸는 정규화는 하지 않는다.
+
 ## Side Effects
 
 - `[process.ts:runProcess]`는 `spawn`으로 자식 프로세스를 만든다. POSIX에서는 `detached`로 새 프로세스 그룹을 만들고 그 그룹에 신호를 보낸다.
@@ -72,6 +102,13 @@ Cloudflare 포트:
 - `[cloudflare.ts:createCloudPort]`의 `poll`은 원격 출력 스냅샷을 로컬 worktree에 적용한다(`applySnapshot`). 같은 출력이 이미 적용되어 있으면 다시 적용하지 않는다.
 - `[cloud-workflow.ts:createCloudWorkflowPort]`의 `draft`는 임시 worktree를 만들어 스냅샷을 읽은 뒤 `git worktree remove --force`와 `rm`으로 지운다. 그 다음 스냅샷을 원격에 업로드하고 워크플로 초안을 만든다.
 - `[cloud-workflow.ts:createCloudWorkflowPort]`의 `read`는 `includeDiff`가 참이면 `os.tmpdir()` 아래에 `hivemind-workflow-diff-` 임시 디렉터리를 만들어 입력과 출력 스냅샷을 복원하고 `git diff --no-index`를 실행한 뒤 디렉터리를 지운다.
+
+- `[autonomous-runner.ts:createAutonomousHttpClient]`, `[autonomous-claude.ts:createClaudeRuntimeHttpPort]`는 HTTP를 호출한다. 실행 반복은 세션을 저장하고 timer를 등록하며 종료 시 scoped credential map을 비운다. `runAutonomousCleanup`은 주입한 정리와 중앙 확인을 호출한다.
+- `[autonomous-session-file.ts:FilePrivateBlobStore]`는 디렉터리·임시 파일을 생성하고 fsync·hard link로 blob을 원자적으로 게시한다. 기존 blob을 덮어쓰지 않는다.
+- `[autonomous-external.ts:createExternalProviderTransport]`는 설정·승인 후 EC2 Spot 시작·종료, 소유 EBS 삭제, HF commit/LFS upload, GitHub commit과 S3 PUT/HEAD를 수행할 수 있다. 비용과 외부에 남는 변경이 발생할 수 있다.
+- `[autonomous-aws-guard.ts:createAwsTtlGuardPort]`는 기존 인프라를 조회하고 DynamoDB 소유 레코드·Scheduler 만료 timer를 만든다. `[autonomous-external-cost.ts:createAwsCostExplorerReader]`는 서명한 Cost Explorer 조회를 보내며 조회 비용이 발생할 수 있다.
+- `[autonomous-external-cost.ts:createExternalCostCache]`는 `external_cost_cache`, `[autonomous-external-large-sql.ts:createExternalLargeRecordPort]`는 `external_large_uploads`, `external_large_cancelled` 테이블·인덱스를 만든다.
+- `[autonomous-external.ts:createExternalR2ArtifactPublisher]`는 조건부로 artifact를 저장한다. `[autonomous-external-large-store.ts:createExternalLargeStore]`는 주입한 bucket의 multipart 생성·업로드·완료·삭제와 원장 기록을 수행한다.
 
 ## Verification
 

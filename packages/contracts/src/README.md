@@ -2,9 +2,9 @@
 
 ## Overview
 
-이 디렉터리는 HIVEMIND의 중앙 core, 모델 어댑터, 워커, UI가 함께 쓰는 공통 계약을 정의한다. `index.ts`와 `cloudflare.ts`는 TypeScript 타입과 인터페이스만 내보낸다. 실행 코드는 `workflow.ts`의 `zod` 스키마뿐이다. 이 디렉터리의 파일은 저장소나 네트워크에 접근하지 않는다.
+이 디렉터리는 HIVEMIND의 중앙 core, 모델 어댑터, 워커, UI가 함께 쓰는 공통 계약을 정의한다. `index.ts`와 `cloudflare.ts`는 TypeScript 타입과 인터페이스만 내보낸다. `workflow.ts`의 `zod` 스키마, `autonomous.ts`의 검증 함수와 외부 행동·도구 감사의 상수도 실행 코드로 내보낸다. 이 디렉터리의 파일은 저장소나 네트워크에 접근하지 않는다.
 
-파일은 세 가지 범위로 나뉜다. `index.ts`는 로컬 작업(task)의 상태, 실행 근거, 어댑터 계약을 정의한다. `cloudflare.ts`는 Cloudflare 런타임에서 실행하는 작업의 근거와 포트 계약을 정의한다. `workflow.ts`는 Codex와 Claude 두 워커가 한 계약 파일을 기준으로 나눠 작업하는 워크플로의 입력 스키마와 조회 스키마를 정의한다.
+기본 작업 파일은 다음 세 가지 범위를 다루며, 장기 자율 작업 계약은 아래에 따로 정리한다. `index.ts`는 로컬 작업(task)의 상태, 실행 근거, 어댑터 계약을 정의한다. `cloudflare.ts`는 Cloudflare 런타임에서 실행하는 작업의 근거와 포트 계약을 정의한다. `workflow.ts`는 Codex와 Claude 두 워커가 한 계약 파일을 기준으로 나눠 작업하는 워크플로의 입력 스키마와 조회 스키마를 정의한다.
 
 ## Interface
 
@@ -41,6 +41,15 @@
 - `[workflow.ts:CloudWorkflowControl]`: `draft`, `approve`, `list`, `read`, `close`. 중앙 core가 구현한다.
 - `[workflow.ts:workflowList]`, `[workflow.ts:workflowRegistration]`, `[workflow.ts:workflowView]`: 목록, 등록 결과, 상세 조회 응답 스키마.
 
+- `[autonomous.ts:AutonomousSpec]`, `[autonomous.ts:AutonomousTask]`, `[autonomous.ts:AutonomousLease]`, `[autonomous.ts:AutonomousRunResult]` - 장기 작업의 승인 범위, 상태, 실행 권한과 반복 결과 계약이다. `AutonomousCheckpoint`, `AutonomousNativeAuthorization`, `AutonomousNativeReceipt`, `AutonomousQuotaProof`, `AutonomousWorkerState`, `AutonomousUsage`는 세션 참조·native 실행·quota·조회 계약이다.
+- `[autonomous.ts:AutonomousActionRequest]`, `[autonomous.ts:AutonomousAction]`, `[autonomous.ts:AutonomousResource]`, `[autonomous.ts:AutonomousRun]`, `[autonomous.ts:AutonomousIntervention]`, `[autonomous.ts:AutonomousState]` - 예약, 정산, 자원, 이력과 영속 상태다. `AutonomousCloudExecution`은 원격 snapshot·검사를, `AutonomousOperatorBillingEvidence`는 인간 확인 비용 근거를 정의한다.
+- `[autonomous.ts:validateAutonomousModelPin]`, `[autonomous.ts:validateAutonomousCapabilities]`, `[autonomous.ts:autonomousExternalOperation]`, `[autonomous.ts:AUTONOMOUS_EXTERNAL_TOOL]` - 모델 pin과 도구·호스트·외부 profile 범위를 검증하고 native 외부 도구 이름을 고정한다.
+- `[autonomous-native.ts:NativeSnapshot]`, `[autonomous-native.ts:NativeClaudeSession]`, `[autonomous-native.ts:NativeClaudeRequest]`, `[autonomous-native.ts:NativeClaudeResponse]`, `[autonomous-native.ts:NativeClaudeRuntimePort]` - 공개 응답과 분리된 native runtime 전송 계약이다.
+- `[autonomous-external.ts:ExternalProfile]`, `[autonomous-external.ts:ExternalProfileRegistry]`, `[autonomous-external.ts:ExternalApproval]`, `[autonomous-external.ts:ExternalActionRequest]`, `[autonomous-external.ts:ExternalAction]`, `[autonomous-external.ts:ExternalTransactionalStore]` - 서버 소유 대상·승인·행동과 원자적 저장 계약이다. `ExternalInvocation`, `ExternalCredentialResolver`, `ExternalCredentialScope`, `ExternalProviderTransport`, `ExternalProviderReceipt`, `ExternalInspection`, `ExternalBrokerOptions`는 범위가 제한된 실행·조회·정리 포트다.
+- `[autonomous-external-s3.ts:ExternalS3Target]`, `[autonomous-external-s3.ts:ExternalS3Profile]`, `[autonomous-external-s3.ts:ExternalS3Parameters]`, `[autonomous-external-s3.ts:ExternalS3InspectParameters]` - 고정 S3 대상과 소유 put 행동 조회 계약이다.
+- `[autonomous-external-large.ts:ExternalLargeFile]`, `[autonomous-external-large.ts:ExternalLargeManifest]`, `[autonomous-external-large.ts:ExternalLargeLimits]` - 대형 파일의 크기·SHA-256·저장 참조와 manifest 계약이다.
+- `[autonomous-tool-audit.ts:ToolAuditRecord]`, `[autonomous-tool-audit.ts:StoredToolAuditRecord]`, `[autonomous-tool-audit.ts:ToolAuditTotals]`, `[autonomous-tool-audit.ts:TOOL_AUDIT_LIMITS]` - 워커 보고 도구 기록과 저장 한도다.
+
 ## Invariants
 
 - `[workflow.ts:workflowDraft]`는 `z.strictObject`이므로 정의되지 않은 필드가 있으면 검증에 실패한다. `[workflow.ts:workflowApproval]`도 같다.
@@ -51,9 +60,14 @@
 - `[workflow.ts:workflowView]`의 상한: `workers` 2개, 워커당 `rounds` 4개, 라운드당 `checks` 4개, `diff` 180000자, `stdout`과 `stderr` 각 32000자. `[workflow.ts:workflowList]`는 최대 20건이다.
 - `[cloudflare.ts:CloudSubmission]`은 비공개 데이터다. 소스 주석은 이 객체를 브라우저에 반환하지 말라고 명시한다.
 
+- `[autonomous.ts:validateAutonomousModelPin]`은 `default`, `inherit`, `latest`, `best`, `opus`, `sonnet`, `haiku`, `opusplan` 별칭을 거부한다. 문법 검증이며 모델의 실제 가용성을 보증하지 않는다.
+- `[autonomous.ts:validateAutonomousCapabilities]`는 `Bash`를 필수로 요구하고 도구 중복과 미지원 도구를 거부한다. `WebFetch`와 `web`, 외부 도구와 `externalProfiles`는 각각 함께 있어야 한다. 호스트는 명시된 공인 도메인 형식과 금지 목록을 통과해야 한다.
+- `[autonomous-external.ts:DEFAULT_EXTERNAL_PROFILE_ENTRY]`는 `enabled:false`로 고정된다. `ExternalTransactionalStore.transaction`은 동기 원자적 commit/rollback, 비동기 callback 거부와 callback 내부 네트워크 금지를 계약으로 요구한다.
+- `[autonomous-external.ts:ExternalProviderTransport]`에서 조회의 `null`은 미해결 상태다. 삭제 요청 수락은 실제 부재 확인과 다르다. `ExternalAction`은 공급자 근거와 `operator_attested` 인간 비용 확인을 분리한다.
+
 ## Side Effects
 
-- None. 이 디렉터리의 코드는 파일, 네트워크, 데이터베이스에 접근하지 않는다. `workflow.ts`는 모듈을 불러올 때 `zod` 스키마 객체만 만든다.
+- None. 이 디렉터리의 코드는 파일, 네트워크, 데이터베이스에 접근하지 않는다. 모듈 로드는 스키마·상수 객체를 만들고 검증 함수는 잘못된 입력에 예외를 던진다.
 
 ## Verification
 

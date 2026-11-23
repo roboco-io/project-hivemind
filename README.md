@@ -30,7 +30,7 @@ AI 코딩 에이전트는 사람이 읽을 수 있는 양보다 훨씬 많은 �
 
 성공 기준은 워커 수가 아니다. 사람이 코드를 읽지 않고 의도와 정책만 다뤄서 목표에 도달했는지를 먼저 본다. 그다음 **같은 품질의 결과를 통합하기까지 걸린 시간, 로컬 자원 부담, 실패와 재시도를 포함한 총비용**으로 판단한다.
 
-현재 구현은 이 의도에 아직 도달하지 못했다. 현재 작업 흐름에는 사람이 실제 Git diff와 테스트 결과를 확인한 뒤 결과를 수락하는 단계가 있다. 결과 수락은 검토 이력만 기록하며 원본 저장소에 변경을 적용하거나 커밋·병합·푸시를 수행하지 않는다. 자연어 목표 분해와 작업 의존성 DAG도 아직 구현하지 않았다.
+현재 구현은 이 의도에 아직 도달하지 못했다. 현재 작업 흐름에는 사람이 실제 Git diff와 테스트 결과를 확인한 뒤 결과를 수락하는 단계가 있다. 결과 수락은 검토 이력만 기록하며 원본 저장소에 변경을 적용하거나 커밋·병합·푸시를 수행하지 않는다. 자연어 목표 분해와 일반 DAG 실행기는 아직 구현하지 않았다. 기존 두 워커 workflow에는 선택적 [팀 작업 원장·의존성·안전 중단](docs/team-coordination.md)을 추가했으며, 실제 CLI의 팀 도구 연결과 자동 감시기는 후속 범위다.
 
 ## 현재까지 확인한 것과 확인하지 못한 것
 
@@ -45,7 +45,7 @@ AI 코딩 에이전트는 사람이 읽을 수 있는 양보다 훨씬 많은 �
 
 **핵심 가설은 아직 입증하지 못했다.** 2026-11-14 실측에 쓴 작은 RealWorld 과제에서는 로컬 병렬 실행이 원격 실행보다 빨랐다. 사람이 코드를 읽지 않고 의도와 정책만으로 목표에 도달할 수 있다는 가설, 대규모 작업에서 원격 실행이 로컬 자원 한계를 극복한다는 가설, 랄프 루프가 토큰을 절감한다는 가설은 더 큰 실제 프로젝트에서 측정해야 한다.
 
-이슈 #1의 장기 실행·예약·quota 대기·웹·외부 작업 경로는 bounded 구현 상태다. 검증 후보를 Cloudflare에 배포했으며 새 기능은 비활성이다. 원격 격리와 실제 장기 수용은 남아 있다. [구현·검증·잔여 운영 작업](docs/plans/2026-11-20-autonomous-remaining.report.md)을 확인한다. 사용자 결정에 따른 실제 프로젝트 검증 이관과 최신 연결 보완은 [구현 마감 기록](docs/plans/2026-11-20-issue1-implementation-closeout.md)을 따른다. 2026-11-21 후속(비용 초과 시 작업 중단, 워커 도구 호출 기록, S3 put·inspect, HF 공개 범위와 LFS commit)은 [후속 계획](docs/plans/2026-11-21-issue1-followups.md)과 [장기 자율 작업](docs/autonomous-tasks.md)에 적었다. 이 후속은 가짜 HTTP로만 검사했고 실제 AWS·Hugging Face는 미검증이다.
+이슈 #1의 장기 실행·예약·quota 대기·웹·외부 작업 경로는 bounded 구현 상태다. 검증 후보를 Cloudflare에 배포했으며 새 기능은 비활성이다. 원격 격리와 실제 장기 수용은 남아 있다. [구현·검증·잔여 운영 작업](docs/plans/2026-11-20-autonomous-remaining.report.md)을 확인한다. 사용자 결정에 따른 실제 프로젝트 검증 이관과 최신 연결 보완은 [구현 마감 기록](docs/plans/2026-11-20-issue1-implementation-closeout.md)을 따른다. 2026-11-21 후속(비용 초과 시 작업 중단, 워커 도구 호출 기록, S3 put·inspect, HF 공개 범위와 LFS commit)은 [후속 계획](docs/plans/2026-11-21-issue1-followups.md)과 [장기 자율 작업](docs/autonomous-tasks.md)에 적었다. 이 후속은 가짜 HTTP로만 검사했고 실제 AWS·Hugging Face는 미검증이다. HF의 실제 모델 구조와 공식 업로드 규약 대조·적용은 [HF 모델 게시](docs/hugging-face-publication.md)에 정리했다.
 
 ## 아키텍처
 
@@ -393,7 +393,7 @@ npm run check
 - [자동 테스트와 실제 Codex 검증 결과](docs/verification.md)
 
 공개 저장소: [roboco-io/project-hivemind](https://github.com/roboco-io/project-hivemind).
-클라우드 배포 대상은 설정하지 않았다.
+Cloudflare 배포 설정은 [백엔드 패키지](./cloudflare/backend/README.md)에 있다. 전체 AWS 실행 백엔드는 후속 범위다.
 
 ## Subdirectories & System Boundaries
 
@@ -401,9 +401,10 @@ npm run check
 `docs/`, `infra/`, `tests/`에는 계약 대상 소스가 없어서 이 색인에 넣지 않았다.
 
 - apps: [apps/README.md](./apps/README.md) - 실행 가능한 프로세스와 운영자 화면. 중앙 관제 HTTP 서버(control-plane), 정적 대시보드(dashboard), 운영자 API를 `hivemind_*` 도구로 감싼 MCP 서버(mcp-server), 로컬 워커(worker)가 있다. 네 앱은 모두 control-plane의 HTTP API를 경계로 삼는다.
-- packages: [packages/README.md](./packages/README.md) - 공통 계약(contracts), 상태 전이와 SQLite 저장을 맡는 중앙 core(core), 로컬 실행 어댑터와 Cloudflare 포트(adapters). core와 adapters는 정적 import로는 각각 contracts만 가져오고 서로 가져오지 않는다. 다만 adapters의 Cloudflare 포트는 `cloudflare/backend/src`의 모듈을 실행 시점에 동적으로 불러온다.
+- packages: [packages/README.md](./packages/README.md) - 공통 계약(contracts), 상태 전이와 SQLite 저장을 맡는 중앙 core(core), 로컬 실행 어댑터와 Cloudflare 포트(adapters). 외부 작업 어댑터는 core의 해시·대형 입력·S3 검증 함수를 가져온다. Cloudflare 포트는 `cloudflare/backend/src`의 모듈을 실행 시점에 동적으로 불러온다. `[packages/adapters/src/autonomous-external.ts:createExternalProviderTransport]`
 - scripts: [scripts/README.md](./scripts/README.md) - HIVEMIND MCP 서버를 사용자 프로젝트의 로컬 설정에 등록하는 설치 스크립트 2개와, 세션 분할 방식의 비용을 측정하는 실험 스크립트(experiments).
 - cloudflare: [cloudflare/README.md](./cloudflare/README.md) - 별도 패키지인 Cloudflare 백엔드. Worker API, 스케줄러 Durable Object, 작업별 컨테이너 런타임, 운영자 스크립트와 phase 0 검증 스크립트가 있다.
+- infrastructure: [infrastructure/README.md](./infrastructure/README.md) - 외부 AWS 작업의 TTL·소유권 가드를 정의하는 별도 CDK 패키지다. 전체 AWS 실행 백엔드와 구분한다.
 
 ## Global Invariants
 
@@ -411,14 +412,15 @@ npm run check
 - 운영자 토큰과 워커 토큰은 비어 있지 않고 서로 달라야 하며, 상수 시간 비교로 검사한다. `[apps/control-plane/src/app.ts:buildApp]`, `[packages/core/src/store.ts:equalSecret]`
 - 워커는 워커 토큰으로 인증하는 HTTP API만 사용하고 중앙 SQLite 파일을 열지 않는다. `[apps/worker/src/worker.ts:runOnce]`
 - MCP 서버의 `hivemind_create_task`는 실행 승인 전 초안만 등록한다. 실행 승인은 별도 도구 호출이다. `[apps/mcp-server/src/server.ts:createHivemindMcpServer]`
-- codex·claude 작업의 `actualCostMicros`는 `null`이다. mock 작업의 diff와 비용은 합성 값이며 실제 실행 근거를 포함할 수 없다. `[packages/core/src/store.ts:HiveStore.result]`, `[packages/adapters/src/index.ts:mock]`
+- 기존 `HiveStore`의 codex·claude 작업은 `actualCostMicros`가 `null`이다. mock 작업의 diff와 비용은 합성 값이며 실제 실행 근거를 포함할 수 없다. 자율 외부 작업의 비용 원장은 별도 계약을 따른다. `[packages/core/src/store.ts:HiveStore.result]`, `[packages/adapters/src/index.ts:mock]`, [core 계약](./packages/core/src/README.md)
 - lease가 만료된 `running` 작업은 `failed`로 바뀌며 자동 재시도하지 않는다. `[packages/core/src/store.ts:HiveStore.expire]`
 - Cloudflare 제출 데이터에 자격 증명 키가 있으면 거부하고, 저장 전에 Bearer 토큰과 비밀 키의 값을 `[REDACTED]`로 바꾼다. `[packages/core/src/cloudflare-store.ts:assertPrivateSubmission]`, `[packages/core/src/cloudflare-store.ts:safe]`
 - 대시보드는 서버 값을 `textContent`로만 표시한다. `[apps/dashboard/public/app.js:node]`
+- 자율 작업 저장소는 `BEGIN IMMEDIATE` 안에서 최신 상태를 읽고 변경을 저장한다. 외부 작업 비용 감시는 broker의 노출액을 읽고 중앙 중단과 승인 취소를 요청하며, 성공한 중단은 작업 revision별로 기억한다. `[packages/core/src/autonomous-store.ts:createAutonomousStore]`, `[packages/core/src/autonomous-external-cost-watch.ts:createExternalCostWatch]`
 
 ## Global Side Effects
 
-- SQLite 파일을 만들고 쓴다. `main.ts`의 기본 경로는 `data/hivemind.sqlite`이다. 테이블은 `tasks`, `workers`, `events`, `cloud_tasks`, `cloud_events`, `cloud_metadata`, `cloud_workflows`이다. `[packages/core/src/store.ts:HiveStore]`, `[packages/core/src/cloudflare-store.ts:createCloudControl]`, `[packages/core/src/cloud-workflow-store.ts:createCloudWorkflowControl]`
+- SQLite 파일을 만들고 쓴다. `main.ts`의 기본 경로는 `data/hivemind.sqlite`이다. 기존 작업 테이블은 `tasks`, `workers`, `events`, `cloud_tasks`, `cloud_events`, `cloud_metadata`, `cloud_workflows`다. 자율 작업은 `autonomous_state`, `autonomous_metadata`, `autonomous_tasks`, `autonomous_chunks`를 사용하며, 외부 작업·도구 이력에는 추가 테이블이 있다. `[packages/core/src/store.ts:HiveStore]`, `[packages/core/src/cloudflare-store.ts:createCloudControl]`, `[packages/core/src/cloud-workflow-store.ts:createCloudWorkflowControl]`, `[packages/core/src/autonomous-store.ts:createAutonomousStore]`, [저장 계약](./packages/core/src/README.md)
 - control-plane은 TCP 포트를 연다. 기본값은 `127.0.0.1:4310`이다. `[apps/control-plane/src/main.ts]`
 - codex·claude 어댑터는 `codex` 또는 `claude` CLI를 자식 프로세스로 실행하며, 이때 실제 모델 호출이 일어난다. 실행마다 `git worktree add --detach`로 작업 디렉터리를 만든다. `[packages/adapters/src/codex.ts:createCodexAdapter]`, `[packages/adapters/src/claude.ts:createClaudeAdapter]`, `[packages/adapters/src/workspace.ts:createWorkspace]`
 - Cloudflare 포트는 설정된 백엔드 주소로 HTTPS 요청을 보내고, 원격 출력 스냅샷을 로컬 worktree에 적용한다. `[packages/adapters/src/cloudflare.ts:createCloudPort]`
@@ -429,6 +431,11 @@ npm run check
 
 - Run: `npm run check` (저장소 루트. 타입 검사 뒤 빌드하고 `node --test dist/tests/*.test.js`를 실행한다.)
 - Run: `npm test` (`cloudflare/`와 `cloudflare/backend/`에서 각각 실행한다.)
+- Run: `npm run typecheck && npm test` (`infrastructure/aws-external-guard/`에서 실행한다. 배포 없이 CDK 계약과 Lambda를 검사한다.)
+
+## AWS 임시 인증과 위임 업로드
+
+기본 비활성인 OIDC→STS→GetScopedCredentials 경로와 인스턴스 직접 업로드를 구현하고 로컬 검증했다. 실제 AWS·HF 수용 검증은 아직 수행하지 않았다. 설정과 승인 경계는 [통합 안내](docs/delegated-integration.md), 서명키 분리는 [OIDC 구성](docs/oidc-issuer.md), 인스턴스 격리는 [bootstrap 안내](docs/delegated-instance.md)를 참조한다. 진행 상태와 검증 근거는 [이슈 검증 기록](docs/plans/2026-11-23-parallel-issues.report.md)에 구분한다.
 
 ## 라이선스
 

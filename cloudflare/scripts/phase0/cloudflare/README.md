@@ -37,7 +37,8 @@
 - Codex outbound는 `chatgpt.com`, `auth.openai.com`, `api.openai.com`만 허용한다. `[outbound.ts:codexOutbound]`
 - Claude outbound는 `api.anthropic.com`, `claude.ai`, `claude.com`, `platform.claude.com`만 허용한다. `[outbound.ts:claudeOutbound]`
 - outbound는 https이고 userinfo가 없으며 포트가 비어 있거나 443이어야 한다. `[outbound.ts:codexOutbound]`, `[outbound.ts:claudeOutbound]`
-- `codex`와 `claude` probe는 Durable Object마다 한 번만 실행한다. 두 번째 호출은 오류다. `[worker.ts:Phase0Container]`
+- `codex`와 `claude` probe의 재실행은 각각 Durable Object KV의 `codex-probe-v4-used`, `claude-probe-v5-used` 표시로 차단한다. 실행 시작 전에 표시를 쓰므로 실패해도 같은 버전 표시를 자동으로 되돌리지 않는다. `[worker.ts:Phase0Container.run]`
+- `worker.ts:Phase0Container.diagnostics`는 이미 진행 중인 호출이 있으면 종류와 관계없이 그 Promise를 반환한다. Worker 진입점은 `phase0-${kind}-v1` 이름으로 probe 종류별 객체를 선택한다 (`worker.ts:default.fetch`).
 - 컨테이너는 `enableInternet:false`로 시작한다. 모든 명령은 `setpriv --no-new-privs --inh-caps=-all --ambient-caps=-all --bounding-set=-all`로 실행한다. `[worker.ts:Phase0Container]`
 
 ## Side Effects

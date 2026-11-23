@@ -3,7 +3,7 @@
 ## Overview
 
 이 폴더는 공유 계약(`../contracts.ts`, `../scheduler.ts`)을 Cloudflare Worker, Durable Object, Container, R2에 연결한다.
-`api.ts`는 HTTP 요청을 검증하고 `ApiService`로 전달한다. `worker.ts`는 Worker 진입점, 작업별 컨테이너를 다루는 `RunnerDO`, 상태를 소유하는 `SchedulerDO`, 컨테이너의 외부 통신을 제한하는 outbound 진입점을 정의한다.
+`api.ts`는 HTTP 요청을 검증하고 `ApiService`로 전달한다. `worker.ts`는 Worker 진입점, 작업별 컨테이너를 다루는 `RunnerDO`, 상태를 소유하는 `SchedulerDO`, 컨테이너의 외부 통신을 제한하는 outbound 진입점을 정의한다. `autonomous-ports.ts`는 native 작업의 설정·승인·비공개 제출 경계를 연결하고 `autonomous-api.ts`는 공통 Web API를 다시 내보낸다.
 이 문서는 현재 코드가 정의한 내용을 기록한다. 원격 배포와 검증 상태는 [backend README](../../README.md)와 검증 문서를 따른다.
 
 ## Interface
@@ -18,15 +18,24 @@
 - `[api.ts:MAX_BODY_BYTES]` - JSON 요청 본문의 상한(8MiB).
 - `[scheduler-alarm.ts:ensureSchedulerAlarm]` - 대기 중인 alarm이 없거나 더 늦을 때만 `now+2000`ms에 alarm을 설정한다.
 - `[worker.ts:default]` - Worker `fetch` 처리기. `/health`, 인증, `/v1/carbon-diagnostics`를 처리하고 나머지는 `SCHEDULER`의 `owner` 인스턴스로 전달한다.
-- `[worker.ts:SchedulerDO]` - `ApiService`를 구현하는 단일 Durable Object. 스케줄러 상태를 storage 키 `state`에 저장하고 `alarm`에서 작업을 진행한다.
-- `[worker.ts:RunnerDO]` - 작업·시도마다 하나인 컨테이너 Durable Object. 공개 메서드는 `ensure`, `prepare`, `launch`, `checkpoint`, `feedback`, `poll`, `cancel`, `stop`이다.
+- `[worker.ts:SchedulerDO]` - `ApiService`를 구현하는 단일 Durable Object. 스케줄러 상태를 `createSchedulerStorage`에 위임해 저장하고 `alarm`에서 작업을 진행한다.
+- `[worker.ts:RunnerDO]` - 작업·시도마다 하나인 컨테이너 Durable Object. 기본 공개 메서드는 `ensure`, `prepare`, `launch`, `checkpoint`, `feedback`, `poll`, `cancel`, `stop`이다. native 메서드와 격리 진단은 아래에 정리한다.
 - `[worker.ts:CodexOutbound]`, `[worker.ts:ClaudeOutbound]`, `[worker.ts:ComputeOutbound]` - 제공자·검증 컨테이너용 outbound 진입점. 허용 호스트만 전달한다.
 - `[worker.ts:ResourceComputeOutbound]`, `[worker.ts:ResourceCodexOutbound]`, `[worker.ts:ResourceClaudeOutbound]` - 의존성 설치 경로를 추가로 허용하는 outbound 진입점.
 - `[worker.ts:CarbonOutbound]` - 벤치마크 컨테이너용 outbound 진입점. npm 캐시, Terra 게이트웨이, Gemini 게이트웨이 또는 프로브를 처리한다.
 
+- `[api.ts:isAutonomousPath]`, `[api.ts:authorizeAutonomousRoute]` - 장기 API 분류와 역할별 인증 경계다. `[api.ts:scheduleAutonomousAlarm]`은 종료·대기·lease 만료 중 다음 미래 전이에 alarm을 맞춘다.
+- `[autonomous-api.ts:handleAutonomousApi]`, `[autonomous-api.ts:AutonomousApiService]`, `[autonomous-api.ts:AutonomousOperation]` - 저장소 공통 [장기 API 계약](../../../../apps/control-plane/src/README.md)을 다시 내보낸다. 이 파일은 별도의 정책 엔진을 만들지 않는다.
+- `[autonomous-ports.ts:NativeCloudEnv]`, `[autonomous-ports.ts:cloudReadiness]`, `[autonomous-ports.ts:sessionKey]`, `[autonomous-ports.ts:controlOrigin]`, `[autonomous-ports.ts:nativeConfigurationFingerprint]` - native 설정과 승인 fingerprint를 검증한다.
+- `[autonomous-ports.ts:allowNativeControl]`, `[autonomous-ports.ts:nativeApprovalKey]`, `[autonomous-ports.ts:nativeJobKey]`, `[autonomous-ports.ts:NativeJobPrivate]`, `[autonomous-ports.ts:boundedNativeJobPrivate]` - 허용된 native control 요청과 별도 비공개 저장 키·bounded 작업 레코드다.
+- `[autonomous-ports.ts:LegacyAutonomousCloudPorts]` - `available`, `submit`, `poll`, `cancel`, `quarantine`으로 장기 controller와 기존 scheduler를 연결한다.
+- `[worker.ts:NativeClaudeOutbound]` - 고정 control 원점·Claude 제공자·승인된 Web grant의 세 egress 경계를 처리한다. grant가 없거나 만료되면 임의 웹 요청을 거부한다.
+- `[worker.ts:RunnerDO]`의 `prepareNative`, `launchNative`, `nativeLifecycle`, `pollNative`는 native 실행·종료 근거를 제공한다. `boundaryDiagnostic`, `alarm`은 한 번의 격리 진단과 불확실한 컨테이너 종료 재확인을 제공한다.
+- `[worker.ts:SchedulerDO]`는 `ApiService` 외에 `jobsPage`, `artifactRead`, `duckdbCacheGrant`, `npmCacheGrant`, `reserveCarbon`, `settleCarbon` RPC를 제공한다. 캐시·산출물 읽기 권한과 비용 예약은 현재 job·attempt·deadline에 결속한다.
+
 ### HTTP 경로
 
-`/health`를 제외한 모든 경로는 `[api.ts:authorize]`의 bearer 검사를 통과해야 한다.
+`/health` 외의 기본 경로는 `[api.ts:authorize]`의 운영자 bearer 검사를 통과해야 한다. 장기 작업 경로는 `[api.ts:authorizeAutonomousRoute]`가 운영자·워커·reporter 토큰을 구분한다.
 
 | 메서드·경로 | 동작 | 근거 |
 |---|---|---|
@@ -36,6 +45,7 @@
 | `PUT /v1/snapshots/{sha256}` | snapshot을 저장한다. 경로와 본문의 digest가 같아야 한다 | `[api.ts:handleApi]` |
 | `POST /v1/credentials/{id}`, `GET /v1/credentials` | 인증을 등록하고 메타데이터를 조회한다 | `[api.ts:handleApi]` |
 | `POST /v1/jobs`, `GET /v1/jobs`, `GET /v1/jobs/{id}` | 작업을 제출하고 조회한다 | `[api.ts:handleApi]` |
+| `GET /v1/jobs?view=summary&limit=...&cursor=...` | 제한된 작업 summary 페이지를 조회한다 | `[api.ts:handleApi]`, `[worker.ts:SchedulerDO.jobsPage]` |
 | `GET /v1/jobs/{id}/result`, `POST /v1/jobs/{id}/cancel` | 결과를 조회하고 취소를 요청한다 | `[api.ts:handleApi]` |
 | `POST /v1/workflows`, `POST /v1/workflows/{uuid}/approve` | workflow 초안을 만들고 승인한다 | `[api.ts:handleApi]` |
 | `GET /v1/workflows/{uuid}`, `GET /v1/workflows/{uuid}/result` | workflow 상태와 결과를 조회한다 | `[api.ts:handleApi]` |
@@ -46,6 +56,9 @@
 | `POST /v1/large-artifact-uploads/{uuid}/complete`, `POST /v1/large-artifact-uploads/{uuid}/abort` | 업로드를 완료하거나 중단한다 | `[api.ts:handleApi]` |
 | `GET /v1/large-artifacts/{sha256}` | 등록된 artifact의 메타데이터를 조회한다 | `[api.ts:handleApi]` |
 | `POST /v1/boundary-diagnostics` | 본문이 비어 있고 쿼리가 없으며 `idempotency-key`가 있을 때만 격리 검사를 실행한다. Workers 런타임은 본문 없는 POST에도 빈 스트림을 주므로 본문을 읽어 길이 0을 확인한다 | `[worker.ts:default]` |
+| `GET /v1/autonomous-readiness`, `GET /v1/autonomous-tasks/{id}/cloud-status`, `GET /v1/autonomous-tasks/{id}/cloud-result` | native 설정·실행·검사 상태를 운영자에게 반환한다 | `[worker.ts:SchedulerDO.fetch]` |
+| `/v1/autonomous-tasks`와 일반 하위 경로 | 공통 장기 작업 API로 전달한다. 승인·개정·중단·재개와 워커 실행 권한은 역할별로 구분한다 | `[worker.ts:SchedulerDO.fetch]`, `[autonomous-api.ts:handleAutonomousApi]` |
+| `/v1/autonomous-tasks/{id}/external-{artifact,action,profiles,actions,approval,cancel}`와 행동별 `reconcile`, `cleanup`, `billing` | 공통 외부 행동 API로 전달한다. 실제 HTTP 메서드는 공통 API 계약을 따른다 | `[worker.ts:SchedulerDO.fetch]` |
 | `POST /v1/autonomous-tasks/{id}/tool-calls` | 워커가 도구 호출 기록을 보고한다. reporter 토큰과 현재 lease가 필요하다 | `[worker.ts:SchedulerDO.fetch]` |
 | `GET /v1/autonomous-tasks/{id}/tool-calls` | 운영자가 기록을 페이지로 읽는다. 작업 보기의 `counts.workerToolCalls`는 이 기록의 건수를 보기에서만 덧붙인 값이다 | `[worker.ts:SchedulerDO.fetch]` |
 | `POST /v1/autonomous-tasks/{id}/external-large/{begin,part,complete,abort,manifest}` | 대형 산출물 업로드. worker 토큰이 필요하고, 컨테이너 egress는 외부 기능이 켜졌을 때만 허용한다 | `[worker.ts:SchedulerDO.fetch]`, `[autonomous-ports.ts:allowNativeControl]` |
@@ -70,15 +83,30 @@
 - alarm 한 번에 활성 작업은 최대 2개, workflow는 하나를 진행한다. `[worker.ts:SchedulerDO.alarm]`
 - 같은 멱등 키로 다른 내용을 등록하면 409다. `[worker.ts:SchedulerDO.createComputeGroup]`, `[worker.ts:SchedulerDO.createWorkflow]`, `[worker.ts:SchedulerDO.createCarbon]`
 
+- `[api.ts:authorizeAutonomousRoute]`는 내부 외부 정산 연산의 직접 경로를 404로 차단한다. 워커·reporter 토큰은 운영자 토큰과 달라야 하며 reporter는 워커 토큰과도 달라야 한다.
+- `[autonomous-ports.ts:cloudReadiness]`는 별도 session key, 세 토큰, HTTPS control 원점, auth-return 키, credential 암호화 키와 Claude sandbox 승인을 요구한다. `nativeConfigurationFingerprint`는 원점·runtime revision·인증 설정·기능 flag·외부 정책을 승인에 결속한다. 반환값은 hash이며 비밀 값을 공개하지 않는다.
+- `[autonomous-ports.ts:boundedNativeJobPrivate]`는 작업의 id·spec·revision만 복사하고 128KiB를 넘으면 거부한다. lease·checkpoint·native 결과는 공개 scheduler 상태와 별도 키에 저장한다.
+- `[autonomous-ports.ts:LegacyAutonomousCloudPorts.submit]`은 비공개 저장 await 전에 scheduler job을 autonomous로 표시한다. 부분 제출이 기존 제공자 실행 경로로 흘러가지 않는다. poll은 종료·컨테이너 중지·인증 동기화를 확인해야 완료 결과를 반환한다.
+- `[worker.ts:SchedulerDO.nativeSourceReady]`는 native source를 최대 32개 파일·64KiB로 제한한다. 장기 실행은 별도 flag와 저장소 지원이 있어야 한다. 승인 당시 설정·웹 범위가 달라지면 새 실행을 허용하지 않는다.
+- `[worker.ts:RunnerDO.ensure]`는 native runtime revision별 실제 boundary probe를 한 번 수행한다. 불확실한 probe는 재실행하지 않고 컨테이너를 종료한다. `[worker.ts:RunnerDO.boundaryDiagnostic]`은 revision·멱등 키별 별도 Runner를 사용하며 출력 대신 제한된 성공·종료 상태만 공개한다.
+- `[worker.ts:SchedulerDO.advanceAutonomy]`는 summary만 순회하고 회차당 최대 8개 장기 작업을 진행한다. 일반 컨테이너는 alarm당 최대 2개이며 별도 round-robin 커서를 사용한다.
+- `[worker.ts:SchedulerDO.completeNative]`는 고정 세션·모델·sequence, transcript 경로·JSONL·총 4MiB, 출력 snapshot 32개 파일·64KiB와 비밀 부재를 검사한다. 인증 반환은 비공개 복구 레코드에 먼저 저장하고 종료 확인·인증 세대 저장·공개 artifact 저장 후 중앙 완료를 기록한다.
+- `[worker.ts:SchedulerDO.fetch]`는 외부 공급자 I/O와 대형 업로드를 `blockConcurrencyWhile` 밖에서 처리해 중단 요청을 받을 수 있게 한다. 외부 admission 중단과 cleanup wake는 영속 상태로 유지한다.
+- `[worker.ts:SchedulerDO.jobs]`는 전체 legacy 응답이 저장소 상한을 넘으면 `PAGE_REQUIRED` 413을 반환한다. `[api.ts:handleApi]`는 제한된 summary 경로를 안내한다.
+
 ## Side Effects
 
 - R2 `ARTIFACTS`: snapshot, 작업 결과, 캐시 객체, large artifact를 읽고 쓴다. `[worker.ts:SchedulerDO.putSnapshot]`, `[worker.ts:ResourceComputeOutbound]`, `[worker.ts:CarbonOutbound]`
 - R2 `CREDENTIALS`: `AUTH_STORAGE_KEY`로 암호화한 인증 객체를 읽고 쓴다. `[worker.ts:SchedulerDO.storeCredential]`
-- Durable Object storage: `SchedulerDO`는 `state`와 커서·토큰 키를, `RunnerDO`는 `metadata`를 저장한다. `[worker.ts:SchedulerDO]`, `[worker.ts:RunnerDO]`
+- Durable Object storage: `SchedulerDO`는 `createSchedulerStorage`를 통한 scheduler 상태와 커서·토큰·native 복구 키를, `RunnerDO`는 `metadata`를 저장한다. `[worker.ts:SchedulerDO]`, `[worker.ts:RunnerDO]`
 - alarm: `SchedulerDO`가 `ensureSchedulerAlarm`으로 다음 진행을 예약한다. `[scheduler-alarm.ts:ensureSchedulerAlarm]`
 - 컨테이너: 시작, exec, 종료와 포트 3000 요청을 수행한다. `[worker.ts:RunnerDO.ensure]`, `[worker.ts:RunnerDO.launch]`, `[worker.ts:RunnerDO.stop]`
 - 외부 네트워크: 제공자 호스트, npm·GitHub 호스트, Gemini API, Terra 게이트웨이의 상류 호스트로 요청을 전달한다. `[worker.ts:CodexOutbound]`, `[worker.ts:ClaudeOutbound]`, `[worker.ts:ComputeOutbound]`, `[worker.ts:CarbonOutbound]`
 - 이름으로만 읽는 비밀과 플래그: `CONTROL_TOKEN`, `AUTH_STORAGE_KEY`, `AUTH_RETURN_PUBLIC_KEY`, `AUTH_RETURN_PRIVATE_KEY`, `GEMINI_BENCHMARK_KEY`, `TERRA_BENCHMARK_AUTH`, `CODEX_SANDBOX_APPROVED`, `CLAUDE_NESTED_APPROVED`. 값은 이 문서에 기록하지 않는다.
+
+- `[worker.ts:SchedulerDO]`는 장기 작업 SQL·도구 감사 SQL과 외부 행동 runtime을 연결한다. 외부 기능 복구 실패와 도구 감사 초기화 실패는 각각 해당 기능을 비활성화한다.
+- `[worker.ts:NativeClaudeOutbound]`는 승인된 control·제공자·웹 요청을 전달한다. `[autonomous-ports.ts:LegacyAutonomousCloudPorts]`는 비공개 job·승인 결속과 scheduler 상태를 영속 저장한다.
+- `[worker.ts:SchedulerDO.sessionStore]`는 CREDENTIALS bucket의 암호화 세션 blob을 읽고 쓴다. `[worker.ts:SchedulerDO.resumeNativeCompletion]`은 종료 확인·인증 세대·결과 artifact의 복구 진행을 저장한다.
 
 ## Verification
 

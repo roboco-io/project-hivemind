@@ -4,7 +4,7 @@
 
 이 디렉터리는 Claude Code 세션을 나누는 방식이 작업 시간과 토큰 비용에 주는 영향을 측정하는 실험 스크립트를 담는다. `context_continuity.py`는 임시 Git 저장소를 만들고 `claude -p`를 실제로 호출해 원시 기록을 남긴다. `summarize_context_continuity.py`는 그 원시 기록을 읽어 조건별 통계를 출력한다. 두 스크립트는 HIVEMIND 중앙 core나 HTTP API를 사용하지 않는 독립 실행 도구다. 실험 결과 기록은 [docs/verification/2026-11-11-context-continuity.md](../../docs/verification/2026-11-11-context-continuity.md)에 있다.
 
-실험은 함수 4개를 구현하는 과제 묶음 2개(`shared`, `independent`)를 세 조건으로 실행한다. 조건 `A`는 한 세션이 함수 4개를 모두 구현한다. 조건 `B`는 두 세션이 같은 작업 디렉터리에서 차례로 2개씩 구현한다. 조건 `C`는 네 세션이 각자 분리된 clone에서 1개씩 구현하고, 성공한 세션의 파일만 결과 디렉터리로 복사한다.
+실험은 함수 4개를 구현하는 과제 묶음 2개(`shared`, `independent`)를 세 조건으로 실행한다. 조건 `A`는 한 세션이 함수 4개를 모두 구현한다. 조건 `B`는 두 세션이 같은 작업 디렉터리에서 차례로 2개씩 구현한다. 조건 `C`는 네 세션이 각자 분리된 clone에서 1개씩 구현하고, 성공한 세션의 파일만 결과 디렉터리로 복사한다. 조건 C는 `ThreadPoolExecutor(2)`를 사용하므로 네 세션 중 최대 두 세션을 동시에 실행한다. [context_continuity.py:`run`]
 
 ## Interface
 
@@ -23,7 +23,7 @@
 - 세션의 `ok`는 종료 코드 0, `is_error`가 `False`, 응답 모델이 `model` 하나뿐, 변경 파일이 할당된 `.mjs` 범위 안이고 추적되지 않은 새 파일이 없음을 모두 만족할 때만 참이다. [context_continuity.py:`session`]
 - 실행의 `success`는 `verify.mjs` 종료 코드 0, 통과 테스트 12개, 모든 세션 `ok`를 요구한다. 요약 스크립트는 보존된 `tests.txt`에서 `tests 12 / pass 12 / fail 0`을 다시 확인해 `success`를 새로 계산한다. [context_continuity.py:`run`] [summarize_context_continuity.py:`success`]
 - 조건 순서는 `random.Random(20261111)`로 고정하며 기준 커밋의 작성 시각도 고정값이다. [context_continuity.py:`__main__`, `setup`]
-- 실행 하나의 제한 시간은 180초이고, 제한 시간을 넘긴 세션은 프로세스 그룹에 신호 15를 보내 종료한다. `deadline`이 없으면 세션 제한 시간은 100초다. [context_continuity.py:`run`, `session`]
+- `run`은 세션들이 공유하는 180초 deadline을 만들고, 각 세션은 남은 시간과 최소 1초 중 큰 값을 대기 시간으로 쓴다. 대기를 넘긴 세션은 프로세스 그룹에 신호 15를 보내고 최대 10초 추가 대기한다. `deadline`이 없으면 세션 대기는 100초이며 별도 검증 프로세스는 20초다. [context_continuity.py:`run`, `session`]
 - 요약 스크립트는 5분 TTL과 1시간 TTL 캐시 생성 토큰의 합이 `cache_creation_input_tokens`와 다르면 `ValueError`를 낸다. [summarize_context_continuity.py:`ttl5`, `ttl60`]
 - `estimated_api_usd`는 스크립트에 고정된 단가(`rates`와 캐시 생성 배수 1.25, 2)로 계산한 추정값이다. CLI가 보고한 비용은 `cli_reported_usd`로 따로 기록한다. [summarize_context_continuity.py:`rates`, `cli_cost`]
 - `evidence.json`은 기록이 정확히 36개일 때만 쓴다. [summarize_context_continuity.py:`records`]
@@ -38,4 +38,13 @@
 ## Verification
 
 - 이 디렉터리의 Python 스크립트에는 구성된 테스트 러너가 없다. 저장소 전체 검사인 `npm run check`는 이 스크립트를 실행하거나 검사하지 않는다.
-- Run: `<test-command>`
+- 실행 없는 구문 검사는 저장소 루트에서 다음 명령으로 수행한다. `ast.parse`는 Python 코드를 실행하거나 모델을 호출하지 않는다.
+
+```sh
+python3 - <<'PY'
+import ast
+from pathlib import Path
+for path in Path("scripts/experiments").glob("*.py"):
+    ast.parse(path.read_text(), filename=str(path))
+PY
+```
