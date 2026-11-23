@@ -189,6 +189,7 @@ workload에는 `HIVEMIND_ARTIFACT_SOURCE`(archive 최상위 디렉터리를 보�
 
 - [src](./src/README.md) - 공유 계약, 스케줄러, snapshot, workflow, compute group, 벤치마크 게이트웨이, 운영자 CLI.
   - [src/cloudflare](./src/cloudflare/README.md) - Worker, `SchedulerDO`, `RunnerDO`, outbound 진입점과 HTTP 경로.
+  - [src/runtime-shared](./src/runtime-shared/README.md) - 장기 실행 공통 타입, 모델 고정·도구·웹·외부 작업 조합 검증.
   - [src/runtime](./src/runtime/README.md) - 컨테이너 안의 런타임 서버와 CLI 실행, 실행 경계, 큰 입력과 캐시 준비.
 - [scripts](./scripts/README.md) - 런타임 빌드 버전 기록, 인증 등록, 원격 수용 검사와 실험 도구.
 - [benchmark](./benchmark/README.md) - pi용 셸 래퍼와 설정, RealWorld 고정 과제.
@@ -215,6 +216,7 @@ workload에는 `HIVEMIND_ARTIFACT_SOURCE`(archive 최상위 디렉터리를 보�
 - `namespace-guard`의 seccomp 필터는 `unshare`, `setns`, `mount`, `umount2`, `pivot_root` 등 namespace·mount syscall에 `EPERM`을 반환하고, namespace 플래그를 가진 `clone`을 거부한다. `clone3`은 `EPERM`이 아니라 `ENOSYS`를 반환한다. `[native/namespace-guard.c:install_filter]`
 - `proc-guard`는 Landlock ABI 3 이상을 요구한다. 쓰기는 `/workspace`, `/tmp`, `/var/tmp`와 `/dev/null`에만 허용한다. `[native/proc-guard.c:main]`, `[native/proc-guard.c:allow_dev_null_write]`
 - 두 guard는 `CMD`를 실행하기 전에 제공자 키, 운영자 토큰, `NODE_OPTIONS`, `LD_PRELOAD` 등의 환경 변수를 제거한다. `[native/namespace-guard.c:prepare_environment]`, `[native/proc-guard.c:scrub_environment]`
+- `proc-guard.c:require_process_boundary`는 단일 스레드를 요구한다. `proc-guard.c:close_extra_fds`는 제한 설치 후 fd 3 이상을 닫는다.
 - bubblewrap 빌드는 고정한 Debian source 버전만 받는다. 버전이 다르면 실패한다. `native/build-bubblewrap-compat.sh`
 
 ## Side Effects
@@ -227,7 +229,8 @@ workload에는 `HIVEMIND_ARTIFACT_SOURCE`(archive 최상위 디렉터리를 보�
 
 ## Verification
 
-- Run: `npm test` (`node --test test/*.test.ts`)
+- Run: `npm test` (`node --import ./scripts/source-test-loader.mjs --test test/*.test.ts`)
+- 테스트 전용 로더가 저장소 내부의 미생성 `.js` import를 대응 `.ts`로 해석한다. 기존 JavaScript와 `node_modules` 해석은 유지한다. `/tmp` 파일이나 `NODE_OPTIONS` 설정은 필요 없다. 배포 번들에는 이 로더를 사용하지 않는다.
 - Run: `npm run typecheck` (`tsc --noEmit`)
 - Run: `npm run runtime:check` (`node scripts/runtime-build.ts --check`)
 - 세 명령은 `cloudflare/backend/`에서 실행한다. `npm run deploy`와 원격 검사는 이 목록에 포함하지 않는다.
