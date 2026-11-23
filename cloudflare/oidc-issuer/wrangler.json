@@ -1,0 +1,10 @@
+{
+  "$schema": "../backend/node_modules/wrangler/config-schema.json",
+  "name": "hivemind-oidc-issuer-template",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-11-23",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {"OIDC_ISSUER": "", "OIDC_AUDIENCE": "", "OIDC_ACTIVE_KID": "", "OIDC_PUBLIC_JWKS": ""}
+}

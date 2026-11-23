@@ -1,0 +1,1 @@
+{"name":"@hivemind/oidc-issuer","private":true,"type":"module","scripts":{"typecheck":"../backend/node_modules/.bin/tsc -p tsconfig.json --noEmit"}}

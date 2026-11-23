@@ -6,20 +6,22 @@ import {externalAwsConfigurationHash} from '../packages/adapters/src/autonomous-
 import type {AwsTtlGuardRequest} from '../packages/adapters/src/autonomous-external.js';
 // Explicit FIXTURE account and synthetic credentials. No AWS connection or auth discovery.
 const account='111111111111',region='ap-northeast-2',prefix='fixture-hivemind';
-const guardArn=`arn:aws:events:${region}:${account}:rule/${prefix}`,functionArn=`arn:aws:lambda:${region}:${account}:function:${prefix}`;
+const guardArn=`arn:aws:events:${region}:${account}:rule/${prefix}`;
 const now=Date.parse('2026-11-20T00:00:00Z');
 const fixtureLaunchPolicy={accountId:account,region,workloadId:'fixture-workload',imageId:'ami-1234',instanceType:'t3.micro',subnetId:'subnet-1234',instanceProfileArn:`arn:aws:iam::${account}:instance-profile/${prefix}-workload`,maxLifetimeMs:3600000,maxUpperBoundMicros:100};
 const fixtureConfigurationHash=externalAwsConfigurationHash(fixtureLaunchPolicy);
 const request:AwsTtlGuardRequest={accountId:account,region,workloadId:'fixture-workload',actionId:'fixture-action',ownershipToken:'12345678-1234-4234-8234-123456789abc',clientToken:'a'.repeat(64),parametersHash:'b'.repeat(64),expiresAt:now+120000,maxExposureMicros:100,configurationHash:fixtureConfigurationHash};
 const xml=(tag:string,value:string)=>`<${tag}>${value}</${tag}>`;
 const encode=(v:unknown)=>encodeURIComponent(JSON.stringify(v));
-function fixture(){
+function fixture(selectedRegion='ap-northeast-2'){
+ const region=selectedRegion,guardArn=`arn:aws:events:${region}:${account}:rule/${prefix}`,functionArn=`arn:aws:lambda:${region}:${account}:function:${prefix}`;
  const calls:{url:string;init:RequestInit;body:any}[]=[],roles=['guard','scheduler','workload'].map(kind=>({kind:kind as 'guard'|'scheduler'|'workload',roleArn:`arn:aws:iam::${account}:role/${prefix}-${kind}`,boundaryArn:`arn:aws:iam::${account}:policy/${prefix}-${kind}`,inlinePolicyName:'guard-policy'}));
  const manifest={schemaVersion:1 as const,ownershipMode:'broker_uuid_registry_v1' as const,registryTableArn:`arn:aws:dynamodb:${region}:${account}:table/${prefix}-bindings`,guardArn,validUntil:now+86400000,profiles:[{workloadId:'fixture-workload',configurationHash:fixtureConfigurationHash,parameterPolicy:'opaque_broker_sha256' as const,launchHeadroomMs:30000,instanceProfileArn:`arn:aws:iam::${account}:instance-profile/${prefix}-workload`,maxLifetimeMs:3600000,quote:{source:'SYNTHETIC user quote',maxExposureMicros:100,validUntil:now+86400000}}]};
- const config:AwsGuardOptions={enabled:true,accountId:account,region,guardArn,functionArn,scheduleGroupArn:`arn:aws:scheduler:${region}:${account}:schedule-group/${prefix}`,schedulerRoleArn:roles[1]!.roleArn,rolePolicies:roles,expectedCodeSha256:Buffer.alloc(32,1).toString('base64'),manifest,credentials:async()=>({accessKeyId:'FIXTURE_ACCESS_KEY',secretAccessKey:'FIXTURE_SECRET',sessionToken:'FIXTURE_SESSION'}),now:()=>now};
+ if(region!=='ap-northeast-2')Object.assign(manifest,{region,allowedRegions:[region]});
+ const config:AwsGuardOptions={...(region!=='ap-northeast-2'?{allowedRegions:[region]}:{}),enabled:true,accountId:account,region,guardArn,functionArn,scheduleGroupArn:`arn:aws:scheduler:${region}:${account}:schedule-group/${prefix}`,schedulerRoleArn:roles[1]!.roleArn,rolePolicies:roles,expectedCodeSha256:Buffer.alloc(32,1).toString('base64'),manifest,credentials:async()=>({accessKeyId:'FIXTURE_ACCESS_KEY',secretAccessKey:'FIXTURE_SECRET',sessionToken:'FIXTURE_SESSION'}),now:()=>now};
  let mutate=(value:any,_operation:string)=>value;let schedule:any;const registry=new Map<string,unknown>();
  config.fetchImpl=async(input,init)=>{
-  const url=new URL(String(input)),headers=new Headers(init?.headers);assert.match(headers.get('authorization')!,/^AWS4-HMAC-SHA256 /);assert.equal(headers.get('x-amz-security-token'),'FIXTURE_SESSION');assert.equal(init?.redirect,'error');
+  const url=new URL(String(input)),headers=new Headers(init?.headers);assert.match(headers.get('authorization')!,/^AWS4-HMAC-SHA256 /);assert.equal(headers.get('x-amz-security-token'),'FIXTURE_SESSION');assert.equal(init?.redirect,'manual');
   const form=new URLSearchParams(String(init?.body??''));const operation=headers.get('x-amz-target')?.split('.').at(-1)??(url.hostname.startsWith('lambda.')?(url.pathname.endsWith('/policy')?'GetPolicy':url.pathname.endsWith('/concurrency')?'GetFunctionConcurrency':'GetFunctionConfiguration'):url.hostname.startsWith('scheduler.')?(init?.method==='POST'?'CreateSchedule':'GetSchedule'):form.get('Action')!);
   const body=headers.get('content-type')?.includes('json')?JSON.parse(String(init?.body??'{}')):Object.fromEntries(form);calls.push({url:url.href,init:init!,body});const policies=awsGuardPolicies(config);
   let value:any;
@@ -157,4 +159,37 @@ test('R11 admission rejects legacy guard IAM that cannot delete owned residual v
  legacy.Statement=legacy.Statement.filter((s:any)=>!s.Action.includes('ec2:DeleteVolume')).map((s:any)=>({...s,Action:s.Action.filter((action:string)=>action!=='ec2:DescribeVolumes')}));
  f.mutate((value,operation)=>operation==='GetRolePolicy'?xml('PolicyDocument',encode(legacy)):value);
  await assert.rejects(createAwsTtlGuardPort(f.config).attest(request),{message:'AWS TTL guard unavailable'});assert.equal(f.calls.some(call=>call.url.includes('scheduler.')),false);
+});
+
+test('Ohio concrete guard attestation and timer use selected regional endpoints and reject foreign ARN',async()=>{
+ const f=fixture('us-east-2'),r={...request,region:'us-east-2'},port=createAwsTtlGuardPort(f.config);
+ const evidence=await port.attest(r);const timer=await port.arm(r,evidence);assert.match(timer.timerArn,/arn:aws:scheduler:us-east-2:/);
+ for(const call of f.calls)assert.ok(new URL(call.url).hostname==='iam.amazonaws.com'||new URL(call.url).hostname.includes('.us-east-2.'));
+ for(const patch of [{allowedRegions:undefined},{guardArn:f.config.guardArn.replace('us-east-2','ap-northeast-2')},{manifest:{...f.config.manifest,region:'ap-northeast-2'}}]){
+  const denied=fixture('us-east-2');Object.assign(denied.config,patch);await assert.rejects(createAwsTtlGuardPort(denied.config).attest(r));assert.equal(denied.calls.length,0);
+ }
+});
+
+test('Workers-compatible guard fetch avoids unsupported redirect error mode',async()=>{
+ const f=fixture(),base=f.config.fetchImpl!;f.config.fetchImpl=async(input,init)=>{if(init?.redirect==='error')throw new TypeError('Unsupported redirect mode: error');return base(input,init);};
+ const port=createAwsTtlGuardPort(f.config),guard=await port.attest(request);await port.arm(request,guard);assert.ok(f.calls.length>10);assert.ok(f.calls.every(c=>c.init.redirect==='manual'));
+});
+test('guard refuses 302 without following location or admitting a timer',async()=>{
+ const f=fixture();const calls:{url:string;redirect:RequestRedirect|undefined}[]=[];f.config.fetchImpl=async(input,init)=>{calls.push({url:String(input),redirect:init?.redirect});return new Response('redirect',{status:302,headers:{location:'https://foreign.example.org/credential-target'}});};
+ await assert.rejects(createAwsTtlGuardPort(f.config).attest(request));assert.equal(calls.length,1);assert.equal(calls[0]!.redirect,'manual');assert.ok(!calls[0]!.url.includes('foreign.example.org'));
+});
+test('guard rejects a response marked redirected even when status is 200',async()=>{
+ const f=fixture();let calls=0;f.config.fetchImpl=async()=>{calls++;const r=Response.json({});Object.defineProperty(r,'redirected',{value:true});return r;};await assert.rejects(createAwsTtlGuardPort(f.config).attest(request));assert.equal(calls,1);
+});
+test('delegated upload attestation accepts exact workload S3/GSC inline and boundary documents',async()=>{
+ const f=fixture();f.config.manifest.delegatedUpload={bucket:'approved-models',prefix:'tasks/t1/',maxScopedSeconds:60};
+ const evidence=await createAwsTtlGuardPort(f.config).attest(request);assert.ok(evidence);assert.ok(f.calls.some(c=>c.body.Action==='GetRolePolicy'));
+});
+test('delegated upload attestation rejects legacy inline or boundary policy despite unchanged guard protections',async()=>{
+ for(const operation of ['GetRolePolicy','GetPolicyVersion']){
+  const f=fixture();const old=awsGuardPolicies(f.config).workload.policy;
+  f.config.manifest.delegatedUpload={bucket:'approved-models',prefix:'tasks/t1/',maxScopedSeconds:60};const current=awsGuardPolicies(f.config).workload.policy;
+  f.mutate((value,op)=>op===operation&&typeof value==='string'?value.replace(encode(current),encode(old)):value);
+  await assert.rejects(createAwsTtlGuardPort(f.config).attest(request),/AWS TTL guard unavailable/);
+ }
 });

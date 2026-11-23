@@ -14,3 +14,7 @@ coverage/
 .handoff.md
 
 __pycache__/
+
+# Source and tests for the STS API; override the user-wide *credentials* mask.
+!packages/adapters/src/aws-scoped-credentials.ts
+!tests/aws-scoped-credentials.test.ts
