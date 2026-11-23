@@ -4,7 +4,7 @@ export type ExternalHfVisibility = 'private'|'public';
 export type ExternalOperation = 'aws.spot.start'|'aws.spot.inspect'|'hf.model.commit'|'hf.model.lfs_commit'|'github.branch.push'|ExternalS3Operation;
 export type ExternalTarget =
   | {accountId:string; region:string; workloadId:string}
-  | {repository:string; revision:string; visibility?:ExternalHfVisibility}
+  | {repository:string; revision:string; visibility?:ExternalHfVisibility; allowPublicLarge?:true}
   | {repository:string; branch:string}
   | ExternalS3Target;
 interface ProfileLimits {
@@ -14,7 +14,7 @@ interface ProfileLimits {
 }
 export type ExternalProfile = ProfileLimits & (
   | {provider:'aws'; target:{accountId:string; region:string; workloadId:string}; operations:('aws.spot.start'|'aws.spot.inspect')[]}
-  | {provider:'hf'; target:{repository:string; revision:string; visibility?:ExternalHfVisibility}; operations:('hf.model.commit'|'hf.model.lfs_commit')[]}
+  | {provider:'hf'; target:{repository:string; revision:string; visibility?:ExternalHfVisibility; allowPublicLarge?:true}; operations:('hf.model.commit'|'hf.model.lfs_commit')[]}
   | {provider:'github'; target:{repository:string; branch:string}; operations:'github.branch.push'[]}
   | {provider:'s3'; target:ExternalS3Target; operations:ExternalS3Operation[]}
 );

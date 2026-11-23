@@ -37,3 +37,16 @@ test('visibility: lfs_commit is denied on public profiles',()=>{
   assert.throws(()=>assertHfLfsAllowed('public'));
   assert.throws(()=>assertHfLfsAllowed('x'));
 });
+
+test('visibility: public large requires exact opt-in and private rejects stray flags',()=>{
+  assertHfLfsAllowed(undefined);
+  assertHfLfsAllowed('public',true);
+  for(const flag of [false,null,'true',1,{}])assert.throws(()=>assertHfLfsAllowed('public',flag as never));
+  for(const visibility of [undefined,'private'])assert.throws(()=>assertHfLfsAllowed(visibility,true));
+});
+
+test('visibility: public large display explicitly names the acknowledged effect',()=>{
+ const display=hfVisibilityDisplay({visibility:'public',allowPublicLarge:true});
+ assert.equal(display.publicEffect,true);assert.match(display.notice,/공개 대형 게시 허용/);
+ for(const target of [{visibility:'public',allowPublicLarge:'true'},{visibility:'private',allowPublicLarge:true}])assert.throws(()=>hfVisibilityDisplay(target));
+});

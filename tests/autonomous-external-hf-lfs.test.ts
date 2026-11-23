@@ -23,12 +23,13 @@ function fixture():Fake{
   const calls:Call[]=[];
   const fetch=async(url:string|URL|Request,init:RequestInit={})=>{
     const u=String(url),method=init.method??'GET',headers=Object.fromEntries(Object.entries((init.headers??{}) as Record<string,string>).map(([k,v])=>[k.toLowerCase(),v]));
-    assert.equal(init.redirect,'error');
+    assert.equal(init.redirect,'manual');
     let body:string|undefined;
-    if(init.body&&typeof init.body==='object'&&'getReader' in init.body){const chunks:Buffer[]=[];for await(const c of init.body as unknown as AsyncIterable<Uint8Array>)chunks.push(Buffer.from(c));body='STREAM:'+sha(Buffer.concat(chunks));}
+    if(init.body&&typeof init.body==='object'&&'getReader' in init.body){const chunks:Buffer[]=[];for await(const c of init.body as unknown as AsyncIterable<Uint8Array>)chunks.push(Buffer.from(c));body=u.includes('/commit/')?Buffer.concat(chunks).toString('utf8'):'STREAM:'+sha(Buffer.concat(chunks));}
     else body=init.body as string|undefined;
     calls.push({url:u,method,headers,body});
     const json=(v:unknown)=>new Response(JSON.stringify(v),{status:200});
+    if(u.endsWith('/preupload/main'))return json({files:JSON.parse(body!).files.map((f:any)=>({path:f.path,uploadMode:'lfs',shouldIgnore:false,oid:null}))});
     if(u.endsWith('/commits/main'))return json(state.commits);
     if(u.includes('/revision/main?'))return json(state.info);
     if(u.includes(`/revision/${COMMIT}?`))return json({private:true,sha:COMMIT,siblings:state.siblings});
@@ -147,4 +148,231 @@ test('lfs commit: an invalid message is rejected before any request or upload',a
     await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts));
     assert.equal(f.calls.length,0);
   }
+});
+
+function protocolFixture(transform:(value:any)=>any=(v)=>v){
+  const f=fixture(), original=f.opts.fetch!;
+  f.opts.fetch=(async(u:any,i:any)=>{
+    if(String(u).endsWith('/objects/batch')){
+      const response=await original(u,i);return Response.json(transform(await response.json()));
+    }
+    if(String(u).endsWith('/lfs/verify'))return new Response(null,{status:204});
+    if(String(u).includes('/multipart/complete'))return new Response(null,{status:204});
+    const response=await original(u,i);
+    if(i?.method==='PUT')return new Response(null,{headers:{etag:'"part"'}});
+    if(String(u).endsWith('/commit/main')){f.state.commits.push({id:COMMIT,title:mark});withSibling(f);}
+    return response;
+  }) as typeof fetch;
+  return f;
+}
+test('protocol: exact revision and advertised transfers; empty verify succeeds',async()=>{
+  const f=protocolFixture();await hfLfsCommit(inv,TOKEN,manifest(),f.opts);
+  const batch=JSON.parse(f.calls.find(c=>c.url.endsWith('/objects/batch'))!.body!);
+  assert.deepEqual(batch.ref,{name:'main'});assert.deepEqual(batch.transfers,['basic','multipart']);
+});
+test('protocol: duplicate content uploads once but commits both paths',async()=>{
+  const f=protocolFixture(),m=manifest();m.files.push({...m.files[0]!,path:'copy.bin'});
+  f.state.siblings.push({rfilename:'copy.bin',lfs:{sha256:OID,size:bytes.length}});
+  await hfLfsCommit(inv,TOKEN,m,f.opts);assert.equal(f.calls.filter(c=>c.method==='PUT').length,1);
+  assert.equal(f.state.commitBodies[0]!.trim().split('\n').length,3);
+});
+test('protocol: multipart streams numeric parts and sends ETag completion',async()=>{
+  const f=protocolFixture(v=>{v.transfer='multipart';v.objects[0].actions.upload={href:'https://huggingface.co/o/r.git/info/lfs/multipart/complete',header:{chunk_size:'10','2':'https://lfs-bucket.example.test/part2','1':'https://lfs-bucket.example.test/part1'}};return v;});
+  const fetch=f.opts.fetch!,completed:any[]=[];
+  f.opts.fetch=(async(u:any,i:any)=>{if(String(u).endsWith('/multipart/complete'))completed.push({body:JSON.parse(i.body),headers:i.headers});return fetch(u,i);}) as typeof globalThis.fetch;
+  await hfLfsCommit(inv,TOKEN,manifest(),f.opts);
+  assert.deepEqual(f.calls.filter(c=>c.method==='PUT').map(c=>c.body),['STREAM:'+sha(bytes.slice(0,10)),'STREAM:'+sha(bytes.slice(10))]);
+  assert.deepEqual(completed[0].body,{oid:OID,parts:[{partNumber:1,etag:'"part"'},{partNumber:2,etag:'"part"'}]});
+  assert.equal(completed[0].headers.authorization,undefined);
+});
+test('protocol: malformed transfer and arbitrary HF verification route fail before commit',async()=>{
+  for(const change of [ (v:any)=>{v.transfer='unknown';}, (v:any)=>{v.objects[0].actions.verify.href='https://huggingface.co/api/models/o/r/commit/main';}, (v:any)=>{v.objects[0].actions.upload.header={chunk_size:'0','1':'https://lfs-bucket.example.test/u'};} ]){
+    const f=protocolFixture(v=>{change(v);return v;});await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts));assert.equal(f.state.commitBodies.length,0);
+  }
+});
+
+test('preupload: mixed regular and LFS uses same commit and bounded sample',async()=>{
+ const f=protocolFixture(),m=manifest();m.files.push({...m.files[0]!,path:'config.json'});
+ const fetch=f.opts.fetch!;let payload:any;
+ f.opts.open=async()=>new ReadableStream({start(c){for(let n=0;n<bytes.length;n+=2)c.enqueue(bytes.slice(n,n+2));c.close();}});
+ f.opts.fetch=(async(u:any,i:any)=>{
+   if(String(u).endsWith('/preupload/main')){payload=JSON.parse(i.body);return Response.json({files:payload.files.map((x:any)=>({path:x.path,uploadMode:x.path==='config.json'?'regular':'lfs',shouldIgnore:false,oid:null}))});}
+   if(String(u).endsWith('/commit/main')&&typeof i.body!=='string'){i={...i,body:await new Response(i.body).text()};}
+   if(String(u).includes(`/revision/${COMMIT}?`))return Response.json({private:true,sha:COMMIT,siblings:[{rfilename:'models/a.bin',lfs:{sha256:OID,size:bytes.length}},{rfilename:'config.json',size:bytes.length,blobId:createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')}]});
+   return fetch(u,i);
+ }) as typeof globalThis.fetch;
+ await hfLfsCommit(inv,TOKEN,m,f.opts);
+ assert.deepEqual(payload.files.map((x:any)=>x.sample),[Buffer.from(bytes).toString('base64'),Buffer.from(bytes).toString('base64')]);
+ const lines=f.state.commitBodies[0]!.trim().split('\n').map(x=>JSON.parse(x));
+ assert.deepEqual(lines[2],{key:'file',value:{path:'config.json',encoding:'base64',content:Buffer.from(bytes).toString('base64')}});
+});
+test('preupload: ignored missing and unknown modes fail without transfers or commit',async()=>{
+ for(const files of [[],[{path:'models/a.bin',uploadMode:'lfs',shouldIgnore:true}],[{path:'models/a.bin',uploadMode:'xet',shouldIgnore:false}]]){
+  const f=protocolFixture(),fetch=f.opts.fetch!;
+  f.opts.fetch=(async(u:any,i:any)=>String(u).endsWith('/preupload/main')?Response.json({files}):fetch(u,i)) as typeof globalThis.fetch;
+  await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts));assert.equal(f.calls.filter(x=>x.method==='PUT').length,0);assert.equal(f.state.commitBodies.length,0);
+ }
+});
+
+test('stream: changed bytes after preflight and sample never commit',async()=>{
+ const f=protocolFixture();let opens=0;
+ f.opts.open=async()=>new Blob([++opens<=2?bytes:new Uint8Array(bytes.length).fill(120)]).stream();
+ await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts));assert.equal(f.state.commitBodies.length,0);
+});
+test('stream: cancelled held preflight open stops before provider effects',async()=>{
+ const f=protocolFixture(),c=new AbortController();f.opts.signal=c.signal;
+ f.opts.open=async()=>new Promise(()=>{});
+ const result=hfLfsCommit(inv,TOKEN,manifest(),f.opts);c.abort();await assert.rejects(result);assert.equal(f.calls.length,0);
+});
+test('protocol: missing ETag rejects multipart completion and commit',async()=>{
+ const f=protocolFixture(v=>{v.objects[0].actions.upload={href:'https://huggingface.co/o/r.git/info/lfs/multipart/complete',header:{chunk_size:String(bytes.length),'1':'https://lfs-bucket.example.test/part1'}};return v;});
+ const fetch=f.opts.fetch!;f.opts.fetch=(async(u:any,i:any)=>{const r=await fetch(u,i);return i.method==='PUT'?new Response(null):r;}) as typeof globalThis.fetch;
+ await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts));assert.equal(f.state.commitBodies.length,0);
+});
+test('protocol: storage completion and verify never receive credentials',async()=>{
+ const f=protocolFixture(v=>{v.objects[0].actions={upload:{href:'https://lfs-bucket.example.test/multipart/complete',header:{chunk_size:String(bytes.length),'1':'https://lfs-bucket.example.test/part1',Authorization:'SECRET'}},verify:{href:'https://lfs-bucket.example.test/lfs/verify',header:{Authorization:'SECRET'}}};return v;});
+ const fetch=f.opts.fetch!,seen:any[]=[];
+ f.opts.fetch=(async(u:any,i:any)=>{if(String(u).includes('/multipart/complete')||String(u).endsWith('/lfs/verify')){seen.push(i.headers);return new Response(null,{status:204});}return fetch(u,i);}) as typeof globalThis.fetch;
+ await hfLfsCommit(inv,TOKEN,manifest(),f.opts);assert.equal(seen.length,2);for(const h of seen){assert.equal(h.authorization,undefined);assert.ok(!JSON.stringify(h).includes(TOKEN));}
+});
+test('visibility: public opt-in verifies public info and proof',async()=>{
+ const f=protocolFixture();f.opts.visibility='public';f.opts.allowPublicLarge=true;f.state.info.private=false;
+ const fetch=f.opts.fetch!;f.opts.fetch=(async(u:any,i:any)=>{const r=await fetch(u,i);if(String(u).includes(`/revision/${COMMIT}?`)){const v=await r.json();v.private=false;return Response.json(v);}return r;}) as typeof globalThis.fetch;
+ assert.deepEqual(await hfLfsCommit(inv,TOKEN,manifest(),f.opts),{commitOid:COMMIT});
+});
+
+test('proof: expired invocation permits bounded GET-only recovery',async()=>{
+ const f=fixture();f.opts.now=()=>inv.expiresAt+100;f.state.commits.push({id:COMMIT,title:mark});withSibling(f);
+ assert.deepEqual(await hfLfsProof(inv,TOKEN,manifest(),f.opts),{commitOid:COMMIT});
+ assert.ok(f.calls.length>0&&f.calls.every(c=>c.method==='GET'));
+ const g=fixture();g.opts.now=f.opts.now;await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),g.opts));assert.equal(g.calls.length,0);
+});
+
+test('stream: upload accepts exact content-length consumption without EOF read',async()=>{
+ const f=protocolFixture(),fetch=f.opts.fetch!;
+ f.opts.fetch=(async(u:any,i:any)=>{
+  if(i.method==='PUT'){
+   const reader=i.body.getReader();let read=0;
+   while(read<Number(i.headers['content-length'])){const n=await reader.read();assert.equal(n.done,false);read+=n.value.length;}
+   reader.releaseLock();return new Response(null,{status:200});
+  }
+  return fetch(u,i);
+ }) as typeof globalThis.fetch;
+ assert.deepEqual(await hfLfsCommit(inv,TOKEN,manifest(),f.opts),{commitOid:COMMIT});
+});
+test('stream: early upload response cannot proceed to commit',async()=>{
+ const f=protocolFixture(),fetch=f.opts.fetch!;
+ f.opts.fetch=(async(u:any,i:any)=>i.method==='PUT'?new Response(null):fetch(u,i)) as typeof globalThis.fetch;
+ await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts));assert.equal(f.state.commitBodies.length,0);
+});
+test('stream: commit response without consuming body cannot prove success',async()=>{
+ const f=protocolFixture(),fetch=f.opts.fetch!;
+ f.opts.fetch=(async(u:any,i:any)=>String(u).endsWith('/commit/main')?Response.json({commitOid:COMMIT}):fetch(u,i)) as typeof globalThis.fetch;
+ await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts));assert.equal(f.state.commits.length,0);
+});
+
+test('protocol: realistic signed HF completion preserves query without bearer',async()=>{
+ const href='https://huggingface.co/api/complete_multipart?uploadId=id%2B1&bucket=lfs&prefix=abc&expiration=123&signature=signed';
+ const f=protocolFixture(v=>{v.objects[0].actions.upload={href,header:{chunk_size:String(bytes.length),'1':'https://lfs-bucket.example.test/part1'}};return v;});
+ const fetch=f.opts.fetch!;let completion:any;
+ f.opts.fetch=(async(u:any,i:any)=>{if(String(u)===href){completion=i;return new Response(null,{status:204});}return fetch(u,i);}) as typeof globalThis.fetch;
+ await hfLfsCommit(inv,TOKEN,manifest(),f.opts);assert.ok(completion);assert.equal(completion.headers.authorization,undefined);assert.equal(completion.headers.Authorization,undefined);
+});
+test('protocol: HF completion rejects arbitrary API routes and malformed signed URLs',async()=>{
+ for(const href of ['https://huggingface.co/api/models/o/r/commit/main','https://huggingface.co/api/complete_multipart?signature=s#fragment','https://user@huggingface.co/api/complete_multipart?signature=s','https://huggingface.co:8443/api/complete_multipart?signature=s']){
+  const f=protocolFixture(v=>{v.objects[0].actions.upload={href,header:{chunk_size:String(bytes.length),'1':'https://lfs-bucket.example.test/part1'}};return v;});
+  await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts));assert.equal(f.state.commitBodies.length,0);assert.equal(f.calls.filter(c=>c.method==='PUT').length,0);
+ }
+});
+
+test('preflight: encoded protected message and path fail before provider requests',async()=>{
+ const encoded=Buffer.from(TOKEN).toString('base64');
+ for(const field of ['message','path']){
+  const f=fixture(),m=manifest();if(field==='message')f.opts.message=encoded;else m.files[0]!.path=encoded;
+  await assert.rejects(hfLfsCommit(inv,TOKEN,m,f.opts));assert.equal(f.calls.length,0);
+ }
+});
+
+test('visibility: repository flipped public after upload rejects before commit',async()=>{
+ const f=protocolFixture(),fetch=f.opts.fetch!;
+ f.opts.fetch=(async(u:any,i:any)=>{const response=await fetch(u,i);if(i.method==='PUT')f.state.info.private=false;return response;}) as typeof globalThis.fetch;
+ await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts));
+ assert.equal(f.calls.filter(c=>c.method==='PUT').length,1);
+ assert.equal(f.calls.filter(c=>c.url.endsWith('/commit/main')).length,0);
+});
+
+test('preflight: repeated provider credential does not consume distinct protected-value budget',async()=>{
+ const f=protocolFixture();
+ f.opts.forbiddenValues=[...Array.from({length:255},(_,n)=>`protected-canary-${n.toString().padStart(4,'0')}`),TOKEN,TOKEN];
+ assert.deepEqual(await hfLfsCommit(inv,TOKEN,manifest(),f.opts),{commitOid:COMMIT});
+});
+
+type FixedBridgeGlobal=typeof globalThis&{FixedLengthStream?:new(length:number)=>{readable:ReadableStream<Uint8Array>;writable:WritableStream<Uint8Array>}};
+async function workerBridge(run:(native:WeakSet<object>,lengths:number[])=>Promise<void>,adjust=0){
+ const g=globalThis as FixedBridgeGlobal,previous=Object.getOwnPropertyDescriptor(g,'FixedLengthStream');
+ const native=new WeakSet<object>(),lengths:number[]=[];
+ Object.defineProperty(g,'FixedLengthStream',{configurable:true,value:class{
+  readable:ReadableStream<Uint8Array>;writable:WritableStream<Uint8Array>;
+  constructor(length:number){
+   lengths.push(length);let count=0;const expected=length+adjust;
+   const stream=new TransformStream<Uint8Array,Uint8Array>({transform(chunk,c){count+=chunk.length;if(count>expected)throw new Error('fixed length overrun');c.enqueue(chunk);},flush(){if(count!==expected)throw new Error('fixed length underrun');}});
+   this.readable=stream.readable;this.writable=stream.writable;native.add(this.readable);
+  }
+ }});
+ try{await run(native,lengths);}finally{if(previous)Object.defineProperty(g,'FixedLengthStream',previous);else delete g.FixedLengthStream;}
+}
+test('Workers: PUT fetch receives native fixed-length body without buffering parts',async()=>{
+ await workerBridge(async(native,lengths)=>{
+  const f=protocolFixture(),fetch=f.opts.fetch!;
+  f.opts.fetch=(async(u:any,i:any)=>{if(i.method==='PUT')assert.ok(native.has(i.body));return fetch(u,i);}) as typeof globalThis.fetch;
+  await hfLfsCommit(inv,TOKEN,manifest(),f.opts);assert.deepEqual(lengths,[bytes.length]);
+ });
+});
+test('Workers: fixed-length underrun and overrun prohibit commit',async()=>{
+ for(const adjust of [-1,1])await workerBridge(async()=>{
+  const f=protocolFixture();await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts));assert.equal(f.state.commitBodies.length,0);
+ },adjust);
+});
+test('Workers: cancelling a held upload stops pipeline and source',async()=>{
+ await workerBridge(async()=>{
+  const f=protocolFixture(),fetch=f.opts.fetch!,c=new AbortController();let opens=0,cancelled=0;
+  f.opts.signal=c.signal;f.opts.open=async()=>++opens<=2?new Blob([bytes]).stream():new ReadableStream({pull(){return new Promise(()=>{});},cancel(){cancelled++;}});
+  f.opts.fetch=(async(u:any,i:any)=>{if(i.method==='PUT'){queueMicrotask(()=>c.abort());return new Promise(()=>{});}return fetch(u,i);}) as typeof globalThis.fetch;
+  await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(cancelled,1);assert.equal(f.state.commitBodies.length,0);
+ });
+});
+
+test('proof: late opened iterator cleanup rejection stays handled after cancellation',async()=>{
+ const f=fixture(),c=new AbortController();f.opts.signal=c.signal;
+ f.state.commits.push({id:COMMIT,title:mark});
+ f.state.siblings.push({rfilename:'models/a.bin',size:bytes.length,blobId:createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex')});
+ let deliver!:(source:AsyncIterable<Uint8Array>)=>void,opened!:()=>void,cleaned=false;
+ const started=new Promise<void>(resolve=>{opened=resolve;});
+ f.opts.open=()=>{opened();return new Promise(resolve=>{deliver=resolve;});};
+ const run=hfLfsProof(inv,TOKEN,manifest(),f.opts);await started;c.abort();await assert.rejects(run);
+ deliver({[Symbol.asyncIterator](){return {next:async()=>({done:true,value:undefined}),return:()=>{cleaned=true;return Promise.reject(new Error('late cleanup rejected'));}};}});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(cleaned,true);
+});
+
+test('Workers: synchronous fetch failure cancels pipeline without unhandled writer rejection',async()=>{
+ await workerBridge(async()=>{
+  const f=protocolFixture(),fetch=f.opts.fetch!;let opens=0,cancelled=0;
+  f.opts.open=async()=>++opens<=2?new Blob([bytes]).stream():new ReadableStream({pull(){return new Promise(()=>{});},cancel(){cancelled++;}});
+  f.opts.fetch=((u:any,i:any)=>{if(i.method==='PUT')throw new Error('fetch failed');return fetch(u,i);}) as typeof globalThis.fetch;
+  await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts));await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(cancelled,1);assert.equal(f.state.commitBodies.length,0);
+ });
+});
+
+test('Workers: fetch rejecting redirect error mode accepts HF manual requests',async()=>{
+ const f=protocolFixture(),fetch=f.opts.fetch!;
+ f.opts.fetch=((u:any,i:any)=>{if(i.redirect==='error')throw new TypeError('Workers rejects redirect error');assert.equal(i.redirect,'manual');return fetch(u,i);}) as typeof globalThis.fetch;
+ assert.deepEqual(await hfLfsCommit(inv,TOKEN,manifest(),f.opts),{commitOid:COMMIT});
+});
+test('redirect: manual 302 never follows or forwards authorization',async()=>{
+ const f=fixture(),seen:{url:string;headers:any}[]=[];
+ f.opts.fetch=(async(u:any,i:any)=>{assert.equal(i.redirect,'manual');seen.push({url:String(u),headers:i.headers});return new Response(null,{status:302,headers:{location:'https://evil.example.test/steal'}});}) as typeof globalThis.fetch;
+ await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts));
+ assert.equal(seen.length,1);assert.ok(seen[0]!.url.startsWith('https://huggingface.co/api/models/o/r/revision/'));assert.equal(f.state.commitBodies.length,0);
 });

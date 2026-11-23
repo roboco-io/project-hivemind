@@ -64,12 +64,12 @@ function validateProfile(raw:ExternalProfile|undefined):ExternalProfile {
   if(raw.provider==='aws') {object(raw.target,['accountId','region','workloadId']);text(raw.target.accountId,/^\d{12}$/);text(raw.target.region,/^[a-z]{2}-[a-z]+-\d$/);text(raw.target.workloadId,/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/);}
   else if(raw.provider==='s3') {s3(()=>validateExternalS3Target(raw.target));}
   else {
-    object(raw.target,['repository',raw.provider==='hf'?'revision':'branch'],raw.provider==='hf'?['visibility']:[]);
+    object(raw.target,['repository',raw.provider==='hf'?'revision':'branch'],raw.provider==='hf'?['visibility','allowPublicLarge']:[]);
     if(raw.provider==='hf'){
       const visibility=(raw.target as {visibility?:unknown}).visibility;
       if(visibility!==undefined&&visibility!=='private'&&visibility!=='public')reject('Invalid profile target');
-      // Multi-GiB files cannot pass the nested secret scan, so a public repository never gets LFS commits.
-      if(visibility==='public'&&(raw.operations as string[]).includes('hf.model.lfs_commit'))reject('LFS commit requires a private repository');
+      if(Object.hasOwn(raw.target,'allowPublicLarge')&&(raw.target.allowPublicLarge!==true||visibility!=='public'||!(raw.operations as string[]).includes('hf.model.lfs_commit')))reject('Invalid public large acknowledgement');
+      if(visibility==='public'&&(raw.operations as string[]).includes('hf.model.lfs_commit')&&raw.target.allowPublicLarge!==true)reject('Public LFS commit requires acknowledgement');
     }text(raw.target.repository,/^[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+$/);
     const ref=raw.provider==='hf'?raw.target.revision:raw.target.branch;
     text(ref,/^[A-Za-z0-9][A-Za-z0-9_./-]{0,149}$/);
@@ -88,7 +88,7 @@ function validateParameters(r:ExternalActionRequest,p:ExternalProfile) {
     case 'aws.spot.start':object(r.parameters,['lifetimeMs']);integer(r.parameters.lifetimeMs,1);if(r.parameters.lifetimeMs>p.maxLifetimeMs)reject('Lifetime parameter exceeds profile');break;
     case 'aws.spot.inspect':object(r.parameters,['startActionId']);text(r.parameters.startActionId);break;
     case 'hf.model.commit':object(r.parameters,['artifactDigest','message']);text(r.parameters.artifactDigest,/^[a-f0-9]{64}$/);text(r.parameters.message,/^[^\p{Cc}]{1,200}$/u);break;
-    case 'hf.model.lfs_commit':object(r.parameters,['manifestDigest','message']);text(r.parameters.manifestDigest,/^[a-f0-9]{64}$/);text(r.parameters.message,/^[^\p{Cc}]{1,200}$/u);if(p.provider==='hf'&&p.target.visibility==='public')reject('LFS commit requires a private repository');break;
+    case 'hf.model.lfs_commit':object(r.parameters,['manifestDigest','message']);text(r.parameters.manifestDigest,/^[a-f0-9]{64}$/);text(r.parameters.message,/^[^\p{Cc}]{1,200}$/u);if(p.provider==='hf'&&p.target.visibility==='public'&&p.target.allowPublicLarge!==true)reject('Public LFS commit requires acknowledgement');break;
     case 'aws.s3.put':s3(()=>validateExternalS3Parameters(r.parameters));break;
     case 'aws.s3.inspect':s3(()=>validateExternalS3InspectParameters(r.parameters));break;
     case 'github.branch.push':object(r.parameters,['artifactDigest','expectedHead']);text(r.parameters.artifactDigest,/^[a-f0-9]{64}$/);text(r.parameters.expectedHead,/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);break;
