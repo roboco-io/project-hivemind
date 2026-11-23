@@ -13,7 +13,7 @@ import { HiveStore, DomainError, equalSecret, text } from '../../../packages/cor
 import type { CreateTask, RunResult, RepositoryPolicy, Provider, Runtime } from '../../../packages/contracts/src/index.js';
 import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js';
 
-import type {CloudWorkflowControl} from '../../../packages/contracts/src/workflow.js';
+import {projectTeamResponse,type CloudWorkflowControl} from '../../../packages/contracts/src/workflow.js';
 
 export interface AppOptions { autonomousCloudProxy?:AutonomousCloudProxy; localExternalService?:AutonomousExternalService; dbPath?: string; operatorToken?: string; workerToken?: string; nativeReporterToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl }
 const string = {type:'string',minLength:1,maxLength:4000};
@@ -121,6 +121,7 @@ export function buildApp(options: AppOptions = {}) {
     if ((path==='/v1/autonomous-tasks'||path.startsWith('/v1/autonomous-tasks/')||path===cloudPrefix||path.startsWith(cloudPrefix+'/')) && error instanceof Error && 'statusCode' in error && typeof error.statusCode==='number' && error.statusCode>=400 && error.statusCode<500) {
       return reply.code(error.statusCode).send({error:error.statusCode===413?'Autonomous request too large':'Invalid autonomous request'});
     }
+    if (/^\/api\/cloudflare\/workflows\/[^/]+\/team(?:\/|$)/.test(path)) return reply.code(typeof (error as {statusCode?:number}).statusCode==='number'&&(error as {statusCode:number}).statusCode<500?(error as {statusCode:number}).statusCode:503).send({error:'Invalid team request'});
     if (error instanceof DomainError) return reply.code(error.statusCode).send({error:error.message});
     if (error instanceof Error && 'statusCode' in error && typeof error.statusCode === 'number' && error.statusCode < 500) return reply.code(error.statusCode).send({error:error.message});
     request.log.error(error); return reply.code(500).send({error:'Internal server error'});
@@ -151,6 +152,23 @@ export function buildApp(options: AppOptions = {}) {
   }
   if (options.workflows) {
     const workflows = options.workflows;
+    const teamBase='/api/cloudflare/workflows/:id/team';
+    for(const section of ['summary','tasks','events','notes'] as const)app.get<{Params:{id:string}}>(teamBase+(section==='summary'?'':'/'+section),{onRequest:operator,bodyLimit:65536},async(request,reply)=>{
+      try{
+        const params=new URL(request.url,'http://local').searchParams,query:Record<string,number>={};
+        for(const [key,value] of params){if(!['events','notes'].includes(section)||!['after','limit'].includes(key)||Object.hasOwn(query,key)||!/^\d+$/.test(value))return reply.code(400).send({error:'Invalid team request'});query[key]=Number(value);}
+        if(!workflows.teamRead)return reply.code(503).send({error:'Team operation unavailable'});
+        return projectTeamResponse(await workflows.teamRead(request.params.id,section,query),section,[operatorToken,workerToken,...(options.nativeReporterToken?[options.nativeReporterToken]:[])]);
+      }catch(error){const status=(error as {statusCode?:number})?.statusCode;return reply.code(status&&[400,404,409,503].includes(status)?status:503).send({error:'Team operation unavailable'});}
+    });
+    for(const operation of ['block','review'] as const)app.post<{Params:{id:string}}>(teamBase+'/'+operation,{onRequest:operator,bodyLimit:65536},async(request,reply)=>{
+      try{
+        if(new URL(request.url,'http://local').search)return reply.code(400).send({error:'Invalid team request'});
+        const method=operation==='block'?workflows.teamBlock:workflows.teamReview;
+        if(!method)return reply.code(503).send({error:'Team operation unavailable'});
+        return projectTeamResponse(await method(request.params.id,request.body as never),operation,[operatorToken,workerToken,...(options.nativeReporterToken?[options.nativeReporterToken]:[])]);
+      }catch(error){const status=(error as {statusCode?:number})?.statusCode;return reply.code(status&&[400,404,409,503].includes(status)?status:503).send({error:'Team operation unavailable'});}
+    });
     app.post('/api/cloudflare/workflows',{preHandler:operator},async (request,reply) => reply.code(201).send(await workflows.draft(request.body)));
     app.get('/api/cloudflare/workflows',{preHandler:operator},async () => ({workflows:workflows.list()}));
     app.post<{Params:{id:string}}>('/api/cloudflare/workflows/:id/approve',{
