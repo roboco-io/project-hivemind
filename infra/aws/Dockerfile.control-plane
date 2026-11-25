@@ -1,0 +1,23 @@
+FROM node:24-slim AS build
+WORKDIR /app
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci --ignore-scripts
+COPY packages ./packages
+COPY apps ./apps
+COPY cloudflare/backend/src ./cloudflare/backend/src
+RUN npm run build
+
+FROM node:24-slim
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
+COPY --from=build /app/dist ./dist
+COPY apps/dashboard/public ./apps/dashboard/public
+RUN mkdir -p /data && chown -R node:node /app /data
+USER node
+ENV HIVEMIND_HOST=0.0.0.0
+ENV HIVEMIND_PORT=4310
+ENV HIVEMIND_DB=/data/hivemind.sqlite
+EXPOSE 4310
+CMD ["node", "dist/apps/control-plane/src/main.js"]

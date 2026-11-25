@@ -1,6 +1,6 @@
-# Hivemind Project Rules
+# Hivemind Project Rules (Cloudflare Archive)
 
-- Implement Cloudflare first, then implement the AWS backend. Do not deploy AWS as a substitute for an unverified Cloudflare backend.
+- **DEPRECATED (2026-11-25):** The Cloudflare execution backend is retired and archived. Do not deploy new Cloudflare Workers, Containers, or R2 buckets for HIVEMIND. Active cloud execution uses the AWS single-path backend (`infrastructure/aws-runtime`, profile `roboco`, default region `ap-northeast-2`, AWS CDK).
 - Use official Codex and Claude Code CLIs with the user's subscription authentication. Do not replace this with API billing or AI Gateway provider keys.
 - For AWS work, use profile `roboco`, region `ap-northeast-2` unless explicitly overridden, and AWS CDK for infrastructure.
 - Use Cloudflare's native declarative Wrangler configuration for its Worker, Durable Object and container bindings; keep the later AWS infrastructure in CDK.

@@ -7,6 +7,8 @@
 ## Interface
 
 - [aws-external-guard](./aws-external-guard/README.md): 명시적 배포 설정을 받아 guard manifest와 리소스를 정의하는 `AwsExternalGuardStack`, 이벤트를 처리하는 `handler`를 제공한다. [aws-external-guard/lib/guard-stack.ts:`AwsExternalGuardStack`] [aws-external-guard/lambda/guard.py:`handler`]
+- [aws-oidc](./aws-oidc/README.md): OIDC→STS IAM 신뢰 정책과 역할을 정의하는 별도 CDK 패키지다.
+- [aws-runtime](./aws-runtime/README.md): AWS 단일 실행 경로(상시 소형 Control Plane + ECS `FARGATE_SPOT` AI 워커·독립 검증 + KMS·버전 관리 S3 + 3자 IAM 분리)를 정의하는 CDK 패키지다. [aws-runtime/lib/aws-runtime-stack.ts:`AwsRuntimeStack`]
 
 ## Invariants
 
