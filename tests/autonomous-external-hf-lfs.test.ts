@@ -79,7 +79,7 @@ test('lfs commit: href outside the allow-list is rejected and no token is sent t
     const f=fixture();f.state.uploadHref=href;
     await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts));
     assert.equal(f.calls.filter(c=>c.method==='PUT').length,0);
-    assert.ok(!f.calls.some(c=>!c.url.startsWith('https://huggingface.co')&&JSON.stringify(c.headers).includes(TOKEN)));
+    assert.ok(!f.calls.some(c=>new URL(c.url).origin!=='https://huggingface.co'&&JSON.stringify(c.headers).includes(TOKEN)));
     assert.ok(f.state.commitBodies.length===0);
   }
 });

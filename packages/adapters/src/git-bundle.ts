@@ -14,7 +14,7 @@ import {
   normalizeRepoRelativePath,
   validateAcceptanceTestSpec,
 } from '../../core/src/delivery.js';
-import { processEnvironment, runProcess } from './process.js';
+import { processEnvironment, runExecutable, runProcess } from './process.js';
 
 const HEX40 = /^[a-f0-9]{40}$/i;
 const HEX64 = /^[a-f0-9]{64}$/i;
@@ -26,8 +26,9 @@ async function git(
   env: NodeJS.ProcessEnv,
   maxOutputBytes = 256_000,
 ) {
-  const result = await runProcess(
-    ['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args],
+  const result = await runExecutable(
+    'git',
+    ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args],
     { cwd, signal, timeoutMs: 60_000, env, maxOutputBytes },
   );
   if (result.status !== 'passed') {
@@ -81,11 +82,16 @@ export async function createPinnedGitBundle(
   outputBundlePath: string,
   signal: AbortSignal,
 ): Promise<BundleManifest> {
-  if (!HEX40.test(baseCommit)) throw new Error('Invalid baseCommit');
-  const commit = baseCommit.toLowerCase();
+  const commitMatch = /^[a-f0-9]{40}$/i.exec(baseCommit);
+  if (!commitMatch) throw new Error('Invalid baseCommit');
+  const commit = commitMatch[0].toLowerCase();
   const tmpDir = await mkdtemp(join(dirname(outputBundlePath), '.hivemind-bundle-'));
   try {
     const env = processEnvironment(tmpDir);
+    const shallow = (await git(repositoryPath, ['rev-parse', '--is-shallow-repository'], signal, env)).stdout.trim();
+    if (shallow === 'true') {
+      throw new Error('Cannot create a self-contained git bundle from a shallow repository; fetch full history first');
+    }
     await mkdir(dirname(outputBundlePath), { recursive: true });
     // Create a temporary pinned ref pointing strictly at baseCommit so git bundle includes exact history to baseCommit.
     const refName = `refs/hivemind-bundles/${commit.slice(0, 12)}-${Date.now()}`;

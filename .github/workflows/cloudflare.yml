@@ -19,8 +19,11 @@ jobs:
           node-version: '24.14.0'
           cache: npm
           cache-dependency-path: |
+            package-lock.json
             cloudflare/package-lock.json
             cloudflare/backend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+        working-directory: .
       - run: npm ci --no-audit --no-fund
       - run: npm ci --prefix backend --no-audit --no-fund
       - run: npm run runtime:check --prefix backend

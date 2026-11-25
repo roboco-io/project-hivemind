@@ -176,7 +176,7 @@ test('Workers-compatible guard fetch avoids unsupported redirect error mode',asy
 });
 test('guard refuses 302 without following location or admitting a timer',async()=>{
  const f=fixture();const calls:{url:string;redirect:RequestRedirect|undefined}[]=[];f.config.fetchImpl=async(input,init)=>{calls.push({url:String(input),redirect:init?.redirect});return new Response('redirect',{status:302,headers:{location:'https://foreign.example.org/credential-target'}});};
- await assert.rejects(createAwsTtlGuardPort(f.config).attest(request));assert.equal(calls.length,1);assert.equal(calls[0]!.redirect,'manual');assert.ok(!calls[0]!.url.includes('foreign.example.org'));
+ await assert.rejects(createAwsTtlGuardPort(f.config).attest(request));assert.equal(calls.length,1);assert.equal(calls[0]!.redirect,'manual');assert.notEqual(new URL(calls[0]!.url).hostname,'foreign.example.org');
 });
 test('guard rejects a response marked redirected even when status is 200',async()=>{
  const f=fixture();let calls=0;f.config.fetchImpl=async()=>{calls++;const r=Response.json({});Object.defineProperty(r,'redirected',{value:true});return r;};await assert.rejects(createAwsTtlGuardPort(f.config).attest(request));assert.equal(calls,1);

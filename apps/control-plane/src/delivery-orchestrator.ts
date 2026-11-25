@@ -158,9 +158,10 @@ export class DeliveryOrchestrator {
       return { task: retried.task, retried };
     }
 
-    if (updated.status !== 'verified') {
+    if (updated.status !== 'verified' || !updated.latestAttestation) {
       return { task: updated };
     }
+    const verifiedAttestation = updated.latestAttestation;
 
     if (!updated.bundle?.s3Key) {
       throw new Error('Cannot publish Draft PR: bundle S3 key missing');
@@ -174,10 +175,10 @@ export class DeliveryOrchestrator {
         updated.bundle.bundleSha256,
         signal,
       );
-      const patchBytes = await this.options.s3.getObject(patchS3Key, attestation.patchSha256, signal);
+      const patchBytes = await this.options.s3.getObject(patchS3Key, verifiedAttestation.patchSha256, signal);
       const patchText = Buffer.from(patchBytes).toString('utf8');
       const actualPatchSha = createHash('sha256').update(patchText, 'utf8').digest('hex');
-      if (actualPatchSha !== attestation.patchSha256) {
+      if (actualPatchSha !== verifiedAttestation.patchSha256) {
         throw new Error('Downloaded patch SHA-256 does not match attestation');
       }
 
@@ -197,7 +198,7 @@ export class DeliveryOrchestrator {
       const publication = await publishVerifiedDraftPr(
         {
           task: updated,
-          attestation,
+          attestation: verifiedAttestation,
           bundlePath,
           expectedBundleSha256: updated.bundle.bundleSha256,
           patch: patchText,

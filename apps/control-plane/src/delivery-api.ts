@@ -198,9 +198,13 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
     { onRequest: workerOnly, bodyLimit: 65536 },
     async (request) => {
       if (orchestrator) {
-        const patchS3Key = `patches/${request.params.id}/${request.body.runId}.patch`;
+        const task = store.get(request.params.id);
+        if (!task.activeRunId || request.body.runId !== task.activeRunId) {
+          throw new DomainError('Verification must match the active running iteration', 409);
+        }
+        const patchS3Key = `patches/${task.id}/${task.activeRunId}.patch`;
         const result = await orchestrator.handleVerification(
-          request.params.id,
+          task.id,
           request.body,
           patchS3Key,
           AbortSignal.timeout(90_000),

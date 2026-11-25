@@ -333,7 +333,7 @@ test('hf.model.lfs_commit runs through the provider transport with a manifest bo
   assert.deepEqual([r.outcome,r.effect,r.evidenceId],['succeeded','retained','hf:'+HF_COMMIT]);assert.deepEqual(loads,[(inv.parameters as {manifestDigest:string}).manifestDigest]);
   assert.deepEqual(r.billing,{verifiedCostMicros:null,final:false});
   assert.deepEqual(fake.st,{committed:true,uploadedHash:sha(lfsBytes),uploadedSize:lfsBytes.length,regularHash:sha(configBytes),preuploads:1,commits:1});
-  assert.ok(fake.calls.filter(c=>c.url.startsWith('https://lfs-bucket.example.test')).every(c=>c.auth===undefined),'the token never reaches the upload host');
+  assert.ok(fake.calls.filter(c=>new URL(c.url).origin==='https://lfs-bucket.example.test').every(c=>c.auth===undefined),'the token never reaches the upload host');
   const again=await transport.inspect(inv,hfToken) as {evidenceId:string};assert.equal(again.evidenceId,'hf:'+HF_COMMIT);
 });
 test('hf.model.lfs_commit refuses a manifest whose digest, owner or shape differs, before any request',async()=>{

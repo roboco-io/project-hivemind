@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { S3ObjectPort } from '../../../packages/adapters/src/aws-s3-artifacts.js';
 import { restoreFromGitBundle } from '../../../packages/adapters/src/git-bundle.js';
-import { processEnvironment, runProcess } from '../../../packages/adapters/src/process.js';
+import { processEnvironment, runExecutable } from '../../../packages/adapters/src/process.js';
 
 export interface AwsWorkerControlPort {
   reportSpotInterrupted(input: {
@@ -57,7 +57,7 @@ async function collectCleanPatch(workspacePath: string, baseCommit: string, home
   try {
     const isolatedEnv = { ...env, GIT_INDEX_FILE: join(indexDir, 'index') };
     const runGit = async (args: string[]) => {
-      const res = await runProcess(['git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], {
+      const res = await runExecutable('git', ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', ...args], {
         cwd: workspacePath,
         signal,
         timeoutMs: 60_000,
