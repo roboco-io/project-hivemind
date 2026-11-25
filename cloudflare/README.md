@@ -1,4 +1,6 @@
-# Project HIVEMIND — Cloudflare 실행 백엔드
+# Project HIVEMIND — Cloudflare 실행 백엔드 (DEPRECATED / ARCHIVED)
+
+> **폐기 고지 (2026-11-25):** Project HIVEMIND는 AWS 단일 실행 경로로 전환했으며 Cloudflare 실행 백엔드 사용안을 공식 폐기했다. 운영 계정의 `hivemind-*` Cloudflare Worker·Container·이미지·R2 리소스를 모두 정리했다. 이 디렉터리는 과거 검증 이력 보존용 아카이브이며 신규 개발·배포 대상으로 사용하지 않는다. 현행 계획은 [AWS 전환 마스터 플랜](../docs/plans/2026-11-25-realignment-aws-plan.md)과 [ADR-0008](../docs/adr/0008-aws-single-path-and-verified-draft-pr.md)을 따른다.
 
 사람이 목표를 정하고 결과를 검토한다. 원격 컨테이너가 공식 Codex·Claude Code CLI와 별도 검증 작업을 실행한다.
 이 폴더는 기존 로컬 관제 대시보드와 구분한 Cloudflare 구현이다.

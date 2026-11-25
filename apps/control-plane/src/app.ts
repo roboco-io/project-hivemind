@@ -10,12 +10,15 @@ import Fastify, { type FastifyRequest, type FastifyReply } from 'fastify';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { HiveStore, DomainError, equalSecret, text } from '../../../packages/core/src/store.js';
+import { DeliveryStore } from '../../../packages/core/src/delivery.js';
+import { registerDeliveryRoutes } from './delivery-api.js';
+import type { DeliveryOrchestrator } from './delivery-orchestrator.js';
 import type { CreateTask, RunResult, RepositoryPolicy, Provider, Runtime } from '../../../packages/contracts/src/index.js';
 import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js';
 
 import {projectTeamResponse,type CloudWorkflowControl} from '../../../packages/contracts/src/workflow.js';
 
-export interface AppOptions { autonomousCloudProxy?:AutonomousCloudProxy; localExternalService?:AutonomousExternalService; dbPath?: string; operatorToken?: string; workerToken?: string; nativeReporterToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl }
+export interface AppOptions { autonomousCloudProxy?:AutonomousCloudProxy; localExternalService?:AutonomousExternalService; dbPath?: string; operatorToken?: string; workerToken?: string; nativeReporterToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl; deliveryOrchestratorFactory?: (store: DeliveryStore) => DeliveryOrchestrator }
 const string = {type:'string',minLength:1,maxLength:4000};
 const credentials = {workerId:{...string,maxLength:120},leaseToken:{...string,maxLength:120}};
 const body = (properties: Record<string,unknown>, required = Object.keys(properties)) => ({body:{type:'object',additionalProperties:false,required,properties}});
@@ -43,12 +46,15 @@ export function buildApp(options: AppOptions = {}) {
   if (!operatorToken.trim() || !workerToken.trim() || equalSecret(operatorToken,workerToken)) throw new Error('Operator and worker tokens must be nonempty and distinct');
   const app = Fastify({bodyLimit:2000000,logger:false,ajv:{customOptions:{coerceTypes:false,removeAdditional:false}}});
   const store = new HiveStore(options.dbPath ?? ':memory:',options.now,options.repository);
+  const deliveryStore = new DeliveryStore(options.dbPath ?? ':memory:',options.now);
   const autonomousStore=createAutonomousStore(options.dbPath ?? ':memory:');
   const autonomousService=createAutonomousApiService(autonomousStore,options.now);
   // Worker-reported tool calls live in their own file so they never touch the task store's locks.
   const toolAuditDb=new DatabaseSync(options.dbPath&&options.dbPath!==':memory:'?options.dbPath+'.tool-audit':':memory:');
   const toolAuditStore=createToolAuditStore({exec:(query,...binds)=>toolAuditDb.prepare(query).all(...binds) as Record<string,unknown>[],transactionSync:fn=>{toolAuditDb.exec('BEGIN IMMEDIATE');try{const result=fn();toolAuditDb.exec('COMMIT');return result;}catch(error){toolAuditDb.exec('ROLLBACK');throw error;}}},createHash('sha256').update('hivemind-tool-audit-cursor\n'+operatorToken).digest('hex'));
-  app.addHook('onClose',async()=>{autonomousStore.close();toolAuditDb.close();});
+  const deliveryOrchestrator = options.deliveryOrchestratorFactory?.(deliveryStore);
+  app.addHook('onClose',async()=>{deliveryStore.close();autonomousStore.close();toolAuditDb.close();});
+  registerDeliveryRoutes(app,{store:deliveryStore,operatorToken,workerToken,orchestrator:deliveryOrchestrator});
   app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});
   app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks/*',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});
   async function autonomousGuard(request:FastifyRequest,reply:FastifyReply){

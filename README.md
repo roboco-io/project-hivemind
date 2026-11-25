@@ -32,6 +32,9 @@ AI 코딩 에이전트는 사람이 읽을 수 있는 양보다 훨씬 많은 �
 
 현재 구현은 이 의도에 아직 도달하지 못했다. 현재 작업 흐름에는 사람이 실제 Git diff와 테스트 결과를 확인한 뒤 결과를 수락하는 단계가 있다. 결과 수락은 검토 이력만 기록하며 원본 저장소에 변경을 적용하거나 커밋·병합·푸시를 수행하지 않는다. 자연어 목표 분해와 일반 DAG 실행기는 아직 구현하지 않았다. 기존 두 워커 workflow에는 선택적 [팀 작업 원장·의존성·안전 중단](docs/team-coordination.md)을 추가했으며, 실제 CLI의 팀 도구 연결과 자동 감시기는 후속 범위다.
 
+> [!IMPORTANT]
+> **방향 전환 및 Cloudflare 폐기 (2026-11-25):** HIVEMIND는 **AWS 단일 실행 경로(`infrastructure/aws-runtime`) + 불변 수용 테스트 + 검증 해시 결속 자동 Draft PR**로 전환했다. 기존 `cloudflare/` 백엔드는 폐기·아카이브하고 원격 리소스를 전량 정리했다. 자세한 내용은 [AWS 단일 실행 마스터 플랜](docs/plans/2026-11-25-realignment-aws-plan.md)과 [ADR-0008](docs/adr/0008-aws-single-path-and-verified-draft-pr.md)을 따른다.
+
 ## 현재까지 확인한 것과 확인하지 못한 것
 
 아래는 각 검증 기록에 적힌 측정 결과다. 측정 시점 이후의 코드 변경은 반영하지 않는다.
@@ -42,8 +45,9 @@ AI 코딩 에이전트는 사람이 읽을 수 있는 양보다 훨씬 많은 �
 | 2026-11-10 | Cloudflare에서 Codex와 Claude 작업이 약 30초 동안 동시에 실행됐고, 제공자별 별도 검증 컨테이너에서 테스트를 통과했다. 같은 결과를 MCP stdio 연결로도 조회했다. | [Cloudflare 관제 연결·검증](docs/verification/2026-11-10-codex-integration.md) · [원격 백엔드 검증](cloudflare/docs/verification/2026-11-10-cloudflare.md) |
 | 2026-11-10 | Codex·Claude Code의 앱·CLI 네 접점에서 상태와 결과 조회가 동작했다. | [클라이언트 검증 기록](docs/verification/2026-11-10-claude-clients.md) · [지원 설계·구현 차이](docs/client-support.md) |
 | 2026-11-14 | 로컬과 Cloudflare 비교 실측의 최종 검증(A 18회·B 9회·C 3회)을 통과했다. 로컬 관제 연결이 끊긴 동안에도 원격 통합과 결과 보존이 이어졌다. | [로컬·Cloudflare 실측](docs/verification/2026-11-14-resource-validation-final.md) |
+| 2026-11-25 | **AWS 단일 경로 전환 및 Milestone 1 완주:** `project-hivemind` 실제 과제(`GET /api/tasks/:id`)를 SSM 터널 종료 상태에서 `FARGATE_SPOT` 워커·독립 검증기로 무인 완주(3분 1.6초, Spot ~$0.0025)해 `verifiedTreeHash === prTreeHash` 3자 일치 Draft PR([PR #10](https://github.com/roboco-io/project-hivemind/pull/10))을 자동 생성하고, 운영자가 **diff 미열람(`openedDiff: false`) 30초(`0.5분`) 만에 승인·병합**했다. | [Milestone 1 실증 기록](docs/verification/2026-11-25-milestone1-unattended-draft-pr.md) · [Phase 3 보강·SSM MCP 검증](docs/verification/2026-11-25-phase3-evidence-and-mcp-ssm.md) |
 
-**핵심 가설은 아직 입증하지 못했다.** 2026-11-14 실측에 쓴 작은 RealWorld 과제에서는 로컬 병렬 실행이 원격 실행보다 빨랐다. 사람이 코드를 읽지 않고 의도와 정책만으로 목표에 도달할 수 있다는 가설, 대규모 작업에서 원격 실행이 로컬 자원 한계를 극복한다는 가설, 랄프 루프가 토큰을 절감한다는 가설은 더 큰 실제 프로젝트에서 측정해야 한다.
+**제품 핵심 가설의 1차 실증(단일 실제 과제 무검토 승인·병합)을 통과했다.** 2026-11-25 실증에서 운영자는 diff를 보지 않고 30초 만에 PR #10을 승인·병합했고, 피드백("변경사항 상세 요약 보강")을 `DeliveryChangeSummary`로 즉시 반영했다. 대규모 다중 이슈 표본에서의 반복 효율·토큰 절감과 앱별(Codex/Claude 앱 UI) 일상 운영 마감은 [Issue #9](https://github.com/roboco-io/project-hivemind/issues/9) 후속으로 이어 간다.
 
 이슈 #1의 장기 실행·예약·quota 대기·웹·외부 작업 경로는 bounded 구현 상태다. 검증 후보를 Cloudflare에 배포했으며 새 기능은 비활성이다. 원격 격리와 실제 장기 수용은 남아 있다. [구현·검증·잔여 운영 작업](docs/plans/2026-11-20-autonomous-remaining.report.md)을 확인한다. 사용자 결정에 따른 실제 프로젝트 검증 이관과 최신 연결 보완은 [구현 마감 기록](docs/plans/2026-11-20-issue1-implementation-closeout.md)을 따른다. 2026-11-21 후속(비용 초과 시 작업 중단, 워커 도구 호출 기록, S3 put·inspect, HF 공개 범위와 LFS commit)은 [후속 계획](docs/plans/2026-11-21-issue1-followups.md)과 [장기 자율 작업](docs/autonomous-tasks.md)에 적었다. 이 후속은 가짜 HTTP로만 검사했고 실제 AWS·Hugging Face는 미검증이다. HF의 실제 모델 구조와 공식 업로드 규약 대조·적용은 [HF 모델 게시](docs/hugging-face-publication.md)에 정리했다.
 
@@ -322,8 +326,9 @@ HIVEMIND_WORKER_ID=worker-local-2 npm run worker
 | 테스트 | 설정된 준비·테스트 명령, 종료 코드·소요 시간·stdout/stderr 저장 |
 | 이력 | SQLite에 작업·승인·실행 근거·이벤트 저장, 재시작 후 유지 |
 | 비용 | mock은 1,000 micros = $0.001. Codex·Claude 금액은 null/미확정, 제공된 토큰 수 저장 |
-| 실행 환경 | `local` 관제실 지원. 별도 Cloudflare 백엔드 검증 중; ECS 후속 |
-| 연결 도구 | ChatGPT MCP 연결과 자연어 목표 분해는 후속 |
+| 실행 환경 | `local` 관제실 + **AWS 단일 경로(`infrastructure/aws-runtime`, ECS `FARGATE_SPOT`, NAT·EIP·ALB 0, SSM 포트 포워딩)** 실전 검증 완료 (`cloudflare/`는 폐기·아카이브) |
+| 전달·무검토 판단 | 불변 수용 테스트 + 독립 검증 + `verifiedTreeHash === prTreeHash` + 구조화 변경 요약(`DeliveryChangeSummary`) 기반 자동 Draft PR 및 `openedDiff`/`durationMinutes` 기록 |
+| 연결 도구 | `HIVEMIND_MCP_PROFILE=delivery` 6도구(AWS SSM 터널 경유 실전 검증 완료). 자연어 목표 분해와 다중 워커 DAG는 후속 |
 
 ## 설정
 

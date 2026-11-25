@@ -1,0 +1,24 @@
+FROM node:24-slim AS build
+WORKDIR /app
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci --ignore-scripts
+COPY packages ./packages
+COPY apps ./apps
+COPY cloudflare/backend/src ./cloudflare/backend/src
+RUN npm run build
+
+FROM node:24-slim
+WORKDIR /app
+# Isolated AI Worker image: Git + ripgrep + Node 24 + official Codex & Claude Code CLIs (Gemini excluded).
+# Never includes operator tokens, GitHub push tokens, or control-plane SQLite files.
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates ripgrep && rm -rf /var/lib/apt/lists/*
+RUN npm install --global @openai/codex@0.171.0 @anthropic-ai/claude-code@2.1.331 && npm cache clean --force
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts
+COPY --from=build /app/dist ./dist
+RUN mkdir -p /app/.work /tmp/hivemind && chown -R node:node /app /tmp/hivemind
+USER node
+ENV PATH="/app/node_modules/.bin:${PATH}"
+ENV HIVEMIND_WORK_ROOT="/app/.work"
+STOPSIGNAL SIGTERM
+CMD ["node", "dist/apps/worker/src/aws-worker-main.js"]
