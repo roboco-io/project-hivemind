@@ -244,6 +244,12 @@ export class HiveStore {
       this.event(task,'task.cancelled',{reason,actor:'operator'}); return task;
     });
   }
+  taskDetail(id: string): {task: Task; events: HiveEvent[]} {
+    const task = this.get(id);
+    const events = this.db.prepare("SELECT sequence,data FROM events WHERE json_extract(data, '$.taskId') = ? ORDER BY sequence")
+      .all(task.id).map(row => ({...JSON.parse(row.data as string),sequence:row.sequence}) as HiveEvent);
+    return {task,events};
+  }
   state(): State {
     this.expire();
     return {tasks:this.tasks(),workers:this.db.prepare('SELECT data FROM workers').all().map(row => JSON.parse(row.data as string) as Worker),events:this.db.prepare('SELECT sequence,data FROM events ORDER BY sequence DESC LIMIT 200').all().reverse().map(row => ({...JSON.parse(row.data as string),sequence:row.sequence}) as HiveEvent)};
