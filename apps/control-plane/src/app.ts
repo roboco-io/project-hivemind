@@ -189,6 +189,8 @@ export function buildApp(options: AppOptions = {}) {
     preHandler:operator,
     schema:body(taskProperties,taskRequired),
   },async (request,reply) => reply.code(201).send(store.create(request.body)));
+  app.get<{Params:{id:string}}>('/api/tasks/:id',{preHandler:operator},
+    async request => store.taskDetail(request.params.id));
   app.post<{Params:{id:string};Body:{decision:string;reason:string}}>('/api/tasks/:id/decision',{
     preHandler:operator,schema:body({decision:{type:'string',enum:['approve','reject']},reason:string}),
   },async request => store.decision(request.params.id,request.body.decision,request.body.reason));

@@ -165,6 +165,7 @@ CLI의 `total_cost_usd` 보고값을 실제 청구액으로 저장하지 않는�
 | 공개 | `GET /`, `/app.js`, `/styles.css` | 정적 관제 UI |
 | 운영자 | `GET /api/capabilities` | `{providers,repository}`. 저장소 경로 없이 고정 커밋·프로필·명령 조회 |
 | 운영자 | `GET /api/state` | `{tasks,workers,events}`와 저장된 실행 근거 |
+| 운영자 | `GET /api/tasks/:id` | `{task,events}`. 해당 작업의 전체 이벤트를 순서대로 반환하며 작업이 없으면 404 |
 | 운영자 | `POST /api/tasks` | 기본 작업 필드 + 실제 제공자의 `{repositoryId,baseCommit,testProfile}` → Task |
 | 운영자 | `POST /api/tasks/:id/decision` | `{decision:"approve" 또는 "reject",reason}` → Task |
 | 운영자 | `POST /api/tasks/:id/cancel` | `{reason}` → Task |
