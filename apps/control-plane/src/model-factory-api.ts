@@ -1,0 +1,119 @@
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type {
+  CreateModelFactoryJob,
+  ModelArtifactReceipt,
+  ModelReleaseAttestation,
+  ModelReleaseDecision,
+} from '../../../packages/contracts/src/model-factory.js';
+import type { ModelFactoryStore } from '../../../packages/core/src/model-factory.js';
+import { DomainError, equalSecret } from '../../../packages/core/src/store.js';
+import type { ModelFactoryOrchestrator } from './model-factory-orchestrator.js';
+
+export interface ModelFactoryApiOptions {
+  store: ModelFactoryStore;
+  operatorToken: string;
+  orchestrator?: ModelFactoryOrchestrator;
+}
+
+export function registerModelFactoryRoutes(app: FastifyInstance, options: ModelFactoryApiOptions): void {
+  const { store, operatorToken, orchestrator } = options;
+
+  const operatorOnly = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!equalSecret(request.headers.authorization ?? '', `Bearer ${operatorToken}`)) {
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
+  };
+
+  app.get('/api/model-factory/jobs', { onRequest: operatorOnly }, async () => ({
+    jobs: store.list(),
+    events: store.events(),
+  }));
+
+  app.get('/api/model-factory/ledger', { onRequest: operatorOnly }, async () => store.ledger());
+
+  app.get<{ Params: { id: string } }>('/api/model-factory/jobs/:id', { onRequest: operatorOnly }, async (request) => ({
+    job: store.get(request.params.id),
+    events: store.events(request.params.id),
+  }));
+
+  app.post<{ Body: CreateModelFactoryJob }>(
+    '/api/model-factory/jobs',
+    { onRequest: operatorOnly, bodyLimit: 131072 },
+    async (request, reply) => reply.code(201).send(store.create(request.body)),
+  );
+
+  app.post<{ Params: { id: string }; Body: { approvalFingerprint: string; reason: string } }>(
+    '/api/model-factory/jobs/:id/approve-training',
+    { onRequest: operatorOnly, bodyLimit: 16384 },
+    async (request) => {
+      if (orchestrator) {
+        return orchestrator.approveAndLaunchTraining(
+          request.params.id,
+          request.body.approvalFingerprint,
+          request.body.reason,
+          AbortSignal.timeout(30_000),
+        );
+      }
+      return store.approveTraining(request.params.id, request.body.approvalFingerprint, request.body.reason);
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/api/model-factory/jobs/:id/wake',
+    { onRequest: operatorOnly, bodyLimit: 8192 },
+    async (request) => {
+      if (!orchestrator) {
+        throw new DomainError('Model factory EC2 wake orchestrator is unavailable in local mock mode', 503);
+      }
+      return orchestrator.wakeJob(request.params.id, AbortSignal.timeout(30_000));
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: ModelArtifactReceipt }>(
+    '/api/model-factory/jobs/:id/receipt',
+    { onRequest: operatorOnly, bodyLimit: 131072 },
+    async (request) => store.recordArtifactReceipt(request.params.id, request.body),
+  );
+
+  app.post<{ Params: { id: string }; Body: ModelReleaseAttestation }>(
+    '/api/model-factory/jobs/:id/verify-release',
+    { onRequest: operatorOnly, bodyLimit: 32768 },
+    async (request) => store.recordReleaseAttestation(request.params.id, request.body),
+  );
+
+  app.post<{ Params: { id: string }; Body: Omit<ModelReleaseDecision, 'decidedAt'> }>(
+    '/api/model-factory/jobs/:id/approve-release',
+    { onRequest: operatorOnly, bodyLimit: 16384 },
+    async (request) => {
+      if (orchestrator) {
+        return orchestrator.approveAndPublishRelease(request.params.id, request.body, AbortSignal.timeout(60_000));
+      }
+      return store.recordReleaseDecision(request.params.id, request.body);
+    },
+  );
+
+  app.post<{ Params: { id: string }; Body: { reason: string } }>(
+    '/api/model-factory/jobs/:id/cancel',
+    { onRequest: operatorOnly, bodyLimit: 16384 },
+    async (request) => {
+      if (orchestrator) {
+        return orchestrator.cancelJob(request.params.id, request.body.reason, AbortSignal.timeout(30_000));
+      }
+      return store.cancel(request.params.id, request.body.reason);
+    },
+  );
+
+  app.post<{ Body: { region?: string } }>(
+    '/api/model-factory/sweep-expired',
+    { onRequest: operatorOnly, bodyLimit: 8192 },
+    async (request) => {
+      if (!orchestrator) {
+        throw new DomainError('Model factory EC2 sweep orchestrator is unavailable in local mock mode', 503);
+      }
+      if (request.body?.region) {
+        return orchestrator.sweepExpired(request.body.region, AbortSignal.timeout(30_000));
+      }
+      return orchestrator.wakeDueJobs(AbortSignal.timeout(60_000));
+    },
+  );
+}

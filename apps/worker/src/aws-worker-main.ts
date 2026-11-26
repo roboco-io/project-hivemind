@@ -1,26 +1,20 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { DeliveryProvider } from '../../../packages/contracts/src/delivery.js';
+import type { DeliveryPreflightReport } from '../../../packages/contracts/src/delivery.js';
 import { createAwsS3ArtifactsPort } from '../../../packages/adapters/src/aws-s3-artifacts.js';
 import { createEcsTaskCredentialsProvider } from '../../../packages/adapters/src/aws-ecs-metadata-creds.js';
 import { createAwsSecretsManagerPort } from '../../../packages/adapters/src/aws-secrets-manager.js';
 import { processEnvironment, runProcess } from '../../../packages/adapters/src/process.js';
 import { materializeProviderAuth, redactWorkerOutput } from './aws-worker-auth.js';
+import {
+  buildWorkerCliCommand,
+  buildWorkerPrompt,
+  runWorkerPreflight,
+  type WorkerPromptSpec,
+} from './aws-worker-policy.js';
 import { runAwsWorkerOnce } from './aws-worker-runtime.js';
 
-interface WorkerSpec {
-  taskId: string;
-  runId: string;
-  iteration: number;
-  maxIterations: number;
-  provider: DeliveryProvider;
-  title: string;
-  instructions: string;
-  baseCommit: string;
-  acceptancePaths: string[];
-  testCommand: string[];
-  priorVerificationSummary: string | null;
-}
+type WorkerSpec = WorkerPromptSpec;
 
 function requiredEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -28,36 +22,28 @@ function requiredEnv(name: string): string {
   return value;
 }
 
-function buildWorkerPrompt(spec: WorkerSpec): string {
-  const lines = [
-    `# HIVEMIND SW Delivery Task (${spec.taskId}, iteration ${spec.iteration}/${spec.maxIterations})`,
-    '',
-    `Title: ${spec.title}`,
-    '',
-    '## Instructions',
-    spec.instructions,
-    '',
-    '## Immutable Acceptance Contract (STRICT)',
-    '- You MUST NOT modify, delete, or overwrite any of the following pinned acceptance files (the independent verifier will reject your patch immediately):',
-    ...spec.acceptancePaths.map((p) => `  - ${p}`),
-    `- Fixed independent verification command: ${JSON.stringify(spec.testCommand)}`,
-    '- Run relevant checks in this repository before finishing so your patch passes the verification command cleanly.',
-    '- Do NOT create git commits or push anything; leave your clean edits in the working tree.',
-    '',
-    '## Final Response Format (Required for Operator No-Diff Review)',
-    'End your final message with a concise structured summary (in Korean if instructions are Korean, otherwise English) containing:',
-    '1. **변경 파일별 요약**: each modified/added file and why it was changed',
-    '2. **핵심 동작 변화**: externally observable behavior, auth/error handling, and edge cases covered',
-    '3. **자체 확인 결과**: exact build/test commands run and their results',
-  ];
-  if (spec.priorVerificationSummary) {
-    lines.push(
-      '',
-      '## Previous Independent Verifier Failure (Fix this root cause)',
-      spec.priorVerificationSummary,
-    );
+async function reportWorkerPreflight(
+  controlApiUrl: string,
+  workerToken: string,
+  taskId: string,
+  report: Omit<DeliveryPreflightReport, 'checkedAt'>,
+): Promise<void> {
+  const res = await fetch(
+    new URL(`/api/delivery/tasks/${encodeURIComponent(taskId)}/preflight`, controlApiUrl),
+    {
+      method: 'POST',
+      redirect: 'error',
+      headers: {
+        authorization: `Bearer ${workerToken}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(report),
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(`Worker preflight report failed with HTTP ${res.status}`);
   }
-  return lines.join('\n') + '\n';
 }
 
 async function fetchWorkerSpec(controlApiUrl: string, workerToken: string, taskId: string, runId: string): Promise<WorkerSpec> {
@@ -78,7 +64,14 @@ async function fetchWorkerSpec(controlApiUrl: string, workerToken: string, taskI
 async function reportWorkerCompleted(
   controlApiUrl: string,
   workerToken: string,
-  payload: { taskId: string; runId: string; patchS3Key: string; patchSha256: string; summary: string },
+  payload: {
+    taskId: string;
+    runId: string;
+    patchS3Key: string;
+    patchSha256: string;
+    summary: string;
+    checkpointS3Key?: string;
+  },
 ): Promise<void> {
   const res = await fetch(
     new URL(`/api/delivery/tasks/${encodeURIComponent(payload.taskId)}/worker-completed`, controlApiUrl),
@@ -94,6 +87,7 @@ async function reportWorkerCompleted(
         patchS3Key: payload.patchS3Key,
         patchSha256: payload.patchSha256,
         summary: payload.summary,
+        ...(payload.checkpointS3Key ? { checkpointS3Key: payload.checkpointS3Key } : {}),
       }),
       signal: AbortSignal.timeout(30_000),
     },
@@ -147,6 +141,7 @@ async function main(): Promise<void> {
       bundleS3Key,
       bundleSha256,
       checkpointS3Key,
+      preserveWorkspaceOnRetry: spec.executionPolicy?.preserveWorkspaceOnRetry ?? false,
       s3,
       spotSignal: spotController.signal,
       spotFlushTimeoutMs,
@@ -175,47 +170,49 @@ async function main(): Promise<void> {
       },
       executor: {
         async run(ctx) {
-          const prompt = buildWorkerPrompt(spec);
+          const prompt = buildWorkerPrompt(spec, Boolean(ctx.restoredCheckpointPatch));
           const homeDir = join(ctx.workspacePath, '..', 'home');
           const lastMessageFile = join(ctx.workspacePath, '..', 'last-message.txt');
           const baseEnv = processEnvironment(homeDir, spec.provider === 'codex' ? true : 'claude');
-          const env: NodeJS.ProcessEnv = { ...baseEnv, ...auth.env };
+          const cliBin =
+            spec.provider === 'codex'
+              ? process.env.HIVEMIND_CODEX_BIN ?? 'codex'
+              : process.env.HIVEMIND_CLAUDE_BIN ?? 'claude';
+          const { cmd, extraEnv } = buildWorkerCliCommand({
+            provider: spec.provider,
+            cliBin,
+            workspacePath: ctx.workspacePath,
+            lastMessageFile,
+            model: auth.model,
+            sandboxMode: process.env.HIVEMIND_CODEX_SANDBOX_MODE ?? 'danger-full-access',
+            executionPolicy: spec.executionPolicy,
+          });
+          const env: NodeJS.ProcessEnv = { ...baseEnv, ...auth.env, ...extraEnv };
 
-          let cmd: string[];
-          if (spec.provider === 'codex') {
-            // Fargate Firecracker microVM provides the external sandbox; default to danger-full-access inside container.
-            const sandboxMode = process.env.HIVEMIND_CODEX_SANDBOX_MODE ?? 'danger-full-access';
-            cmd = [
-              process.env.HIVEMIND_CODEX_BIN ?? 'codex',
-              'exec',
-              '--ignore-user-config',
-              '--ephemeral',
-              '--skip-git-repo-check',
-              '--sandbox',
-              sandboxMode,
-              '--cd',
-              ctx.workspacePath,
-              '--output-last-message',
-              lastMessageFile,
-              ...(auth.model ? ['--model', auth.model] : []),
-              '-',
-            ];
-          } else {
-            cmd = [
-              process.env.HIVEMIND_CLAUDE_BIN ?? 'claude',
-              '--print',
-              '--permission-mode',
-              'acceptEdits',
-              '--no-session-persistence',
-              '--disable-slash-commands',
-              ...(auth.model ? ['--model', auth.model] : []),
-            ];
+          // Run CLI/auth/git pre-flight BEFORE invoking the model (Lesson #3).
+          const preflight = await runWorkerPreflight({
+            runId: ctx.runId,
+            provider: spec.provider,
+            cliBin,
+            workspacePath: ctx.workspacePath,
+            authReady: true,
+            executionPolicy: spec.executionPolicy,
+            env,
+            signal: ctx.signal,
+          });
+          await reportWorkerPreflight(controlApiUrl, workerToken, ctx.taskId, preflight);
+          if (!preflight.ok) {
+            throw new Error(`Worker preflight failed: ${preflight.reason ?? 'unknown preflight failure'}`);
           }
+
+          const configuredTimeout =
+            spec.executionPolicy?.maxIterationDurationMs ??
+            Number(process.env.HIVEMIND_AGENT_TIMEOUT_MS ?? '600000');
 
           const res = await runProcess(cmd, {
             cwd: ctx.workspacePath,
             signal: ctx.signal,
-            timeoutMs: Number(process.env.HIVEMIND_AGENT_TIMEOUT_MS ?? '600000'),
+            timeoutMs: configuredTimeout,
             input: prompt,
             env,
             maxOutputBytes: 256_000,
@@ -246,6 +243,7 @@ async function main(): Promise<void> {
         patchS3Key: outcome.patchS3Key,
         patchSha256: outcome.patchSha256,
         summary: outcome.summary,
+        ...(outcome.checkpointS3Key ? { checkpointS3Key: outcome.checkpointS3Key } : {}),
       });
     }
 

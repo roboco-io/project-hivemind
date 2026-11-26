@@ -2,6 +2,9 @@ import {createAutonomousCloudProxy} from './autonomous-cloud-proxy.js';
 import { buildApp } from './app.js';
 import { configurationGitEnvironment, configurationScope, loadCloudflareConfig, loadCloudWorkflowChecks } from './cloudflare-config.js';
 import { DeliveryOrchestrator } from './delivery-orchestrator.js';
+import { ModelFactoryOrchestrator } from './model-factory-orchestrator.js';
+import { AwsEc2SpotTrainer } from '../../../packages/adapters/src/aws-ec2-spot-trainer.js';
+import { createTrustedHfReleasePublisher } from '../../../packages/adapters/src/model-factory-hf-publisher.js';
 import { AwsEcsFargateSpotDriver } from '../../../packages/adapters/src/aws-ecs-driver.js';
 import { AwsMultiRegionEcsDriver } from '../../../packages/adapters/src/aws-multi-region-driver.js';
 import { createEcsTaskCredentialsProvider } from '../../../packages/adapters/src/aws-ecs-metadata-creds.js';
@@ -13,6 +16,7 @@ import { createCloudPort } from '../../../packages/adapters/src/cloudflare.js';
 import { createCloudWorkflowPort } from '../../../packages/adapters/src/cloud-workflow.js';
 import { createGitHubDraftPrPort } from '../../../packages/adapters/src/github-draft-pr.js';
 import { createGitPushCommitMaterializer } from '../../../packages/adapters/src/github-git-push.js';
+import { resolveGithubTokenForRepo } from '../../../packages/adapters/src/github-token-resolver.js';
 import { createCloudWorkflowControl } from '../../../packages/core/src/cloud-workflow-store.js';
 import { createHash } from 'node:crypto';
 import { createCloudControl } from '../../../packages/core/src/cloudflare-store.js';
@@ -23,6 +27,7 @@ import { realpathSync } from 'node:fs';
 import type { RepositoryPolicy } from '../../../packages/contracts/src/index.js';
 import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js';
 import type { DeliveryStore } from '../../../packages/core/src/delivery.js';
+import type { ModelFactoryStore } from '../../../packages/core/src/model-factory.js';
 
 function isRfc1918Ipv4(address: string): boolean {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(address);
@@ -41,19 +46,6 @@ function detectPrivateVpcIpv4(): string | null {
     }
   }
   return null;
-}
-
-function parseGithubTokenSecret(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) throw new Error('GitHub Draft PR secret is empty');
-  if (trimmed.startsWith('{')) {
-    const parsed = JSON.parse(trimmed) as { token?: unknown };
-    if (typeof parsed.token !== 'string' || !parsed.token.trim()) {
-      throw new Error('GitHub Draft PR JSON secret is missing token');
-    }
-    return parsed.token.trim();
-  }
-  return trimmed;
 }
 
 function createAwsDeliveryOrchestratorFactory(port: number, extraRedactSecrets: string[]) {
@@ -147,7 +139,7 @@ function createAwsDeliveryOrchestratorFactory(port: number, extraRedactSecrets: 
       redactSecrets: extraRedactSecrets,
       githubFactory: async ({ task, bundlePath, expectedBundleSha256, workRoot, signal }) => {
         const rawSecret = await secretsManager.getSecretString(githubSecretArn, signal);
-        const token = parseGithubTokenSecret(rawSecret);
+        const token = resolveGithubTokenForRepo(rawSecret, task.delivery.repository);
         const basic = Buffer.from(`x-access-token:${token}`, 'utf8').toString('base64');
         const httpExtraHeader = `Authorization: Basic ${basic}`;
         const materializer = createGitPushCommitMaterializer({
@@ -163,6 +155,54 @@ function createAwsDeliveryOrchestratorFactory(port: number, extraRedactSecrets: 
           redactSecrets: [token, basic],
         };
       },
+    });
+}
+
+function createAwsModelFactoryOrchestratorFactory() {
+  const region = process.env.HIVEMIND_AWS_REGION?.trim();
+  const bucket = process.env.HIVEMIND_ARTIFACTS_BUCKET?.trim();
+  if (!region || !bucket) return undefined;
+
+  const allowedRegions = (process.env.HIVEMIND_MF_ALLOWED_REGIONS ?? `${region},us-east-2,us-east-1,us-west-2,ap-northeast-1`)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const credentials = createEcsTaskCredentialsProvider();
+  const s3 = createAwsS3ArtifactsPort({ region, allowedRegions: [region], bucket, credentials });
+  const ec2 = new AwsEc2SpotTrainer({ allowedRegions, credentials });
+  const spotFeed = createSpotPlacementFeedPort({
+    feedUrl: process.env.HIVEMIND_SPOT_FEED_URL?.trim() || DEFAULT_SPOT_FEED_URL,
+  });
+
+  const hfSecretArn = process.env.HIVEMIND_HF_RELEASE_SECRET_ARN?.trim();
+  const secretsManager = hfSecretArn
+    ? createAwsSecretsManagerPort({ region, allowedRegions: [region], credentials })
+    : undefined;
+  const hfPublisher =
+    hfSecretArn && secretsManager
+      ? createTrustedHfReleasePublisher({
+          s3,
+          resolveHfToken: async (signal) => {
+            const raw = (await secretsManager.getSecretString(hfSecretArn, signal)).trim();
+            if (raw.startsWith('{')) {
+              const parsed = JSON.parse(raw) as { token?: unknown };
+              if (typeof parsed.token !== 'string' || !parsed.token.trim()) {
+                throw new Error('HF release secret JSON missing token');
+              }
+              return parsed.token.trim();
+            }
+            return raw;
+          },
+        })
+      : undefined;
+
+  return (store: ModelFactoryStore) =>
+    new ModelFactoryOrchestrator({
+      store,
+      ec2,
+      s3,
+      spotFeed,
+      ...(hfPublisher ? { hfPublisher } : {}),
     });
 }
 
@@ -208,7 +248,11 @@ try {
     createHash('sha256').update(JSON.stringify({scope:configurationScope(config),checks})).digest('hex'),
     createCloudWorkflowPort(config,checks)) : undefined;
   const deliveryOrchestratorFactory = createAwsDeliveryOrchestratorFactory(port, [operatorToken, workerToken]);
-  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory});
+  const modelFactoryOrchestratorFactory = createAwsModelFactoryOrchestratorFactory();
+  const modelFactoryBudgetCapMicros = process.env.HIVEMIND_MF_BUDGET_CAP_MICROS
+    ? Number(process.env.HIVEMIND_MF_BUDGET_CAP_MICROS)
+    : undefined;
+  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros});
   const address = await app.listen({host,port});
   console.log(`HIVEMIND control service: ${address}`);
   for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,() => { void app!.close(); });

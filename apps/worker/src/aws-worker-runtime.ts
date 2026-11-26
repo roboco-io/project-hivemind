@@ -27,6 +27,7 @@ export interface AwsWorkerExecutor {
     runId: string;
     iteration: number;
     priorCheckpoint?: Uint8Array;
+    restoredCheckpointPatch?: boolean;
     signal: AbortSignal;
   }): Promise<{ checkpointBytes?: Uint8Array; summary: string }>;
 }
@@ -39,6 +40,7 @@ export interface RunAwsWorkerOptions {
   bundleS3Key: string;
   bundleSha256: string;
   checkpointS3Key?: string;
+  preserveWorkspaceOnRetry?: boolean;
   s3: S3ObjectPort;
   control: AwsWorkerControlPort;
   executor: AwsWorkerExecutor;
@@ -48,8 +50,51 @@ export interface RunAwsWorkerOptions {
 }
 
 export type AwsWorkerOutcome =
-  | { kind: 'completed'; patchS3Key: string; patchSha256: string; summary: string }
+  | { kind: 'completed'; patchS3Key: string; patchSha256: string; summary: string; checkpointS3Key?: string }
   | { kind: 'spot_interrupted'; checkpointS3Key: string; reason: string };
+
+async function restorePriorCheckpointPatch(
+  workspacePath: string,
+  homeDir: string,
+  priorCheckpoint: Uint8Array,
+  signal: AbortSignal,
+): Promise<boolean> {
+  let parsed: { version?: unknown; partialPatch?: unknown; partialPatchSha256?: unknown };
+  try {
+    parsed = JSON.parse(Buffer.from(priorCheckpoint).toString('utf8')) as {
+      version?: unknown;
+      partialPatch?: unknown;
+      partialPatchSha256?: unknown;
+    };
+  } catch {
+    return false;
+  }
+  if (parsed.version !== 1 || typeof parsed.partialPatch !== 'string' || !parsed.partialPatch) {
+    return false;
+  }
+  const actualSha = createHash('sha256').update(parsed.partialPatch, 'utf8').digest('hex');
+  if (typeof parsed.partialPatchSha256 !== 'string' || actualSha !== parsed.partialPatchSha256.toLowerCase()) {
+    throw new Error('Prior checkpoint partialPatch SHA-256 mismatch');
+  }
+  const patchPath = join(homeDir, 'prior-checkpoint.patch');
+  await writeFile(patchPath, parsed.partialPatch, 'utf8');
+  const env = processEnvironment(homeDir);
+  const applied = await runExecutable(
+    'git',
+    ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false', 'apply', '--whitespace=nowarn', patchPath],
+    {
+      cwd: workspacePath,
+      signal,
+      timeoutMs: 60_000,
+      env,
+      maxOutputBytes: 256_000,
+    },
+  );
+  if (applied.status !== 'passed') {
+    throw new Error(`Failed to restore prior checkpoint patch: ${applied.stderr.slice(0, 1000)}`);
+  }
+  return true;
+}
 
 async function collectCleanPatch(workspacePath: string, baseCommit: string, homeDir: string, signal: AbortSignal): Promise<string> {
   const env = processEnvironment(homeDir);
@@ -103,6 +148,9 @@ export async function runAwsWorkerOnce(options: RunAwsWorkerOptions): Promise<Aw
     const priorCheckpoint = options.checkpointS3Key
       ? await options.s3.getObject(options.checkpointS3Key, undefined, workController.signal)
       : undefined;
+    const restoredCheckpointPatch = priorCheckpoint
+      ? await restorePriorCheckpointPatch(repoDir, homeDir, priorCheckpoint, workController.signal)
+      : false;
 
     let execResult: { checkpointBytes?: Uint8Array; summary: string } | undefined;
     try {
@@ -113,6 +161,7 @@ export async function runAwsWorkerOnce(options: RunAwsWorkerOptions): Promise<Aw
         runId: options.runId,
         iteration: options.iteration,
         priorCheckpoint,
+        restoredCheckpointPatch,
         signal: workController.signal,
       });
     } catch (error) {
@@ -154,6 +203,26 @@ export async function runAwsWorkerOnce(options: RunAwsWorkerOptions): Promise<Aw
     const patchS3Key = `patches/${options.taskId}/${options.runId}.patch`;
     const uploaded = await options.s3.putObject(patchS3Key, patchBytes, 'text/x-diff', AbortSignal.timeout(60_000));
 
+    let completedCheckpointS3Key: string | undefined;
+    if (options.preserveWorkspaceOnRetry) {
+      completedCheckpointS3Key = `sessions/${options.taskId}/${options.runId}.json`;
+      const checkpointPayload = JSON.stringify({
+        version: 1,
+        taskId: options.taskId,
+        runId: options.runId,
+        iteration: options.iteration,
+        partialPatchSha256: uploaded.sha256,
+        partialPatch: patch,
+        hasSessionState: Boolean(execResult?.checkpointBytes?.byteLength),
+      });
+      await options.s3.putObject(
+        completedCheckpointS3Key,
+        Buffer.from(checkpointPayload, 'utf8'),
+        'application/json',
+        AbortSignal.timeout(60_000),
+      );
+    }
+
     if (execResult?.checkpointBytes?.byteLength) {
       await options.s3.putObject(
         `sessions/${options.taskId}/${options.runId}.bin`,
@@ -168,6 +237,7 @@ export async function runAwsWorkerOnce(options: RunAwsWorkerOptions): Promise<Aw
       patchS3Key,
       patchSha256: uploaded.sha256,
       summary: execResult?.summary ?? 'Worker execution completed',
+      ...(completedCheckpointS3Key ? { checkpointS3Key: completedCheckpointS3Key } : {}),
     };
   } finally {
     options.spotSignal?.removeEventListener('abort', onSpot);

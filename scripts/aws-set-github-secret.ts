@@ -43,7 +43,44 @@ async function main(): Promise<void> {
     throw new Error('GitHub token verification returned unexpected repository');
   }
 
-  const payload = JSON.stringify({ token });
+  let existingTokensByRepo: Record<string, string> = {};
+  try {
+    const existingRaw = execFileSync(
+      'aws',
+      [
+        '--profile',
+        profile,
+        '--region',
+        region,
+        'secretsmanager',
+        'get-secret-value',
+        '--secret-id',
+        secretId,
+        '--query',
+        'SecretString',
+        '--output',
+        'text',
+      ],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    ).trim();
+    if (existingRaw.startsWith('{')) {
+      const parsed = JSON.parse(existingRaw) as { tokensByRepo?: Record<string, string> };
+      if (parsed.tokensByRepo && typeof parsed.tokensByRepo === 'object' && !Array.isArray(parsed.tokensByRepo)) {
+        existingTokensByRepo = { ...parsed.tokensByRepo };
+      }
+    }
+  } catch {
+    // Secret may be empty or newly initialized.
+  }
+
+  const canonicalRepo = repo.full_name;
+  const mergedTokensByRepo: Record<string, string> = {
+    ...existingTokensByRepo,
+    [canonicalRepo]: token,
+  };
+  const payload = JSON.stringify({
+    tokensByRepo: mergedTokensByRepo,
+  });
   const out = execFileSync(
     'aws',
     [

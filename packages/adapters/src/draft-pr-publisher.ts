@@ -98,10 +98,20 @@ export function buildDraftPrBody(
     );
   }
 
+  const documentNotice: string[] =
+    task.executionPolicy?.verificationKind === 'document_format'
+      ? [
+          '',
+          `> [!WARNING]`,
+          `> **문서 산출물 검증 범위 고지 (사실 여부 미판정):** 독립 검증기(\`${JSON.stringify(task.acceptance.testCommand)}\`)는 문서 구조·필수 파일·스키마·형식 무결성만 검사했습니다. 조사 내용의 사실 여부, 라이선스 해석, 외부 출처 정확성은 검증기가 판정하지 못하므로 운영자 승인 시 이 범위를 고려하세요.`,
+        ]
+      : [];
+
   const raw = [
     `## HIVEMIND 자동 생성 Draft PR (정책·검증 근거 기반 판단용)`,
     '',
     `이 PR은 독립 검증을 통과한 결과를 격리 브랜치로 자동 게시한 **Draft PR**입니다. \`${task.delivery.baseBranch}\`에 직접 병합하지 않았습니다.`,
+    ...documentNotice,
     '',
     `### 1. 검증–게시 코드 동일성 증명`,
     `| 항목 | 값 |`,

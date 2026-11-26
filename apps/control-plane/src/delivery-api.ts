@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type {
   CreateDeliveryTask,
+  DeliveryPreflightReport,
   DraftPrPublication,
   HumanDeliveryDecision,
   VerificationAttestation,
@@ -134,12 +135,19 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
         baseCommit: task.acceptance.baseCommit,
         acceptancePaths: task.acceptance.files.map((file) => file.path),
         testCommand: task.acceptance.testCommand,
+        executionPolicy: task.executionPolicy,
         priorVerificationSummary:
           task.latestAttestation && !task.latestAttestation.checksPassed
             ? task.latestAttestation.summary
             : null,
       };
     },
+  );
+
+  app.post<{ Params: { id: string }; Body: Omit<DeliveryPreflightReport, 'checkedAt'> }>(
+    '/api/delivery/tasks/:id/preflight',
+    { onRequest: workerOnly, bodyLimit: 16384 },
+    async (request) => store.recordPreflight(request.params.id, request.body),
   );
 
   app.post<{ Params: { id: string }; Body: { workerId: string; runId: string } }>(
@@ -150,7 +158,7 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
 
   app.post<{
     Params: { id: string };
-    Body: { runId: string; patchS3Key: string; patchSha256: string; summary?: string };
+    Body: { runId: string; patchS3Key: string; patchSha256: string; summary?: string; checkpointS3Key?: string };
   }>(
     '/api/delivery/tasks/:id/worker-completed',
     { onRequest: workerOnly, bodyLimit: 32768 },
@@ -159,8 +167,13 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
       if (task.status !== 'running' || task.activeRunId !== request.body.runId) {
         throw new DomainError('Active run mismatch for worker completion', 409);
       }
-      if (request.body.summary?.trim()) {
-        store.recordWorkerSummary(task.id, request.body.runId, request.body.summary);
+      if (request.body.summary?.trim() || request.body.checkpointS3Key?.trim()) {
+        store.recordWorkerSummary(
+          task.id,
+          request.body.runId,
+          request.body.summary?.trim() || 'Worker execution completed',
+          request.body.checkpointS3Key,
+        );
       }
       if (!orchestrator) {
         return { ok: true, task: store.get(task.id) };

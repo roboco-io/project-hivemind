@@ -35,6 +35,33 @@ export interface SpotInterruptionPolicy {
   checkpointFlushTimeoutMs: number;
 }
 
+export type VerificationKind = 'code' | 'document_format';
+
+export interface WorkerExecutionPolicy {
+  /** Explicit allowlist of read-only web hosts the research/coding worker may fetch (e.g. huggingface.co, arxiv.org). */
+  allowedWebHosts?: string[];
+  /** Allows the primary worker session to invoke subagents (e.g. Claude Agent tool with a secondary model). */
+  allowSubagents?: boolean;
+  /** Maximum duration for a single worker iteration in milliseconds (60_000..7_200_000; default 600_000). */
+  maxIterationDurationMs?: number;
+  /** Preserves workspace edits across retries and Spot interruptions via S3 checkpoint patches. */
+  preserveWorkspaceOnRetry?: boolean;
+  /** Declares whether independent verification tests executable code or document structure/format only. */
+  verificationKind?: VerificationKind;
+}
+
+export interface DeliveryPreflightReport {
+  runId: string;
+  ok: boolean;
+  cliVersion: string | null;
+  authReady: boolean;
+  gitReady: boolean;
+  allowedWebHosts: string[];
+  allowSubagents: boolean;
+  reason: string | null;
+  checkedAt: string;
+}
+
 export interface CreateDeliveryTask {
   title: string;
   instructions: string;
@@ -46,6 +73,7 @@ export interface CreateDeliveryTask {
   bundle?: BundleManifest;
   spot?: SpotInterruptionPolicy;
   routing?: RegionRoutingPolicy;
+  executionPolicy?: WorkerExecutionPolicy;
 }
 
 export interface VerificationAttestation {
@@ -134,8 +162,11 @@ export interface DeliveryTask {
   bundle?: BundleManifest;
   spot: SpotInterruptionPolicy;
   routing?: RegionRoutingPolicy;
+  executionPolicy: WorkerExecutionPolicy;
   activeRegion: string | null;
   lastPlacement: RegionPlacementDecision | null;
+  waitReason: string | null;
+  lastPreflight: DeliveryPreflightReport | null;
   spotRetriesUsed: number;
   activeRunId: string | null;
   activeWorkerId: string | null;

@@ -11,12 +11,14 @@ import type {
   DeliveryChangeSummary,
   DeliveryEvent,
   DeliveryPolicy,
+  DeliveryPreflightReport,
   DeliveryProvider,
   DeliveryTask,
   DraftPrPublication,
   HumanDeliveryDecision,
   SpotInterruptionPolicy,
   VerificationAttestation,
+  WorkerExecutionPolicy,
 } from '../../contracts/src/delivery.js';
 import type { RegionPlacementDecision, RegionRoutingPolicy } from '../../contracts/src/multi-region.js';
 import { validateRegionRoutingPolicy } from './multi-region.js';
@@ -190,6 +192,71 @@ export function validateSpotPolicy(input: unknown): SpotInterruptionPolicy {
   return { maxSpotRetries, checkpointFlushTimeoutMs };
 }
 
+const HOSTNAME_PATTERN = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+
+export function validateWorkerExecutionPolicy(input: unknown): WorkerExecutionPolicy {
+  if (input === undefined) {
+    return {
+      allowedWebHosts: [],
+      allowSubagents: false,
+      maxIterationDurationMs: 600_000,
+      preserveWorkspaceOnRetry: false,
+      verificationKind: 'code',
+    };
+  }
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new DomainError('Invalid worker executionPolicy', 400);
+  }
+  const raw = input as Record<string, unknown>;
+  let allowedWebHosts: string[] = [];
+  if (raw.allowedWebHosts !== undefined) {
+    if (!Array.isArray(raw.allowedWebHosts) || raw.allowedWebHosts.length > 64) {
+      throw new DomainError('allowedWebHosts must be an array of up to 64 hostnames', 400);
+    }
+    const seen = new Set<string>();
+    allowedWebHosts = raw.allowedWebHosts.map((entry) => {
+      if (typeof entry !== 'string') throw new DomainError('Invalid hostname in allowedWebHosts', 400);
+      const host = entry.trim().toLowerCase();
+      if (!HOSTNAME_PATTERN.test(host) || host.length > 253) {
+        throw new DomainError(`Invalid hostname in allowedWebHosts: ${entry}`, 400);
+      }
+      if (seen.has(host)) throw new DomainError(`Duplicate hostname in allowedWebHosts: ${host}`, 400);
+      seen.add(host);
+      return host;
+    });
+    allowedWebHosts.sort();
+  }
+  const allowSubagents = raw.allowSubagents === undefined ? false : raw.allowSubagents;
+  if (typeof allowSubagents !== 'boolean') {
+    throw new DomainError('allowSubagents must be a boolean', 400);
+  }
+  const maxIterationDurationMs =
+    raw.maxIterationDurationMs === undefined ? 600_000 : Number(raw.maxIterationDurationMs);
+  if (
+    !Number.isSafeInteger(maxIterationDurationMs) ||
+    maxIterationDurationMs < 60_000 ||
+    maxIterationDurationMs > 7_200_000
+  ) {
+    throw new DomainError('maxIterationDurationMs must be between 60000 and 7200000 (2 hours)', 400);
+  }
+  const preserveWorkspaceOnRetry =
+    raw.preserveWorkspaceOnRetry === undefined ? false : raw.preserveWorkspaceOnRetry;
+  if (typeof preserveWorkspaceOnRetry !== 'boolean') {
+    throw new DomainError('preserveWorkspaceOnRetry must be a boolean', 400);
+  }
+  const verificationKind = raw.verificationKind === undefined ? 'code' : raw.verificationKind;
+  if (verificationKind !== 'code' && verificationKind !== 'document_format') {
+    throw new DomainError('verificationKind must be code or document_format', 400);
+  }
+  return {
+    allowedWebHosts,
+    allowSubagents,
+    maxIterationDurationMs,
+    preserveWorkspaceOnRetry,
+    verificationKind,
+  };
+}
+
 export function computeDeliveryApprovalFingerprint(spec: {
   provider: DeliveryProvider;
   maxIterations: number;
@@ -199,7 +266,15 @@ export function computeDeliveryApprovalFingerprint(spec: {
   bundle?: BundleManifest;
   spot: SpotInterruptionPolicy;
   routing?: RegionRoutingPolicy;
+  executionPolicy?: WorkerExecutionPolicy;
 }): string {
+  const isDefaultExec =
+    !spec.executionPolicy ||
+    ((spec.executionPolicy.allowedWebHosts?.length ?? 0) === 0 &&
+      !spec.executionPolicy.allowSubagents &&
+      (spec.executionPolicy.maxIterationDurationMs ?? 600_000) === 600_000 &&
+      !spec.executionPolicy.preserveWorkspaceOnRetry &&
+      (spec.executionPolicy.verificationKind ?? 'code') === 'code');
   return sha256Hex(
     JSON.stringify({
       version: 1,
@@ -212,6 +287,7 @@ export function computeDeliveryApprovalFingerprint(spec: {
       bundleSha256: spec.bundle?.bundleSha256 ?? null,
       spot: spec.spot,
       ...(spec.routing ? { routing: spec.routing } : {}),
+      ...(!isDefaultExec ? { executionPolicy: spec.executionPolicy } : {}),
     }),
   );
 }
@@ -320,6 +396,7 @@ export class DeliveryStore {
       const bundle = input.bundle === undefined ? undefined : validateBundleManifest(input.bundle, acceptance.baseCommit);
       const spot = validateSpotPolicy(input.spot);
       const routing = input.routing === undefined ? undefined : validateRegionRoutingPolicy(input.routing);
+      const executionPolicy = validateWorkerExecutionPolicy(input.executionPolicy);
       const approvalFingerprint = computeDeliveryApprovalFingerprint({
         provider,
         maxIterations: input.maxIterations,
@@ -329,6 +406,7 @@ export class DeliveryStore {
         bundle,
         spot,
         routing,
+        executionPolicy,
       });
       const at = this.timestamp();
       const task: DeliveryTask = {
@@ -346,8 +424,11 @@ export class DeliveryStore {
         ...(bundle ? { bundle } : {}),
         spot,
         ...(routing ? { routing } : {}),
+        executionPolicy,
         activeRegion: null,
         lastPlacement: null,
+        waitReason: 'awaiting_operator_approval',
+        lastPreflight: null,
         spotRetriesUsed: 0,
         activeRunId: null,
         activeWorkerId: null,
@@ -389,6 +470,7 @@ export class DeliveryStore {
       }
       const cleanReason = text(reason, 'reason', 1000);
       task.status = 'queued';
+      task.waitReason = 'queued_for_worker_dispatch';
       task.approvedAt = this.timestamp();
       task.approvalReason = cleanReason;
       const saved = this.save(task);
@@ -410,6 +492,7 @@ export class DeliveryStore {
       const cleanRun = text(runId, 'runId', 120);
       task.currentIteration += 1;
       task.status = 'running';
+      task.waitReason = null;
       task.activeWorkerId = cleanWorker;
       task.activeRunId = cleanRun;
       const saved = this.save(task);
@@ -445,7 +528,44 @@ export class DeliveryStore {
     });
   }
 
-  recordWorkerSummary(id: string, runId: string, summary: string): DeliveryTask {
+  recordPreflight(id: string, report: Omit<DeliveryPreflightReport, 'checkedAt'>): DeliveryTask {
+    return this.tx(() => {
+      const task = this.load(id);
+      if (task.status !== 'running' || task.activeRunId !== report.runId) {
+        throw new DomainError('Active run mismatch for preflight report', 409);
+      }
+      const checkedAt = this.timestamp();
+      const normalized: DeliveryPreflightReport = {
+        runId: report.runId,
+        ok: Boolean(report.ok),
+        cliVersion: report.cliVersion ? text(report.cliVersion, 'cliVersion', 120) : null,
+        authReady: Boolean(report.authReady),
+        gitReady: Boolean(report.gitReady),
+        allowedWebHosts: Array.isArray(report.allowedWebHosts) ? report.allowedWebHosts.slice(0, 64) : [],
+        allowSubagents: Boolean(report.allowSubagents),
+        reason: report.reason ? text(report.reason, 'preflight reason', 1000) : null,
+        checkedAt,
+      };
+      task.lastPreflight = normalized;
+      if (!normalized.ok) {
+        task.status = 'failed';
+        task.activeRunId = null;
+        task.activeWorkerId = null;
+        task.waitReason = 'preflight_failed';
+        task.failureReason = `Worker preflight failed: ${normalized.reason ?? 'CLI or tool readiness check failed'}`;
+      }
+      const saved = this.save(task);
+      this.emit(saved.id, 'delivery.preflight_recorded', {
+        runId: normalized.runId,
+        ok: normalized.ok,
+        cliVersion: normalized.cliVersion,
+        reason: normalized.reason,
+      });
+      return saved;
+    });
+  }
+
+  recordWorkerSummary(id: string, runId: string, summary: string, checkpointRef?: string): DeliveryTask {
     return this.tx(() => {
       const task = this.load(id);
       if (task.status !== 'running' || task.activeRunId !== runId) {
@@ -453,11 +573,16 @@ export class DeliveryStore {
       }
       const cleanSummary = text(summary, 'worker summary', 4000);
       task.latestWorkerSummary = cleanSummary;
+      if (checkpointRef?.trim()) {
+        task.latestCheckpointRef = normalizeRepoRelativePath(checkpointRef);
+      }
+      task.waitReason = 'awaiting_independent_verification';
       const saved = this.save(task);
       this.emit(saved.id, 'delivery.worker_summary_recorded', {
         runId,
         iteration: saved.currentIteration,
         summaryLength: cleanSummary.length,
+        ...(saved.latestCheckpointRef ? { checkpointRef: saved.latestCheckpointRef } : {}),
       });
       return saved;
     });
@@ -487,8 +612,10 @@ export class DeliveryStore {
         // Rewind iteration counter because the interrupted attempt did not finish verification.
         task.currentIteration = Math.max(0, task.currentIteration - 1);
         task.status = 'queued';
+        task.waitReason = 'spot_interrupted_requeued';
       } else {
         task.status = 'failed';
+        task.waitReason = null;
         task.failureReason = `Spot retry limit (${task.spot.maxSpotRetries}) exceeded: ${cleanReason}`;
       }
       const saved = this.save(task);
@@ -538,14 +665,18 @@ export class DeliveryStore {
 
       if (!normalized.acceptancePathsUnmodified) {
         task.status = 'failed';
+        task.waitReason = null;
         task.failureReason = 'Worker attempted to modify pinned acceptance test files';
       } else if (normalized.checksPassed) {
         task.status = 'verified';
+        task.waitReason = 'awaiting_draft_pr_publication';
       } else if (task.currentIteration < task.maxIterations) {
         // Failed verification feeds back into the next Ralph loop iteration.
         task.status = 'queued';
+        task.waitReason = 'queued_for_next_iteration';
       } else {
         task.status = 'failed';
+        task.waitReason = null;
         task.failureReason = `Verification failed after ${task.maxIterations} iteration(s)`;
       }
       const saved = this.save(task);
@@ -658,6 +789,7 @@ export class DeliveryStore {
         publishedAt: text(publication.publishedAt, 'publishedAt', 64),
       };
       task.status = 'draft_pr_published';
+      task.waitReason = 'awaiting_human_review';
       const saved = this.save(task);
       this.emit(saved.id, 'delivery.draft_pr_published', {
         branchName,
@@ -700,6 +832,7 @@ export class DeliveryStore {
         decidedAt,
       };
       task.status = input.decision === 'approve' ? 'approved' : 'rejected';
+      task.waitReason = null;
       const saved = this.save(task);
       this.emit(saved.id, 'delivery.human_decided', {
         decision: input.decision,
@@ -718,6 +851,7 @@ export class DeliveryStore {
       }
       const cleanReason = text(reason, 'reason', 1000);
       task.status = 'cancelled';
+      task.waitReason = null;
       task.cancelReason = cleanReason;
       task.activeRunId = null;
       task.activeWorkerId = null;

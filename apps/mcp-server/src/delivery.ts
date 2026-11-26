@@ -123,6 +123,25 @@ export function registerDeliveryOperatorTools(server: McpServer, options: Delive
             checkpointFlushTimeoutMs: z.number().int().min(5_000).max(115_000),
           })
           .optional(),
+        routing: z
+          .strictObject({
+            primaryRegion: z.string().min(4).max(32),
+            allowedRegions: z.array(z.string().min(4).max(32)).min(1).max(16),
+            workloadClass: z.string().min(1).max(64),
+            minPlacementScore: z.number().int().min(1).max(10).optional(),
+            maxHourlyPriceUsd: z.number().positive().max(1000).optional(),
+            trendWindowHours: z.number().int().min(6).max(168).optional(),
+          })
+          .optional(),
+        executionPolicy: z
+          .strictObject({
+            allowedWebHosts: z.array(z.string().min(3).max(253)).max(32).optional(),
+            allowSubagents: z.boolean().optional(),
+            maxIterationDurationMs: z.number().int().min(60_000).max(7_200_000).optional(),
+            preserveWorkspaceOnRetry: z.boolean().optional(),
+            verificationKind: z.enum(['code', 'document_format']).optional(),
+          })
+          .optional(),
       }),
       annotations: mutation,
     },
