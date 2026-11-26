@@ -1,6 +1,6 @@
 # ADR-0012: 폐기된 `cloudflare/` 디렉터리의 보관 범위와 제거 조건
 
-상태: 확정 (2026-11-26)
+상태: 확정 (2026-11-26). 2026-11-27에 의존 조사를 바로잡고 보관 유지를 다시 확인함
 
 ## 배경
 
@@ -19,10 +19,20 @@ Project HIVEMIND는 2026-11-25에 원격 실행을 AWS 단일 경로로 전환�
 | `packages/adapters/src/cloudflare.ts` | Cloudflare 실행 환경을 선택했을 때 `cloudflare/backend/src`의 모듈을 실행 시점에 동적으로 불러온다. |
 | `packages/adapters/src/cloud-workflow.ts` | 원격 통합 워크플로에서 `cloudflare/backend/src`의 `client`, `files`, `snapshot` 모듈을 동적으로 불러온다. |
 | `Dockerfile`, `infra/aws/Dockerfile.control-plane`, `infra/aws/Dockerfile.worker`, `infra/aws/Dockerfile.verifier` | 이미지 빌드 때 `cloudflare/backend/src`를 복사한다. 이 복사가 없으면 빌드가 실패한다. |
-| `tests/` 아래 10개 파일 | Cloudflare 포트와 워크플로의 계약 테스트다. `npm run check`에 포함된다. |
+| `tests/` 아래 10개 파일 | `cloudflare/backend/src`의 모듈 5개를 직접 불러온다(아래 "2026-11-27 정정" 참조). `npm run check`에 포함된다. |
 | `.github/workflows/cloudflare.yml` | `cloudflare/` 패키지의 타입 검사와 테스트를 실행한다. 배포는 하지 않는다. |
 
 AWS 단일 경로의 코드(`delivery`, `model-factory`, `collab`, `infrastructure/aws-runtime`)는 `cloudflare/`를 불러오지 않는다. 기본 MCP 프로필(`default`)의 Cloudflare 작업 도구와 중앙 관제의 Cloudflare 실행 환경 선택은 코드에 남아 있으나, 원격 리소스가 없으므로 실제 실행은 되지 않는다.
+
+### 2026-11-27 정정: 이 디렉터리에는 실행 로직이 들어 있다
+
+2026-11-26의 조사는 테스트 10개 파일을 "Cloudflare 포트와 워크플로의 계약 테스트"라고 적었다. 이 설명은 틀렸다. 2026-11-27에 다시 조사한 결과는 다음과 같다.
+
+루트의 테스트 10개 파일은 `cloudflare/backend/src`의 모듈 5개를 직접 불러온다. `autonomous-external.ts`, `delegated-runtime.ts`, `autonomous-oidc-runtime.ts`, `delegated-s3-sign.ts`, `runtime/autonomous-action-mcp.ts`다. 이 모듈들은 장기 자율 작업(이슈 #1)의 외부 실행, 위임 실행, OIDC 연동 로직이다. 반대 방향으로 `cloudflare/backend`도 루트의 `packages/contracts`와 `packages/core`를 불러온다. 즉 이 디렉터리는 문서 보관소가 아니라, 루트 패키지와 서로 의존하며 테스트로 검증되는 코드를 담고 있다.
+
+Cloudflare 경로가 걸친 범위도 처음 조사보다 넓다. Control Plane 앱(`apps/control-plane/src/app.ts`)의 Cloudflare 작업·워크플로·자율 작업 프록시 경로, MCP 서버의 `legacy` 프로필 도구 22개, 대시보드의 Cloudflare 선택 화면, `packages/core`의 Cloudflare 저장소와 자율 작업 코드가 여기에 닿아 있다. 이름이 `autonomous`, `parallel`, `oidc`, `team`, `cloudflare`, `cloud-workflow`, `delegated`로 시작하는 테스트는 전체 123개 파일 가운데 78개다.
+
+Cloudflare 원격 리소스가 삭제됐으므로 이 코드는 지금 실제로 실행되지 않는다. 그러나 제거는 디렉터리 삭제가 아니라 장기 자율 작업 기능을 저장소에 남길지에 대한 결정이다.
 
 ## 결정
 
@@ -39,7 +49,9 @@ AWS 단일 경로의 코드(`delivery`, `model-factory`, `collab`, `infrastructu
 3. Cloudflare 계약 테스트 10개 파일과 `.github/workflows/cloudflare.yml`을 지운다.
 4. `README.md`, `docs/mvp.md`, `docs/roadmap.md`에서 `cloudflare/` 아래 문서로 가는 링크를 Git 이력의 고정 커밋 링크로 바꾸거나 지운다.
 
-이 조건을 채우는 작업의 담당자와 일정은 정하지 않았다. 사용자 결정이 필요하다.
+위 조건 1은 2026-11-27의 정정에 따라 다시 읽어야 한다. 어댑터와 계약 파일을 지우는 것만으로는 부족하다. 장기 자율 작업 기능을 어떻게 할지 먼저 정해야 한다. 선택지는 둘이다. 아직 테스트되는 모듈 5개를 `packages/`로 옮겨 보존하고 나머지를 제거하거나, 자율 작업 기능 전체를 제거한다.
+
+2026-11-27에 사용자는 이 선택지를 검토한 뒤 **보관 유지**를 선택했다. 따라서 제거 작업은 계획되어 있지 않다. 담당자와 일정도 없다.
 
 ## 영향
 
