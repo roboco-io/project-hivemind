@@ -99,6 +99,10 @@ AWS_PROFILE=roboco node --import ./infrastructure/aws-runtime/node_modules/tsx/d
 # HIVEMIND_OPERATOR_TOKEN=<Secrets Manager hivemind-runtime/operator-token 값>
 ```
 
+운영자 토큰을 클라이언트 설정 파일에 직접 쓰지 않으려면 `HIVEMIND_OPERATOR_TOKEN` 대신 `HIVEMIND_OPERATOR_TOKEN_FILE`에 토큰 파일의 경로를 넣는다. 토큰 파일은 `{"OPERATOR_TOKEN":"<값>"}` 형식의 일반 파일이어야 하고 권한이 정확히 `600`이어야 한다. 조건이 맞지 않으면 MCP 서버는 시작하지 않는다. 두 환경 변수를 함께 설정해도 시작하지 않는다.
+
+토큰이 전달되지 않으면 MCP 서버는 개발용 기본 토큰으로 호출하고, AWS Control Plane은 401을 반환한다. 이때 모든 도구가 같은 일반 오류 문구를 반환하므로 원인이 드러나지 않는다. 설정을 바꾼 뒤에는 클라이언트를 다시 시작해야 한다. 이미 떠 있는 MCP 서버 프로세스는 이전 환경 변수를 계속 쓴다.
+
 실제 AWS `ControlPlaneService` 대상 `HIVEMIND_MCP_PROFILE=delivery` 종단 검증은 `scripts/aws-ssm-mcp-verify.ts`로 재현할 수 있다([검증 기록](../../docs/verification/2026-11-25-phase3-evidence-and-mcp-ssm.md)).
 
 ## 병렬 에이전트 협업 프로필 (`HIVEMIND_MCP_PROFILE=collab`)
