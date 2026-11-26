@@ -54,6 +54,12 @@ if (spokeRegion) {
       allowedRegions: [primaryRegion],
       resourcePrefix,
       controlPlaneDesiredCount,
+      ...(process.env.HIVEMIND_SPOKE_REGIONS?.trim()
+        ? { spokeRegions: process.env.HIVEMIND_SPOKE_REGIONS.split(',').map((s) => s.trim()).filter(Boolean) }
+        : {}),
+      ...(process.env.HIVEMIND_AWS_SPOKES_JSON?.trim()
+        ? { spokesJson: process.env.HIVEMIND_AWS_SPOKES_JSON.trim() }
+        : {}),
       ...(process.env.HIVEMIND_MF_REGION_NETWORKS_JSON?.trim()
         ? { modelFactoryRegionNetworksJson: process.env.HIVEMIND_MF_REGION_NETWORKS_JSON.trim() }
         : {}),

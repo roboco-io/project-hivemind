@@ -112,7 +112,9 @@ export class AwsComputeSpokeStack extends Stack {
       cfg.modelAuthSecretArn,
     );
 
+    // Fixed name so the Seoul Control Plane role can be granted iam:PassRole on exactly this role.
     const workerExecRole = new iam.Role(this, 'SpokeWorkerExecutionRole', {
+      roleName: `${prefix}-worker-exec-role`,
       assumedBy: new iam.ServicePrincipal('ecs-tasks.amazonaws.com'),
       managedPolicies: [
         iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonECSTaskExecutionRolePolicy'),

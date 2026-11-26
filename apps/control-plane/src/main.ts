@@ -91,10 +91,7 @@ function createAwsDeliveryOrchestratorFactory(port: number, extraRedactSecrets: 
     allowVpcInternalHttp,
     artifactsBucket: bucket,
   };
-  const extraSpokesRaw = process.env.HIVEMIND_AWS_SPOKES_JSON?.trim();
-  const extraSpokes: AwsSpokeRegionConfig[] = extraSpokesRaw
-    ? (JSON.parse(extraSpokesRaw) as AwsSpokeRegionConfig[])
-    : [];
+  const extraSpokes = loadExtraSpokes(primarySpoke);
   const allSpokes = [primarySpoke, ...extraSpokes];
   const ecs =
     allSpokes.length > 1
@@ -160,6 +157,45 @@ function createAwsDeliveryOrchestratorFactory(port: number, extraRedactSecrets: 
         };
       },
     });
+}
+
+const SPOKE_REGION_PATTERN = /^[a-z]{2}(-gov)?-[a-z]+-\d$/;
+
+/**
+ * Parses HIVEMIND_AWS_SPOKES_JSON. Each entry must name its region, cluster, task definitions, subnets and
+ * security groups. The Control Plane URL, the artifacts bucket and public-IP settings default to the
+ * primary Hub values, because the Control Plane private IP is known only at start-up.
+ */
+function loadExtraSpokes(primary: AwsSpokeRegionConfig): AwsSpokeRegionConfig[] {
+  const raw = process.env.HIVEMIND_AWS_SPOKES_JSON?.trim();
+  if (!raw) return [];
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed)) throw new Error('HIVEMIND_AWS_SPOKES_JSON must be a JSON array');
+  return parsed.map((item) => {
+    const entry = item as Partial<AwsSpokeRegionConfig>;
+    if (
+      typeof entry.region !== 'string' ||
+      !SPOKE_REGION_PATTERN.test(entry.region) ||
+      entry.region === primary.region ||
+      typeof entry.clusterArn !== 'string' ||
+      !entry.clusterArn.startsWith(`arn:aws:ecs:${entry.region}:`) ||
+      typeof entry.workerTaskDefinition !== 'string' ||
+      typeof entry.verifierTaskDefinition !== 'string' ||
+      !Array.isArray(entry.subnets) ||
+      entry.subnets.length === 0 ||
+      !Array.isArray(entry.securityGroups) ||
+      entry.securityGroups.length === 0
+    ) {
+      throw new Error('HIVEMIND_AWS_SPOKES_JSON contains an invalid spoke entry');
+    }
+    return {
+      ...entry,
+      controlApiUrl: entry.controlApiUrl ?? primary.controlApiUrl,
+      allowVpcInternalHttp: entry.allowVpcInternalHttp ?? primary.allowVpcInternalHttp,
+      artifactsBucket: entry.artifactsBucket ?? primary.artifactsBucket,
+      assignPublicIp: entry.assignPublicIp ?? primary.assignPublicIp,
+    } as AwsSpokeRegionConfig;
+  });
 }
 
 function createAwsModelFactoryOrchestratorFactory() {
@@ -300,11 +336,10 @@ try {
     const securityGroups = (process.env.HIVEMIND_WORKER_SECURITY_GROUPS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
     const detectedIp = detectPrivateVpcIpv4();
     const workerControlUrl = process.env.HIVEMIND_CONTROL_API_URL?.trim() || (detectedIp ? `http://${detectedIp}:${port}` : `http://127.0.0.1:${port}`);
-    const ecsDriver =
+    const collabPrimarySpoke: AwsSpokeRegionConfig | undefined =
       region && bucket && clusterArn && workerTaskDef && verifierTaskDef && subnets.length && securityGroups.length
-        ? new AwsEcsFargateSpotDriver({
+        ? {
             region,
-            allowedRegions: [region],
             clusterArn,
             workerTaskDefinition: workerTaskDef,
             verifierTaskDefinition: verifierTaskDef,
@@ -314,9 +349,16 @@ try {
             controlApiUrl: workerControlUrl,
             allowVpcInternalHttp: process.env.HIVEMIND_ALLOW_VPC_INTERNAL_HTTP === 'true',
             artifactsBucket: bucket,
-            credentials: createEcsTaskCredentialsProvider(),
-          })
+          }
         : undefined;
+    // Fan-out covers the Seoul Hub plus every spoke listed in HIVEMIND_AWS_SPOKES_JSON.
+    const ecsDriver = collabPrimarySpoke
+      ? new AwsMultiRegionEcsDriver({
+          primaryRegion: collabPrimarySpoke.region,
+          spokes: [collabPrimarySpoke, ...loadExtraSpokes(collabPrimarySpoke)],
+          credentials: createEcsTaskCredentialsProvider(),
+        })
+      : undefined;
     return new CollabOrchestrator({
       service,
       controlApiUrl: `http://127.0.0.1:${port}`,
@@ -335,9 +377,12 @@ try {
                     subtaskId: input.subtaskId,
                     agentId: input.agentId,
                     provider: input.provider,
+                    targetRegion: input.targetRegion,
+                    targetAzId: input.targetAzId,
                   },
                   signal,
                 ),
+              configuredRegions: () => ecsDriver.configuredRegions(),
             },
           }
         : {}),

@@ -41,6 +41,9 @@ test('synthesizes stateless $0-idle multi-region compute spoke with zero NAT/EIP
     DefaultCapacityProviderStrategy: [{ CapacityProvider: 'FARGATE_SPOT', Weight: 1, Base: 0 }],
   });
 
+  // Fixed execution role name lets the Hub Control Plane grant iam:PassRole on exactly this role.
+  template.hasResourceProperties('AWS::IAM::Role', { RoleName: Match.stringLikeRegexp('-us-east-2-worker-exec-role$') });
+
   // Zero inbound rules on spoke worker SG.
   template.hasResourceProperties('AWS::EC2::SecurityGroup', {
     SecurityGroupIngress: Match.absent(),

@@ -25,6 +25,8 @@ export interface CollabWorkerLauncherPort {
     },
     signal?: AbortSignal,
   ): Promise<{ taskArn: string; region: string }>;
+  /** Regions where this launcher can start workers. When present, fan-out never selects another region. */
+  configuredRegions?(): string[];
 }
 
 export interface RunEmbeddedOrchestratorInput {
@@ -289,13 +291,24 @@ export class CollabOrchestrator {
     }
 
     const batch = ready.slice(0, availableSlots);
-    const primaryRegion = session.allowedRegions[0] ?? 'ap-northeast-2';
+    // Placement is limited to regions that are both allowed by the session and configured in the launcher.
+    const launcherRegions = this.options.workerLauncher?.configuredRegions?.();
+    const candidateRegions = launcherRegions
+      ? session.allowedRegions.filter((r) => launcherRegions.includes(r))
+      : session.allowedRegions;
+    if (candidateRegions.length === 0) {
+      return {
+        dispatched: [],
+        skippedReason: `No session-allowed region has a configured worker spoke (allowed: ${session.allowedRegions.join(', ')})`,
+      };
+    }
+    const primaryRegion = candidateRegions[0]!;
     const snapshot = this.options.spotFeed ? await this.options.spotFeed.getSnapshot(signal).catch(() => null) : null;
     const placement = selectOptimalSpotPlacement(
       snapshot,
       {
         primaryRegion,
-        allowedRegions: session.allowedRegions,
+        allowedRegions: candidateRegions,
         workloadClass: options?.workloadClass ?? 'c.xlarge-arm',
       },
       this.now(),

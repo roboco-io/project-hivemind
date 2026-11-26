@@ -210,3 +210,40 @@ test('passes the Model Factory region network registry to the Control Plane and 
     },
   });
 });
+
+test('grants the Control Plane spoke ECS orchestration and PassRole only for named spoke regions and roles', () => {
+  const spokeRegions = ['us-east-2', 'us-east-1'];
+  const spokesJson = JSON.stringify([{ region: 'us-east-2' }]);
+  const template = synth({ spokeRegions, spokesJson });
+  const policies = Object.values(template.findResources('AWS::IAM::Policy'));
+  const statements = policies.flatMap(
+    (p) => (p as { Properties: { PolicyDocument: { Statement: Record<string, unknown>[] } } }).Properties.PolicyDocument.Statement,
+  );
+
+  const runTask = statements.find((s) => Array.isArray(s.Action) && (s.Action as string[]).includes('ecs:RunTask'));
+  const clusters = JSON.stringify((runTask!.Condition as { ArnEquals: Record<string, unknown> }).ArnEquals['ecs:cluster']);
+  assert.ok(clusters.includes('arn:aws:ecs:us-east-2:111111111111:cluster/hivemind-dev-us-east-2-cluster'));
+  assert.ok(clusters.includes('arn:aws:ecs:us-east-1:111111111111:cluster/hivemind-dev-us-east-1-cluster'));
+  assert.ok(!clusters.includes('us-west-2'));
+
+  const spokePassRole = statements.find(
+    (s) => s.Action === 'iam:PassRole' && JSON.stringify(s.Resource).includes('us-east-1-worker-exec-role'),
+  );
+  assert.deepEqual(spokePassRole!.Resource, [
+    'arn:aws:iam::111111111111:role/hivemind-dev-us-east-2-worker-exec-role',
+    'arn:aws:iam::111111111111:role/hivemind-dev-us-east-2-ai-worker-role',
+    'arn:aws:iam::111111111111:role/hivemind-dev-us-east-2-verifier-role',
+    'arn:aws:iam::111111111111:role/hivemind-dev-us-east-1-worker-exec-role',
+    'arn:aws:iam::111111111111:role/hivemind-dev-us-east-1-ai-worker-role',
+    'arn:aws:iam::111111111111:role/hivemind-dev-us-east-1-verifier-role',
+  ]);
+  assert.deepEqual(spokePassRole!.Condition, { StringEquals: { 'iam:PassedToService': 'ecs-tasks.amazonaws.com' } });
+  assert.ok(JSON.stringify(template.toJSON()).includes('HIVEMIND_AWS_SPOKES_JSON'));
+
+  // Without spokeRegions no spoke PassRole statement and no spokes env exist.
+  const base = JSON.stringify(synth().toJSON());
+  assert.ok(!base.includes('worker-exec-role'));
+  assert.ok(!base.includes('HIVEMIND_AWS_SPOKES_JSON'));
+  assert.throws(() => synth({ spokeRegions: ['ap-northeast-2'] }), /Invalid spoke region/);
+  assert.throws(() => synth({ spokeRegions: ['not-a-region'] }), /Invalid spoke region/);
+});

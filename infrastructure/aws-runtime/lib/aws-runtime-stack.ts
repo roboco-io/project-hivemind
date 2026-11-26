@@ -23,6 +23,13 @@ import { assertAwsRegion } from '../../../packages/adapters/src/autonomous-aws-r
 
 export interface AwsRuntimeConfig {
   /**
+   * Spoke regions whose ECS clusters the Control Plane may run, stop and describe tasks in. For each region
+   * the Control Plane also gets iam:PassRole on that spoke's three fixed-name task roles.
+   */
+  spokeRegions?: string[];
+  /** JSON array of spoke configurations, passed to the Control Plane as HIVEMIND_AWS_SPOKES_JSON. No secrets. */
+  spokesJson?: string;
+  /**
    * JSON registry of per-region Model Factory network and AMI defaults, passed to the Control Plane as
    * HIVEMIND_MF_REGION_NETWORKS_JSON. Contains resource IDs only, never secrets.
    */
@@ -75,6 +82,12 @@ export class AwsRuntimeStack extends Stack {
     }
 
     const prefix = cfg.resourcePrefix;
+    const spokeRegions = [...new Set(cfg.spokeRegions ?? [])];
+    for (const spokeRegion of spokeRegions) {
+      if (!/^[a-z]{2}(-gov)?-[a-z]+-\d$/.test(spokeRegion) || spokeRegion === cfg.region) {
+        throw new Error(`Invalid spoke region for Control Plane permissions: ${spokeRegion}`);
+      }
+    }
     const workerCpu = cfg.workerCpu ?? 4096;
     const workerMemoryMiB = cfg.workerMemoryMiB ?? 8192;
     const verifierCpu = cfg.verifierCpu ?? 4096;
@@ -297,15 +310,39 @@ export class AwsRuntimeStack extends Stack {
       new iam.PolicyStatement({
         actions: ['ecs:RunTask', 'ecs:StopTask', 'ecs:DescribeTasks'],
         resources: ['*'],
-        conditions: { ArnEquals: { 'ecs:cluster': this.cluster.clusterArn } },
+        conditions: {
+          ArnEquals: {
+            'ecs:cluster': [
+              this.cluster.clusterArn,
+              ...spokeRegions.map((r) => `arn:aws:ecs:${r}:${cfg.accountId}:cluster/${prefix}-${r}-cluster`),
+            ],
+          },
+        },
       }),
     );
     this.controlPlaneRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ['ecs:TagResource'],
-        resources: [`arn:aws:ecs:${cfg.region}:${cfg.accountId}:task/${prefix}-cluster/*`],
+        resources: [
+          `arn:aws:ecs:${cfg.region}:${cfg.accountId}:task/${prefix}-cluster/*`,
+          ...spokeRegions.map((r) => `arn:aws:ecs:${r}:${cfg.accountId}:task/${prefix}-${r}-cluster/*`),
+        ],
       }),
     );
+    if (spokeRegions.length > 0) {
+      // Spoke task roles have fixed names (see AwsComputeSpokeStack), so PassRole names them exactly.
+      this.controlPlaneRole.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ['iam:PassRole'],
+          resources: spokeRegions.flatMap((r) =>
+            ['worker-exec-role', 'ai-worker-role', 'verifier-role'].map(
+              (suffix) => `arn:aws:iam::${cfg.accountId}:role/${prefix}-${r}-${suffix}`,
+            ),
+          ),
+          conditions: { StringEquals: { 'iam:PassedToService': 'ecs-tasks.amazonaws.com' } },
+        }),
+      );
+    }
     this.controlPlaneRole.addToPolicy(
       new iam.PolicyStatement({
         actions: [
@@ -514,6 +551,7 @@ export class AwsRuntimeStack extends Stack {
         HIVEMIND_MF_INSTANCE_PROFILE_ARN: this.trainingInstanceProfile.attrArn,
         HIVEMIND_MF_ALLOWED_REGIONS: 'ap-northeast-2,us-east-2,us-east-1,us-west-2,ap-northeast-1',
         HIVEMIND_MF_BUDGET_CAP_MICROS: '500000000',
+        ...(cfg.spokesJson ? { HIVEMIND_AWS_SPOKES_JSON: cfg.spokesJson } : {}),
         ...(cfg.modelFactoryRegionNetworksJson
           ? { HIVEMIND_MF_REGION_NETWORKS_JSON: cfg.modelFactoryRegionNetworksJson }
           : {}),

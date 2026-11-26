@@ -87,6 +87,35 @@ export class AwsMultiRegionEcsDriver {
     return { taskArn: launched.taskArn, region, azId: input.targetAzId ?? null };
   }
 
+  /**
+   * Launches one collaboration worker in the requested region. Throws when the region has no configured
+   * spoke, so a caller can never start a worker in a region the operator did not register.
+   */
+  async launchCollabWorker(
+    input: {
+      sessionId: string;
+      subtaskId: string;
+      agentId: string;
+      provider: 'claude' | 'codex';
+      targetRegion?: string;
+      targetAzId?: string | null;
+    },
+    signal?: AbortSignal,
+  ): Promise<{ taskArn: string; region: string }> {
+    const region = input.targetRegion ?? this.primaryRegion;
+    const baseSpoke = this.spokeConfigs.get(region);
+    const baseDriver = this.drivers.get(region);
+    if (!baseSpoke || !baseDriver) {
+      throw new Error(`AWS spoke region is not configured: ${region}`);
+    }
+    const pinnedSubnet = input.targetAzId ? baseSpoke.subnetByAzId?.[input.targetAzId] : undefined;
+    const driver = pinnedSubnet ? this.createRegionalDriver(baseSpoke, [pinnedSubnet]) : baseDriver;
+    return driver.launchCollabWorker(
+      { sessionId: input.sessionId, subtaskId: input.subtaskId, agentId: input.agentId, provider: input.provider },
+      signal,
+    );
+  }
+
   async stop(externalRunId: string): Promise<void> {
     const arnRegionMatch = /^arn:aws:ecs:([a-z]{2}-[a-z]+-\d+):/.exec(externalRunId);
     const region = arnRegionMatch?.[1] ?? this.primaryRegion;
