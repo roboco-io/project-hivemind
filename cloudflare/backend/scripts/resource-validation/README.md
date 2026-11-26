@@ -19,6 +19,7 @@
 - `[suite.ts:runSuite]`, `[suite.ts:order]`, `[suite.ts:costEstimate]` - CLI 본문, 12개 목표의 순서, 실행 허용용 비용 추정.
 - `usage.ts` CLI - 인자는 `A_OUTPUT SUITE_OUTPUT OUTPUT ORIGIN CONTROL_SECRET_FILE`이다.
 - `[usage.ts:usageReport]`, `[usage.ts:retailUsage]` - CLI 본문과 사용량의 USD 환산.
+- `usage.ts`는 추가 비용 집계 범위를 `EXTRA_ACCOUNTING_GROUPS`, `EXTRA_ACCOUNTING_JOBS`로 받는다. `[usage.ts:usageReport]`
 - `report.ts` CLI - 인자는 `A_OUTPUT SUITE_OUTPUT REPORT_OUTPUT`이다. `[report.ts:report]`
 - `observer.ts` CLI - 인자는 `WORKFLOW_ID ORIGIN CONTROL_SECRETS_FILE`이다.
 - `[host-metrics.ts:createHostSampler]`, `[host-metrics.ts:summarizeHost]`, `[host-metrics.ts:HostSample]` - 호스트 CPU·메모리·네트워크 표본과 요약.

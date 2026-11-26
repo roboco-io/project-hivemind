@@ -325,7 +325,7 @@ test('actual AWS adapter reconciles a cancelled lost create and cleans only the 
   if(action==='DescribeVolumes')return new Response('<DescribeVolumesResponse><requestId>vol-1</requestId><volumeSet></volumeSet></DescribeVolumesResponse>');
   assert.equal(action,'DescribeInstances');
   const tagXml=[...tags].map(([key,value])=>`<item><key>${key}</key><value>${value}</value></item>`).join('');
-  return new Response(`<DescribeInstancesResponse><requestId>read-1</requestId><reservationSet><item><ownerId>123456789012</ownerId><instancesSet><item><instanceId>i-1234abcd</instanceId><clientToken>${clientToken}</clientToken><instanceState><name>${terminated?'terminated':'running'}</name></instanceState><tagSet>${tagXml}</tagSet></item></instancesSet></item></reservationSet></DescribeInstancesResponse>`);
+  return new Response(`<DescribeInstancesResponse><requestId>read-1</requestId><reservationSet><item><ownerId>123456789012</ownerId><instancesSet><item><instanceId>i-1234abcd</instanceId><placement><availabilityZone>ap-northeast-2a</availabilityZone></placement><clientToken>${clientToken}</clientToken><instanceState><name>${terminated?'terminated':'running'}</name></instanceState><tagSet>${tagXml}</tagSet></item></instancesSet></item></reservationSet></DescribeInstancesResponse>`);
  }});
  broker=new Broker({...h.options,transport,resolver:{async withCredential(_r:any,_s:any,consume:any){return consume({provider:'aws',accessKeyId:'SYNTHETIC',secretAccessKey:'not-real'});}}});
  broker.serverApprove(h.approval);const unknown=await broker.execute(h.request);assert.equal(unknown.status,'ambiguous');assert.equal(unknown.verifiedCostMicros,null);assert.equal(unknown.resource,undefined);
@@ -422,4 +422,32 @@ test('billing evidence is a bounded reference, not a URL/secret, and review surv
  for(const ref of ['https://invoice.invalid/?token=secret','invoice?secret','ghs_privatecredentialvalue','a'.repeat(129)])assert.throws(()=>(h.broker as any).serverAttestBilling(a.id,1,ref,'Invoice checked'));
  for(const reason of ['','x'.repeat(2001),'Bearer PRIVATEVALUE','line\nbreak'])assert.throws(()=>(h.broker as any).serverAttestBilling(a.id,1,'invoice-1',reason));
  const reviewed=(h.broker as any).serverAttestBilling(a.id,11,'invoice-1','Invoice checked');const store=createExternalStore(':memory:');try{store.transaction(s=>Object.assign(s,h.store.transaction(s=>s)));assert.deepEqual(new Broker({...h.options,store}).getAction(a.id),reviewed);}finally{store.close();}
+});
+
+test('HF public large opt-in is approved, preserved in metadata and bound to the current profile hash',async()=>{
+ const h=harness();Object.assign(h.profile,{provider:'hf',target:{repository:'org/model',revision:'main',visibility:'public',allowPublicLarge:true},operations:['hf.model.lfs_commit']});
+ const approved=h.broker.serverApprove(h.approval);
+ assert.deepEqual(approved.profile.target,h.profile.target);
+ assert.equal((approved.profile.target as any).allowPublicLarge,true);
+ h.profile.target={repository:'org/model',revision:'main'};
+ await assert.rejects(()=>h.broker.execute({...h.request,operation:'hf.model.lfs_commit',parameters:{manifestDigest:'a'.repeat(64),message:'model'}}),/profile/i);
+ assert.equal(h.counts().resolutions,0);
+});
+test('HF profile rejects missing public large acknowledgement and malformed or private flags',()=>{
+ for(const target of [{visibility:'public'},{visibility:'public',allowPublicLarge:false},{visibility:'public',allowPublicLarge:'true'},{allowPublicLarge:true},{visibility:'private',allowPublicLarge:true}]){
+  const h=harness();Object.assign(h.profile,{provider:'hf',target:{repository:'org/model',revision:'main',...target},operations:['hf.model.lfs_commit']});
+  assert.throws(()=>h.broker.serverApprove(h.approval));
+ }
+});
+test('HF legacy private target is not normalized during approval',()=>{
+ const h=harness();Object.assign(h.profile,{provider:'hf',target:{repository:'org/model',revision:'main'},operations:['hf.model.lfs_commit']});
+ const approved=h.broker.serverApprove(h.approval);
+ assert.deepEqual(approved.profile,h.profile);
+ const canonical=(v:any):string=>v===null||typeof v!=='object'?JSON.stringify(v):Array.isArray(v)?'['+v.map(canonical).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}';
+ assert.equal(approved.profileHash,createHash('sha256').update(canonical(h.profile)).digest('hex'));
+});
+
+test('HF public large consent requires an approved large operation',()=>{
+ const h=harness();Object.assign(h.profile,{provider:'hf',target:{repository:'org/model',revision:'main',visibility:'public',allowPublicLarge:true},operations:['hf.model.commit']});
+ assert.throws(()=>h.broker.serverApprove(h.approval));
 });

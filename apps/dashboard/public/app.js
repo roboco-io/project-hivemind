@@ -388,9 +388,10 @@ function autonomousProfileHashes(t) {
 }
 function autonomousApprovedTarget(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const fields = 'accountId' in value ? ['accountId', 'region', 'workloadId'] : 'repository' in value && ('branch' in value) !== ('revision' in value) ? ['repository', 'branch' in value ? 'branch' : 'revision'] : [];
-  if (!fields.length || fields.some(k => typeof value[k] !== 'string' || !value[k].length || value[k].length > 256)) return null;
-  return Object.fromEntries(fields.map(k => [k, autonomousText(value[k], 256)]));
+  const fields = 'bucket' in value ? ['accountId', 'region', 'bucket', 'prefix'] : 'accountId' in value ? ['accountId', 'region', 'workloadId'] : 'repository' in value && ('branch' in value) !== ('revision' in value) ? ['repository', 'branch' in value ? 'branch' : 'revision', ...('visibility' in value ? ['visibility'] : [])] : [];
+  if (!fields.length || fields.some(k => typeof value[k] !== 'string' || !value[k].length || value[k].length > 256) || ('visibility' in value && !['private', 'public'].includes(value.visibility))) return null;
+  if ('allowPublicLarge' in value && (value.allowPublicLarge !== true || value.visibility !== 'public' || !('revision' in value))) return null;
+  return { ...Object.fromEntries(fields.map(k => [k, autonomousText(value[k], 256)])), ...('allowPublicLarge' in value ? { allowPublicLarge: true } : {}) };
 }
 function autonomousR9Metadata(value) {
   const output = {}, hex64 = v => typeof v === 'string' && /^[a-f0-9]{64}$/.test(v), oid = v => typeof v === 'string' && /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(v);
@@ -430,10 +431,31 @@ async function loadAutonomousTask(id) {
     if (refs.length > 3 || new Set(refs).size !== refs.length || raw.available === false || raw.enabled === false || !Array.isArray(raw.profiles) || raw.profiles.length !== refs.length) throw new Error();
     const profiles = refs.map(ref => {
       const p = raw.profiles.find(p => p.id === ref);
-      if (!p || p.enabled !== true || !['aws', 'hf', 'github'].includes(p.provider) || !/^[a-f0-9]{64}$/.test(p.profileHash) || !Number.isSafeInteger(p.upperBoundMicros) || p.upperBoundMicros < 0 || !p.target || !Array.isArray(p.operations)) throw new Error();
-      const fields = p.provider === 'aws' ? ['accountId', 'region', 'workloadId'] : p.provider === 'hf' ? ['repository', 'revision'] : ['repository', 'branch'];
+      if (!p || p.enabled !== true || !['aws', 's3', 'hf', 'github'].includes(p.provider) || !/^[a-f0-9]{64}$/.test(p.profileHash) || !Number.isSafeInteger(p.upperBoundMicros) || p.upperBoundMicros < 0 || !p.target || !Array.isArray(p.operations)) throw new Error();
+      const fields = p.provider === 'aws' ? ['accountId', 'region', 'workloadId'] : p.provider === 's3' ? ['accountId', 'region', 'bucket', 'prefix'] : p.provider === 'hf' ? ['repository', 'revision', ...('visibility' in p.target ? ['visibility'] : [])] : ['repository', 'branch'];
       if (fields.some(k => typeof p.target[k] !== 'string' || !p.target[k])) throw new Error();
-      return { id: ref, provider: p.provider, profileHash: p.profileHash, target: Object.fromEntries(fields.map(k => [k, autonomousText(p.target[k], 200)])), upperBoundMicros: p.upperBoundMicros, operations: p.operations.map(v => autonomousText(v, 128)) };
+      const hasLargeConsent = 'allowPublicLarge' in p.target;
+      if (hasLargeConsent && (p.provider !== 'hf' || p.target.allowPublicLarge !== true || p.target.visibility !== 'public' || !p.operations.includes('hf.model.lfs_commit'))) throw new Error();
+      if (p.provider === 'hf' && p.target.visibility === 'public' && p.operations.includes('hf.model.lfs_commit') && !hasLargeConsent) throw new Error();
+      const display = p.provider === 'hf' ? p.hfVisibilityDisplay : undefined;
+      // A public target must come with a matching display; an omitted visibility means private.
+      if (p.provider === 'hf' && (display ? !['private', 'public'].includes(display.visibility) || typeof display.publicEffect !== 'boolean' || display.publicEffect !== (display.visibility === 'public') || typeof display.notice !== 'string' || display.visibility !== (p.target.visibility ?? 'private') : p.target.visibility !== undefined && p.target.visibility !== 'private')) throw new Error();
+      let oidc;
+      if (p.oidc) {
+        oidc = { issuer: autonomousText(p.oidc.issuer, 256), audience: autonomousText(p.oidc.audience, 255) };
+        for (const purpose of ['execute', 'inspect', 'cleanup']) {
+          const v = p.oidc[purpose];
+          if (!v || !/^arn:aws:iam::[0-9]{12}:role\/[A-Za-z0-9_+=,.@/-]+$/.test(v.roleArn) || !/^hivemind:task:[a-f0-9]{64}:rev:[1-9][0-9]*:profile:[a-f0-9]{64}:(execute|inspect|cleanup)$/.test(v.subject) || !/^[a-f0-9]{64}$/.test(v.policyHash) || !Number.isInteger(v.durationSeconds) || v.durationSeconds < 1 || v.durationSeconds > 120) throw new Error();
+          oidc[purpose] = { roleArn: autonomousText(v.roleArn, 600), subject: autonomousText(v.subject, 255), policyHash: v.policyHash, durationSeconds: v.durationSeconds };
+        }
+      }
+      let delegated;
+      if (p.delegated) {
+        const v = p.delegated, d = v.descriptor;
+        if (!/^[a-f0-9]{64}$/.test(v.descriptorHash) || !/^[a-f0-9]{64}$/.test(v.inputManifestDigest) || !d || !d.hf || !d.s3 || !d.iam || !d.hf.delivery || !['private', 'public'].includes(d.hf.visibility)) throw new Error();
+        delegated = { descriptorHash: v.descriptorHash, inputManifestDigest: v.inputManifestDigest, workloadId: autonomousText(d.workloadId, 128), amiId: autonomousText(d.amiId, 32), bootstrapSha256: autonomousText(d.bootstrapSha256, 64), region: autonomousText(d.region, 32), availabilityZoneId: autonomousText(d.availabilityZoneId, 32), policySha256: autonomousText(d.iam.policySha256, 64), bucket: autonomousText(d.s3.bucket, 63), prefix: autonomousText(d.s3.prefix, 512), hfRepo: autonomousText(d.hf.repo, 128), visibility: d.hf.visibility, tokenRef: autonomousText(d.hf.tokenRef, 128), tokenDelivery: autonomousText(d.hf.delivery.mode, 64), trainingEnvironment: d.hf.delivery.trainingEnvironment === true, releasePolicyId: autonomousText(d.releasePolicy?.id, 128) };
+      }
+      return { id: ref, provider: p.provider, ...(oidc ? { oidc } : {}), ...(delegated ? { delegated } : {}), visibilityNotice: display ? autonomousText(display.notice, 300) : undefined, publicEffect: display ? display.publicEffect : false, profileHash: p.profileHash, target: { ...Object.fromEntries(fields.map(k => [k, autonomousText(p.target[k], 200)])), ...(hasLargeConsent ? { allowPublicLarge: true } : {}) }, upperBoundMicros: p.upperBoundMicros, operations: p.operations.map(v => autonomousText(v, 128)) };
     });
     if (new Set(profiles.map(p => p.provider)).size !== profiles.length) throw new Error();
     t.externalProfilesMetadata = profiles;
@@ -460,7 +482,7 @@ function renderAutonomous() {
   $('autonomous-tools').textContent = (s.tools || []).map(v => autonomousText(v, 128)).join(', ') || '없음';
   $('autonomous-web').textContent = (s.web?.allowedHosts || []).map(v => autonomousText(v, 253)).join(', ') || '허용 호스트 없음';
   $('autonomous-credentials').textContent = (s.credentialIds || []).map(v => autonomousText(v, 128)).join(', ') || 'reference 없음';
-  $('autonomous-profiles').textContent = profiles.length ? profiles.map(ref => { const p = t.externalProfilesMetadata?.find(p => p.id === ref); return autonomousText(ref, 128) + (p ? ' — ' + p.provider + ' ' + JSON.stringify(p.target) + '\n허용 ' + p.operations.join(', ') + ' · 행동 상한 ' + usd(p.upperBoundMicros) + '\nprofileHash ' + p.profileHash : ' — 대상·상한 metadata 미확인'); }).join('\n\n') : '외부 profile 없음';
+  $('autonomous-profiles').textContent = profiles.length ? profiles.map(ref => { const p = t.externalProfilesMetadata?.find(p => p.id === ref); return autonomousText(ref, 128) + (p ? ' — ' + p.provider + ' ' + JSON.stringify(p.target) + (p.target.allowPublicLarge === true ? '\n공개 대형 게시 허용' : '') + (p.visibilityNotice ? '\n' + (p.publicEffect ? '[공개 커밋] ' : '') + p.visibilityNotice : '') + '\n허용 ' + p.operations.join(', ') + ' · 행동 상한 ' + usd(p.upperBoundMicros) + '\nprofileHash ' + p.profileHash + (p.oidc ? '\nOIDC·GSC ' + JSON.stringify(p.oidc) : '') + (p.delegated ? '\n위임 실행 ' + JSON.stringify(p.delegated) : '') : ' — 대상·상한 metadata 미확인'); }).join('\n\n') : '외부 profile 없음';
   $('autonomous-source').textContent = s.execution ? autonomousText(s.execution.snapshotId, 64) + '\n' + (s.execution.checks || []).map(c => autonomousText(c.id, 128) + ': ' + autonomousText(JSON.stringify(c.argv), 2000)).join('\n') : 'snapshot 미보고';
   $('autonomous-budget').textContent = usd(s.budgetMicros); $('autonomous-reserved').textContent = usd(t.reservedMicros) + ' (예약 상한)';
   $('autonomous-spent').textContent = usd(t.spentMicros) + ' · 원장 확인분만; 미확정 청구 별도' + ((t.actions || []).some(a => a.status === 'accepted') ? ' · 수락된 행동 청구 미확정' : '');
@@ -490,7 +512,13 @@ function applyAutonomousDetail(raw) {
   const t = autonomousTask(raw), prior = autonomous.detail;
   if (prior && prior.id === t.id && prior.revision !== t.revision) { $('autonomous-reason').value = ''; autonomousError('revision이 바뀌었습니다. 현재 범위를 다시 검토하세요.'); }
   else if (prior && prior.id === t.id && JSON.stringify(autonomousProfileHashes(prior)) !== JSON.stringify(autonomousProfileHashes(t))) { $('autonomous-reason').value = ''; autonomousError('외부 profile 대상 또는 설정이 바뀌었습니다. 다시 검토하세요.'); }
-  autonomous.detail = t; renderAutonomous();
+  autonomous.detail = t; renderAutonomous(); showAutonomousToolAudit(t.id);
+}
+/** The worker's own tool-call report. Rendered by tool-audit.js with textContent only; a stale answer never replaces a newer task's panel. */
+function showAutonomousToolAudit(id) {
+  if (typeof loadToolAudit !== 'function') return;
+  const seq = autonomous.auditSeq = (autonomous.auditSeq || 0) + 1, box = node('div');
+  void loadToolAudit(box, id, autonomousApi).then(() => { if (seq === autonomous.auditSeq && autonomous.selectedId === id) $('autonomous-tool-audit-body').replaceChildren(box); });
 }
 async function selectAutonomousTask(id) {
   if (autonomous.busy) return; const epoch = ++autonomous.epoch; autonomous.selectedId = id; autonomous.detail = null; $('autonomous-reason').value = ''; autonomousError(null); renderAutonomous();

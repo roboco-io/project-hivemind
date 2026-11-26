@@ -36,6 +36,19 @@ test('native control allows exact HTTPS origin POST paths and token roles only',
  assert.equal(allowNativeControl(request('/v1/autonomous-tasks/task/native-receipt','reporter'),env),true);
  for(const r of [request('/v1/autonomous-tasks/task/native-receipt'),request('/v1/autonomous-tasks/task/claim'),request('/v1/autonomous-tasks/task/heartbeat','operator'),request('/v1/autonomous-tasks/task/heartbeat','worker','GET'),request('/v1/autonomous-tasks/task/heartbeat','worker','POST','http://control.example'),request('/v1/autonomous-tasks/task/heartbeat?x=1')])assert.equal(allowNativeControl(r,env),false);
 });
+test('native control also allows tool-call reports (reporter token) and large uploads (worker token, external enabled only)',()=>{
+ const request=(path:string,token='worker',method='POST',origin='https://control.example')=>new Request(origin+path,{method,headers:{authorization:'Bearer '+token}});
+ assert.equal(allowNativeControl(request('/v1/autonomous-tasks/task/tool-calls','reporter'),env),true);
+ for(const token of ['worker','operator',''])assert.equal(allowNativeControl(request('/v1/autonomous-tasks/task/tool-calls',token),env),false);
+ assert.equal(allowNativeControl(request('/v1/autonomous-tasks/task/tool-calls','reporter','GET'),env),false);
+ const external={...env,AUTONOMOUS_EXTERNAL_ENABLED:'true'};
+ for(const step of ['begin','part','complete','abort','manifest']){
+  const path='/v1/autonomous-tasks/task/external-large/'+step;
+  assert.equal(allowNativeControl(request(path),external),true);assert.equal(allowNativeControl(request(path),env),false);
+  for(const token of ['reporter','operator'])assert.equal(allowNativeControl(request(path,token),external),false);
+ }
+ assert.equal(allowNativeControl(request('/v1/autonomous-tasks/task/external-large/other'),external),false);
+});
 test('ports defer to queued legacy jobs and existing credential and global pool ownership',async()=>{
  const s=fixture();const rows=new Map<string,unknown>();const ports=new LegacyAutonomousCloudPorts({scheduler:s,storage:{get:async<T>(key:string)=>rows.get(key) as T,put:async(key,value)=>{rows.set(key,value);}},enabled:()=>true,sourceReady:async()=>true,save:async()=>{}});
  assert.equal(await ports.available(task),true);s.submit({...spec,idempotencyKey:'legacy'},1000);assert.equal(await ports.available(task),false);

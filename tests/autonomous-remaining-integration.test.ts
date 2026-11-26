@@ -45,7 +45,7 @@ function fixture(t:{after(fn:()=>unknown):void},external=true){
   if(action==='DescribeVolumes')return new Response('<DescribeVolumesResponse><requestId>fixture-volumes</requestId><volumeSet></volumeSet></DescribeVolumesResponse>');
   if(action==='TerminateInstances'){terminated=true;return new Response('<TerminateInstancesResponse><requestId>fixture-stop</requestId></TerminateInstancesResponse>');}
   assert.equal(action,'DescribeInstances');const tags=start?[...start.keys()].filter(k=>/TagSpecification\.1\.Tag\.\d+\.Key/.test(k)).map(k=>`<item><key>${start!.get(k)}</key><value>${start!.get(k.replace(/Key$/,'Value'))}</value></item>`).join(''):'';
-  return new Response('<DescribeInstancesResponse><requestId>fixture-describe</requestId><reservationSet>'+(start?`<item><ownerId>123456789012</ownerId><instancesSet><item><instanceId>i-1234abcd</instanceId><clientToken>${start.get('ClientToken')}</clientToken><instanceState><name>${terminated?'terminated':'running'}</name></instanceState><tagSet>${tags}</tagSet></item></instancesSet></item>`:'')+'</reservationSet></DescribeInstancesResponse>');
+  return new Response('<DescribeInstancesResponse><requestId>fixture-describe</requestId><reservationSet>'+(start?`<item><ownerId>123456789012</ownerId><instancesSet><item><instanceId>i-1234abcd</instanceId><placement><availabilityZone>ap-northeast-2a</availabilityZone></placement><clientToken>${start.get('ClientToken')}</clientToken><instanceState><name>${terminated?'terminated':'running'}</name></instanceState><tagSet>${tags}</tagSet></item></instancesSet></item>`:'')+'</reservationSet></DescribeInstancesResponse>');
  }});
  const runtime=()=>createAutonomousExternalRuntime(runtimeOptions())!;
 

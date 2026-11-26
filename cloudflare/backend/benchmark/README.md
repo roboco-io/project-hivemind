@@ -144,4 +144,25 @@ Keychain 연결 후 같은 lockfile·빈 캐시의 6회 비교를 추가 웹 로
 ## Verification
 
 - Run: `npm test` (`cloudflare/backend/`에서 실행. `node --test test/*.test.ts`)
-- Run: `node run-shard.mjs all` 또는 `node integration.mjs` (`cloudflare/backend/benchmark/resource-validation/`에서 실행. Hurl 8.0.1과 npm registry 접근이 필요하다)
+- fixture 실행 검사는 npm registry 접근과 임시 앱 실행을 요구하므로 기본 오프라인 검증에서 제외한다. 필요할 때의 명령은 위 실행 인터페이스에 있다.
+
+
+### 고정 fixture 내부 계약
+
+아래는 요구사항을 구현하기 전 기준 앱의 현재 동작이다. [공통 요구사항](./resource-validation/contract.md)의 정렬·페이지네이션을 이미 구현한 앱으로 해석하지 않는다. 고정 manifest를 보존하기 위해 내부 README는 추가하지 않는다.
+
+| 경계 | 실제 인터페이스와 불변식 | 부작용 |
+|---|---|---|
+| [앱 구성](./resource-validation/app/src/app.ts) | `app.ts:buildApp`은 `/api/health`와 다섯 route 등록 함수를 묶는다. 빈 JSON body는 `{}`로 해석하며 `ApiError`를 `{errors}`로 응답한다. | Fastify plugin·핸들러를 등록한다. |
+| [서버](./resource-validation/app/src/server.ts) | `server.ts:start`는 스키마 준비 후 listen한다. 기본 IPv6 바인드가 지원되지 않으면 IPv4로 재시도한다. | DB 준비, 소켓 listen, signal 기반 종료를 수행한다. |
+| [인증](./resource-validation/app/src/plugins/auth.ts) | `auth.ts:registerAuth`는 `signUserToken`, `authenticateRequired`, `authenticateOptional`을 등록한다. `Token`·`Bearer`와 숫자 `sub`를 검사하며 기존 User를 조회한다. 토큰 유효 기간은 7일이다. | JWT plugin·request decoration 등록과 DB 읽기를 수행한다. |
+| [공통 도구](./resource-validation/app/src/lib/errors.ts) | `errors.ts:ApiError`와 오류 생성 함수는 401·403·404·409·422를 표현한다. `password.ts:hashPassword`, `verifyPassword`는 salt+scrypt와 timing-safe 비교를 사용한다. | `bootstrapDb.ts:ensureDatabaseSchema`는 DB 조회 실패 시 로컬 Prisma CLI로 migrate deploy 또는 db push를 실행한다. `prisma.ts:prisma`는 공유 클라이언트를 만든다. |
+| [slug](./resource-validation/app/src/lib/slug.ts) | `slug.ts:generateUniqueSlug`는 기본 slug와 2~20 접미사를 조회하고 충돌 시 난수를 붙인다. | DB를 읽고 난수를 생성한다. |
+| [직렬화](./resource-validation/app/src/serializers.ts) | `serializeUser`는 passwordHash를 응답에서 생략한다. `serializeSingleArticle`은 body를 포함하고 `serializeArticleListItem`은 body를 생략한다. `articleRelationsInclude`는 tag를 position 순으로 요청한다. | 명시적 외부 부작용이 없다. |
+| [사용자](./resource-validation/app/src/routes/users.ts) | `users.ts:userRoutes`는 등록·로그인과 현재 사용자 조회·수정을 등록한다. 중복 email·username은 409로 처리한다. | User 조회·생성·수정과 토큰 발급을 수행한다. |
+| [게시글](./resource-validation/app/src/routes/articles.ts) | `articles.ts:articleRoutes`는 목록·feed·생성·개별 조회·수정·삭제·favorite 경로를 등록한다. `parsePagination`은 기본 limit 20·offset 0을 쓰며 현재 limit 상한·sort 검증은 없다. 수정·삭제는 author만 허용한다. | Article·Tag·ArticleTag·Favorite를 조회·변경한다. |
+| [댓글](./resource-validation/app/src/routes/comments.ts) | `comments.ts:commentRoutes`는 목록·생성·삭제를 등록한다. 현재 목록은 전체 댓글을 createdAt DESC·id DESC로 반환한다. 삭제는 댓글 author만 허용한다. | Comment 조회·생성·삭제를 수행한다. |
+| [프로필](./resource-validation/app/src/routes/profiles.ts)·[태그](./resource-validation/app/src/routes/tags.ts) | `profiles.ts:profileRoutes`는 프로필·follow 경로를 등록한다. `tags.ts:tagRoutes`는 게시글에 연결된 태그만 name 순으로 반환한다. | User·Follow·Tag를 조회하고 Follow를 upsert·삭제한다. |
+| [Prisma 스키마](./resource-validation/app/prisma/schema.prisma)·[초기 SQL](./resource-validation/app/prisma/migrations/20261111150940_init/migration.sql) | `schema.prisma:User`, `Follow`, `Article`, `Tag`, `ArticleTag`, `Comment`, `Favorite`가 SQL의 같은 이름 테이블과 대응한다. email·username·slug·tag name은 unique다. 연결 테이블은 복합 기본키와 cascade FK를 사용한다. | migration.sql 실행은 SQLite 테이블과 index를 만든다. |
+
+fixture의 가장 가까운 package에는 `typecheck`가 정의되어 있다 (`resource-validation/app/package.json:scripts.typecheck`). 로컬 의존성과 생성 Prisma client가 준비된 경우 `npm --prefix cloudflare/backend/benchmark/resource-validation/app run typecheck`로 검사한다.

@@ -7,3 +7,19 @@
 ## Subdirectories & Boundaries
 
 - src: [`./src/README.md`](./src/README.md) - 로컬 작업 계약(`Task`, `AgentAdapter`), Cloudflare 작업 계약(`CloudPort`, `CloudControl`), 워크플로 스키마(`workflowDraft`, `workflowView`)를 정의한다. 파일, 네트워크, 데이터베이스에 접근하지 않는다.
+
+## Interface
+
+- `[src/index.ts:Task]`, `[src/cloudflare.ts:CloudPort]`, `[src/workflow.ts:workflowDraft]`와 `[src/autonomous.ts:AutonomousTask]`가 기본·원격·워크플로·장기 작업 계약을 정의한다. 외부 행동·S3·대형 파일·native·도구 감사 타입은 하위 계약을 따른다.
+
+## Invariants
+
+- 런타임 검증은 명시된 스키마·검증 함수만 수행한다. 외부 profile 기본값은 비활성이다 `[src/autonomous-external.ts:DEFAULT_EXTERNAL_PROFILE_ENTRY]`.
+
+## Side Effects
+
+- 파일·네트워크·DB 접근은 없다. 스키마·상수를 구성하고 잘못된 입력에 예외를 던진다 `[src/workflow.ts:workflowDraft]`, `[src/autonomous.ts:validateAutonomousCapabilities]`.
+
+## Verification
+
+- 저장소 루트에서 `npm run check`를 실행한다. 타입 검사 후 루트 테스트를 실행한다.

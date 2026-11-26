@@ -56,7 +56,7 @@ export interface AutonomousTask {
   lease?:Omit<AutonomousLease,'token'> & {token?:string}; checkpoint?:AutonomousCheckpoint;
   runs:AutonomousRun[]; actions:AutonomousAction[]; resources:AutonomousResource[];
   interventions:AutonomousIntervention[]; spentMicros:number; reservedMicros:number; stopReason?:string;
-  counts?:{humanInterventions:number; helpRequests:number; toolCalls:number};
+  counts?:{humanInterventions:number; helpRequests:number; toolCalls:number; workerToolCalls?:number};
 }
 export interface AutonomousState {version:1; tasks:Record<string,AutonomousTask>}
 

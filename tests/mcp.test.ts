@@ -18,9 +18,10 @@ const connection = { status: 'ready', message: null, checkedAt: '2026-11-10T00:0
 const expectedToolNames = [
   'hivemind_approve_workflow',
   'hivemind_autonomous_approve', 'hivemind_autonomous_audit', 'hivemind_autonomous_cancel',
-  'hivemind_autonomous_create', 'hivemind_autonomous_get', 'hivemind_autonomous_list', 'hivemind_autonomous_message', 'hivemind_autonomous_record_external_cost',
+  'hivemind_autonomous_create', 'hivemind_autonomous_get', 'hivemind_autonomous_list', 'hivemind_autonomous_message', 'hivemind_autonomous_record_external_cost', 'hivemind_autonomous_tool_calls',
   'hivemind_cancel_task', 'hivemind_create_task', 'hivemind_create_workflow', 'hivemind_decide_task',
   'hivemind_get_result', 'hivemind_get_workflow', 'hivemind_list_tasks', 'hivemind_list_workflows', 'hivemind_status',
+  'hivemind_workflow_team_block', 'hivemind_workflow_team_get', 'hivemind_workflow_team_review',
 ];
 const processEvidence = { status: 'passed', exitCode: 0, durationMs: 1000, stdout: 'unit passed ' + operatorToken, stderr: '', truncated: false, privateKey: 'never-public' };
 const sampleTask = { id: 'cf-mcp-task', title: 'MCP task', instructions: 'safely change fixture', provider: 'codex', runtime: 'cloudflare', budgetMicros: 0, status: 'awaiting_execution_approval', repositoryId: repo.id, baseCommit: repo.baseCommit, testProfile: 'default', createdAt: '2026-11-10T00:00:00Z', updatedAt: '2026-11-10T00:00:00Z', actualCostMicros: null, summary: 'summary ' + operatorToken, diff: '+ actual change\n', diffTruncated: false, execution: null, worktreePath: '/private/review-path', privateSubmission: 'never-public', remote: { phase: 'AWAITING_APPROVAL', jobId: null, inputSnapshotId: 'input', outputSnapshotId: null, containerStopped: false, authSynced: false, agent: processEvidence, checks: [{ id: 'unit', name: 'Unit', status: 'SUCCEEDED', command: ['node', '--test'], process: processEvidence, credentialsAbsent: true, sourceUnchanged: true, credentialId: 'never-public' }], errorCode: null } };
@@ -58,9 +59,9 @@ async function session(t: Context, api = fakeApi()) {
   return { server, client, call, api };
 }
 
-test('real SDK handshake lists exactly eighteen named operator tools with explicit annotations', async t => {
+test('real SDK handshake lists exactly twenty-two named operator tools with explicit annotations', async t => {
   const { client } = await session(t); const { tools } = await client.listTools();
-  assert.equal(tools.length, 18);
+  assert.equal(tools.length, 22);
   assert.deepEqual(tools.map(tool => tool.name).sort(), expectedToolNames);
   for (const name of ['hivemind_status', 'hivemind_list_tasks', 'hivemind_get_result', 'hivemind_autonomous_list', 'hivemind_autonomous_get', 'hivemind_autonomous_audit']) assert.equal(tools.find(tool => tool.name === name)!.annotations!.readOnlyHint, true);
   for (const name of ['hivemind_create_task', 'hivemind_decide_task', 'hivemind_cancel_task', 'hivemind_autonomous_create', 'hivemind_autonomous_approve', 'hivemind_autonomous_cancel', 'hivemind_autonomous_message', 'hivemind_autonomous_record_external_cost']) assert.equal(tools.find(tool => tool.name === name)!.annotations!.readOnlyHint, false);
@@ -174,7 +175,7 @@ test('real SDK stdio handshake and calls keep stdout reserved for JSON-RPC', asy
   let stderr = ''; transport.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
   const client = new Client({ name: 'stdio-test', version: '1.0.0' }); t.after(() => client.close());
   await client.connect(transport); const tools = (await client.listTools()).tools;
-  assert.equal(tools.length, 18); assert.deepEqual(tools.map(tool => tool.name).sort(), expectedToolNames);
+  assert.equal(tools.length, 22); assert.deepEqual(tools.map(tool => tool.name).sort(), expectedToolNames);
   const result = await client.callTool({ name: 'hivemind_status', arguments: {} });
   assert.ok(JSON.stringify(result).includes(repo.name)); assert.equal(stderr, '');
   assert.equal(api.calls.length, 2);

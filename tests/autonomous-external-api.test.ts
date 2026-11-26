@@ -140,7 +140,7 @@ test('actual canonical SQLite core denies external execution when externalProfil
 });
 test('portable SQL implementation imports directly from TypeScript without node:sqlite',async()=>{
  const {spawnSync}=await import('node:child_process');
- const result=spawnSync(process.execPath,['--input-type=module','-e',"import {registerHooks} from 'node:module';registerHooks({resolve(s,c,next){if(s==='node:sqlite')throw Error('SQLite import forbidden');return next(s,c);}});await import('./packages/core/src/autonomous-external-sql.ts');await import('./apps/control-plane/src/autonomous-external-api.ts');await import('./cloudflare/backend/src/autonomous-external.ts');"],{cwd:process.cwd(),encoding:'utf8'});
+ const result=spawnSync(process.execPath,['--input-type=module','-e',"import {registerHooks} from 'node:module';import {existsSync} from 'node:fs';registerHooks({resolve(s,c,next){if(s==='node:sqlite')throw Error('SQLite import forbidden');if(s.startsWith('.')&&s.endsWith('.js')){const u=new URL(s.slice(0,-3)+'.ts',c.parentURL);if(existsSync(u))return next(u.href,c);}return next(s,c);}});await import('./packages/core/src/autonomous-external-sql.ts');await import('./apps/control-plane/src/autonomous-external-api.ts');await import('./cloudflare/backend/src/autonomous-external.ts');"],{cwd:process.cwd(),encoding:'utf8'});
  assert.equal(result.status,0,result.stderr);
 });
 test('bridge rejects lifetime outside approved profile before reserving central budget',async()=>{
@@ -417,7 +417,7 @@ test('historical HF and GitHub targets expose only their exact approved reposito
   const broker=new ExternalBroker({...h.brokerOptions,registry:{get:()=>profile},transport:{...h.brokerOptions.transport,execute:async inv=>({ownershipToken:inv.ownershipToken,idempotencyKey:inv.idempotencyKey,evidenceId:'private-provider-evidence',outcome:'succeeded',effect:'retained',billing:{verifiedCostMicros:null,final:false}})}});
   const {createAutonomousExternalService}=await import(apiModule),service=createAutonomousExternalService({...h.options,broker,registry:{get:()=>profile}});await approveBridge(service);
   const operation=provider==='hf'?'hf.model.commit':'github.branch.push',parameters=provider==='hf'?{artifactDigest:'a'.repeat(64),message:'fixture'}:{artifactDigest:'a'.repeat(64),expectedHead:'b'.repeat(40)};
-  seedArtifactGrant(h.store,'profile','a'.repeat(64));await service.execute('task',{...h.body,request:{profileId:'profile',requestId:'request',operation,parameters}} as any);const old=structuredClone(profile.target);if(profile.provider==='aws')assert.fail('Unexpected provider');profile.target.repository='owner/new-target';
+  seedArtifactGrant(h.store,'profile','a'.repeat(64));await service.execute('task',{...h.body,request:{profileId:'profile',requestId:'request',operation,parameters}} as any);const old=structuredClone(profile.target);if(profile.provider==='aws'||profile.provider==='s3')assert.fail('Unexpected provider');profile.target.repository='owner/new-target';
   const rows=await service.list('task',{limit:20}) as {items:any[]};assert.deepEqual(rows.items[0].approvedTarget,old);assert.deepEqual(Object.keys(rows.items[0].approvedTarget).sort(),provider==='hf'?['repository','revision']:['branch','repository']);assert.doesNotMatch(JSON.stringify(rows),/private-ref|private-provider-evidence|ownershipToken|credentialRef/);
  }finally{h.store.close();}}
 });
@@ -448,3 +448,21 @@ function seedArtifactGrant(store:import('../packages/core/src/autonomous-externa
  const approval=store.transaction(s=>Object.values(s.approvals).find(p=>p.taskId==='task'&&p.revision===1&&p.profileId===profileId))!;
  const grant={taskId:'task',revision:1,profileId,artifactDigest,profileHash:approval.profileHash,configurationFingerprint:store.approvalFingerprint('task',1,profileId)!,bytes:0};store.reserveArtifactGrant(grant);store.bindArtifactGrant(grant);
 }
+
+test('public large bridge forwards consent through authority manifest dispatch and immutable audit',async()=>{
+ const h=await bridgeHarness();try{
+  Object.assign(h.profile,{provider:'hf',target:{repository:'owner/model',revision:'main',visibility:'public',allowPublicLarge:true},operations:['hf.model.lfs_commit']});
+  h.brokerOptions.transport.execute=async inv=>({ownershipToken:inv.ownershipToken,idempotencyKey:inv.idempotencyKey,evidenceId:'hf:'+ 'b'.repeat(40),outcome:'succeeded',effect:'retained',billing:{verifiedCostMicros:null,final:false}} as any);
+  const {createAutonomousExternalService}=await import(apiModule);let saved=0;
+  const service=createAutonomousExternalService({...h.options,manifestStore:{async save(){saved++;}}});await approveBridge(service);
+  const metadata=await service.profiles('task');assert.equal((metadata[0].target as any).allowPublicLarge,true);assert.equal(metadata[0].hfVisibilityDisplay?.publicEffect,true);
+  const authority={lease:h.body.lease,runtimeId:'runtime',profileId:'profile'};
+  assert.deepEqual(await service.largeAuthority!('task',authority),{taskId:'task',revision:1,profileId:'profile'});
+  const manifest={version:1 as const,taskId:'task',revision:1,profileId:'profile',files:[{path:'model.bin',size:1,sha256:'d'.repeat(64),storageRef:'external-large/'+ 'e'.repeat(64)+'/'+ 'd'.repeat(64)}]};
+  await service.saveLargeManifest!(manifest,'a'.repeat(64));assert.equal(saved,1);
+  const result=await service.execute('task',{...h.body,request:{profileId:'profile',requestId:'request',operation:'hf.model.lfs_commit',parameters:{manifestDigest:'a'.repeat(64),message:'model'}}});
+  assert.equal((result.approvedTarget as any).allowPublicLarge,true);
+  (h.profile.target as any).allowPublicLarge=false;
+  await assert.rejects(service.largeAuthority!('task',authority));await assert.rejects(service.saveLargeManifest!(manifest,'c'.repeat(64)));assert.equal(saved,1);
+ }finally{h.store.close();}
+});

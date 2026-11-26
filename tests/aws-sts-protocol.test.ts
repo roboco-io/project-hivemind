@@ -1,0 +1,5 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {responseBody,bounded} from '../packages/adapters/src/aws-sts-protocol.js';
+test('aborted stalled STS stream is cancelled without awaiting cancel promise',async()=>{let cancelled=false;const controller=new AbortController();const response=new Response(new ReadableStream({pull(){return new Promise(()=>{});},cancel(){cancelled=true;return new Promise(()=>{});}}));const result=bounded(responseBody(response,controller.signal),controller.signal);controller.abort();await assert.rejects(result);assert.equal(cancelled,true);});
+test('STS HTTP error body is cancelled without being read or reflected',async()=>{let cancelled=false,read=false;const response=new Response(new ReadableStream({pull(){read=true;},cancel(){cancelled=true;}},{highWaterMark:0}),{status:403});await assert.rejects(responseBody(response,new AbortController().signal),/AWS web identity unavailable/);assert.equal(cancelled,true);assert.equal(read,false);});

@@ -189,6 +189,7 @@ workload에는 `HIVEMIND_ARTIFACT_SOURCE`(archive 최상위 디렉터리를 보�
 
 - [src](./src/README.md) - 공유 계약, 스케줄러, snapshot, workflow, compute group, 벤치마크 게이트웨이, 운영자 CLI.
   - [src/cloudflare](./src/cloudflare/README.md) - Worker, `SchedulerDO`, `RunnerDO`, outbound 진입점과 HTTP 경로.
+  - [src/runtime-shared](./src/runtime-shared/README.md) - 장기 실행 공통 타입, 모델 고정·도구·웹·외부 작업 조합 검증.
   - [src/runtime](./src/runtime/README.md) - 컨테이너 안의 런타임 서버와 CLI 실행, 실행 경계, 큰 입력과 캐시 준비.
 - [scripts](./scripts/README.md) - 런타임 빌드 버전 기록, 인증 등록, 원격 수용 검사와 실험 도구.
 - [benchmark](./benchmark/README.md) - pi용 셸 래퍼와 설정, RealWorld 고정 과제.
@@ -215,6 +216,7 @@ workload에는 `HIVEMIND_ARTIFACT_SOURCE`(archive 최상위 디렉터리를 보�
 - `namespace-guard`의 seccomp 필터는 `unshare`, `setns`, `mount`, `umount2`, `pivot_root` 등 namespace·mount syscall에 `EPERM`을 반환하고, namespace 플래그를 가진 `clone`을 거부한다. `clone3`은 `EPERM`이 아니라 `ENOSYS`를 반환한다. `[native/namespace-guard.c:install_filter]`
 - `proc-guard`는 Landlock ABI 3 이상을 요구한다. 쓰기는 `/workspace`, `/tmp`, `/var/tmp`와 `/dev/null`에만 허용한다. `[native/proc-guard.c:main]`, `[native/proc-guard.c:allow_dev_null_write]`
 - 두 guard는 `CMD`를 실행하기 전에 제공자 키, 운영자 토큰, `NODE_OPTIONS`, `LD_PRELOAD` 등의 환경 변수를 제거한다. `[native/namespace-guard.c:prepare_environment]`, `[native/proc-guard.c:scrub_environment]`
+- `proc-guard.c:require_process_boundary`는 단일 스레드를 요구한다. `proc-guard.c:close_extra_fds`는 제한 설치 후 fd 3 이상을 닫는다.
 - bubblewrap 빌드는 고정한 Debian source 버전만 받는다. 버전이 다르면 실패한다. `native/build-bubblewrap-compat.sh`
 
 ## Side Effects
@@ -227,7 +229,8 @@ workload에는 `HIVEMIND_ARTIFACT_SOURCE`(archive 최상위 디렉터리를 보�
 
 ## Verification
 
-- Run: `npm test` (`node --test test/*.test.ts`)
+- Run: `npm test` (`node --import ./scripts/source-test-loader.mjs --test test/*.test.ts`)
+- 테스트 전용 로더가 저장소 내부의 미생성 `.js` import를 대응 `.ts`로 해석한다. 기존 JavaScript와 `node_modules` 해석은 유지한다. `/tmp` 파일이나 `NODE_OPTIONS` 설정은 필요 없다. 배포 번들에는 이 로더를 사용하지 않는다.
 - Run: `npm run typecheck` (`tsc --noEmit`)
 - Run: `npm run runtime:check` (`node scripts/runtime-build.ts --check`)
 - 세 명령은 `cloudflare/backend/`에서 실행한다. `npm run deploy`와 원격 검사는 이 목록에 포함하지 않는다.
@@ -245,6 +248,8 @@ workload에는 `HIVEMIND_ARTIFACT_SOURCE`(archive 최상위 디렉터리를 보�
 
 사용자는 실제24시간·외부 제공자·Fable 실증을 실제 프로젝트로 넘겼다. [구현 마감 기록](../../docs/plans/2026-11-20-issue1-implementation-closeout.md)에서 구현·로컬 검사·실제 미검증을 구분한다.
 
-운영자 전용 `POST /v1/boundary-diagnostics`는 빈 body와 길이8..80의 `idempotency-key`를 받는다. 모델·구독 인증 없이 현재 이미지의 기존 native 격리 gate를 검사하고 정리한다. 같은 key는 재실행하지 않는다. 기능 비활성 상태에서도 호출할 수 있지만 실제 컨테이너 실행이므로 운영자가 해당 검사를 지시했을 때만 사용한다. 이 경로의 로컬 회귀 통과는 원격 격리 통과가 아니다.
+운영자 전용 `POST /v1/boundary-diagnostics`는 빈 body와 길이8..80의 `idempotency-key`를 받는다. 빈 body 판정은 본문을 읽어 길이 0을 확인하는 방식이다. 2026-11-21 원격 확인에서 Workers 런타임이 본문 없는 POST에도 null이 아닌 body를 주어 이전 판정이 모든 요청을 400으로 거절했다. 모델·구독 인증 없이 현재 이미지의 기존 native 격리 gate를 검사하고 정리한다. 같은 key는 재실행하지 않는다. 기능 비활성 상태에서도 호출할 수 있지만 실제 컨테이너 실행이므로 운영자가 해당 검사를 지시했을 때만 사용한다. 이 경로의 로컬 회귀 통과는 원격 격리 통과가 아니다.
 
 워커의 `POST /v1/autonomous-tasks/:id/external-artifact`는 현재 lease·runtime·승인 프로필로 작은 산출물을 등록한다. 서버는 task/revision/profile에 결속된 digest만 외부 action에 허용한다. inline 한도·불변 저장·비밀 검사·실패 예약까지 포함한 revision 할당량은 [게시 계약](../../docs/plans/2026-11-20-autonomous-artifact-publication.md)에 명시한다.
+
+자율 작업의 도구 호출은 컨테이너 안 hook이 spool에 쓰고, runtime이 heartbeat와 종료 전에 `POST /v1/autonomous-tasks/:id/tool-calls`(reporter 토큰)로 보낸다. 서버는 `(taskId, runId, sequence)`로 중복을 걸러 Durable Object SQL에 저장한다. 이 값은 워커의 보고이며 독립 증명이 아니다. 설정은 `AUTONOMOUS_EXTERNAL_CONFIG`에서 profile을 최대 4개(`aws`, `hf`, `github`, `s3`)까지 받는다. `s3`는 `aws`와 같은 형태의 자격 증명을 쓰고, Hugging Face는 `visibility`와 `providers.hf.lfs`(`maxFileBytes`, `maxTotalBytes`, `uploadHosts`)를 받는다. 새 설정 값은 모두 승인 지문에 포함된다. 외부 정리 alarm은 비용 초과를 감지하면 작업을 `budget_exceeded`로 중단하고, action 만료 시각에도 깨어난다.

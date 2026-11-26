@@ -1,16 +1,135 @@
 import {createAutonomousCloudProxy} from './autonomous-cloud-proxy.js';
 import { buildApp } from './app.js';
 import { configurationGitEnvironment, configurationScope, loadCloudflareConfig, loadCloudWorkflowChecks } from './cloudflare-config.js';
+import { DeliveryOrchestrator } from './delivery-orchestrator.js';
+import { AwsEcsFargateSpotDriver } from '../../../packages/adapters/src/aws-ecs-driver.js';
+import { createEcsTaskCredentialsProvider } from '../../../packages/adapters/src/aws-ecs-metadata-creds.js';
+import { createAwsS3ArtifactsPort } from '../../../packages/adapters/src/aws-s3-artifacts.js';
+import { createAwsSecretsManagerPort } from '../../../packages/adapters/src/aws-secrets-manager.js';
 import { createCloudPort } from '../../../packages/adapters/src/cloudflare.js';
 import { createCloudWorkflowPort } from '../../../packages/adapters/src/cloud-workflow.js';
+import { createGitHubDraftPrPort } from '../../../packages/adapters/src/github-draft-pr.js';
+import { createGitPushCommitMaterializer } from '../../../packages/adapters/src/github-git-push.js';
 import { createCloudWorkflowControl } from '../../../packages/core/src/cloud-workflow-store.js';
 import { createHash } from 'node:crypto';
 import { createCloudControl } from '../../../packages/core/src/cloudflare-store.js';
 import { execFileSync } from 'node:child_process';
+import { networkInterfaces } from 'node:os';
 import { basename } from 'node:path';
 import { realpathSync } from 'node:fs';
 import type { RepositoryPolicy } from '../../../packages/contracts/src/index.js';
 import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js';
+import type { DeliveryStore } from '../../../packages/core/src/delivery.js';
+
+function isRfc1918Ipv4(address: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(address);
+  if (!m) return false;
+  const [a, b] = m.slice(1).map(Number) as [number, number, number, number];
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
+function detectPrivateVpcIpv4(): string | null {
+  const ifaces = networkInterfaces();
+  for (const entries of Object.values(ifaces)) {
+    for (const entry of entries ?? []) {
+      if (entry.family === 'IPv4' && !entry.internal && isRfc1918Ipv4(entry.address)) {
+        return entry.address;
+      }
+    }
+  }
+  return null;
+}
+
+function parseGithubTokenSecret(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) throw new Error('GitHub Draft PR secret is empty');
+  if (trimmed.startsWith('{')) {
+    const parsed = JSON.parse(trimmed) as { token?: unknown };
+    if (typeof parsed.token !== 'string' || !parsed.token.trim()) {
+      throw new Error('GitHub Draft PR JSON secret is missing token');
+    }
+    return parsed.token.trim();
+  }
+  return trimmed;
+}
+
+function createAwsDeliveryOrchestratorFactory(port: number, extraRedactSecrets: string[]) {
+  const region = process.env.HIVEMIND_AWS_REGION?.trim();
+  const bucket = process.env.HIVEMIND_ARTIFACTS_BUCKET?.trim();
+  const clusterArn = process.env.HIVEMIND_ECS_CLUSTER_ARN?.trim();
+  const workerTaskDef = process.env.HIVEMIND_AI_WORKER_TASK_DEF?.trim();
+  const verifierTaskDef = process.env.HIVEMIND_VERIFIER_TASK_DEF?.trim();
+  const subnets = (process.env.HIVEMIND_WORKER_SUBNETS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const securityGroups = (process.env.HIVEMIND_WORKER_SECURITY_GROUPS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const githubSecretArn = process.env.HIVEMIND_GITHUB_SECRET_ARN?.trim();
+
+  if (!region || !bucket || !clusterArn || !workerTaskDef || !verifierTaskDef || !subnets.length || !securityGroups.length || !githubSecretArn) {
+    return undefined;
+  }
+
+  const explicitApiUrl = process.env.HIVEMIND_CONTROL_API_URL?.trim();
+  const allowVpcInternalHttp = process.env.HIVEMIND_ALLOW_VPC_INTERNAL_HTTP === 'true';
+  const detectedIp = detectPrivateVpcIpv4();
+  const controlApiUrl = explicitApiUrl || (detectedIp ? `http://${detectedIp}:${port}` : '');
+  if (!controlApiUrl) {
+    throw new Error('Unable to determine Control Plane VPC URL for AWS ECS workers');
+  }
+
+  const assignPublicIp = process.env.HIVEMIND_WORKER_ASSIGN_PUBLIC_IP === 'ENABLED' ? 'ENABLED' : 'DISABLED';
+  const credentials = createEcsTaskCredentialsProvider();
+  const s3 = createAwsS3ArtifactsPort({ region, allowedRegions: [region], bucket, credentials });
+  const secretsManager = createAwsSecretsManagerPort({ region, allowedRegions: [region], credentials });
+  const ecs = new AwsEcsFargateSpotDriver({
+    region,
+    allowedRegions: [region],
+    clusterArn,
+    workerTaskDefinition: workerTaskDef,
+    verifierTaskDefinition: verifierTaskDef,
+    subnets,
+    securityGroups,
+    assignPublicIp,
+    controlApiUrl,
+    allowVpcInternalHttp,
+    artifactsBucket: bucket,
+    credentials,
+  });
+
+  console.log(
+    JSON.stringify({
+      event: 'hivemind.control_plane.aws_orchestrator_enabled',
+      region,
+      bucket,
+      controlApiUrl,
+      assignPublicIp,
+    }),
+  );
+
+  return (store: DeliveryStore) =>
+    new DeliveryOrchestrator({
+      store,
+      s3,
+      ecs,
+      redactSecrets: extraRedactSecrets,
+      githubFactory: async ({ task, bundlePath, expectedBundleSha256, workRoot, signal }) => {
+        const rawSecret = await secretsManager.getSecretString(githubSecretArn, signal);
+        const token = parseGithubTokenSecret(rawSecret);
+        const basic = Buffer.from(`x-access-token:${token}`, 'utf8').toString('base64');
+        const httpExtraHeader = `Authorization: Basic ${basic}`;
+        const materializer = createGitPushCommitMaterializer({
+          bundlePath,
+          expectedBundleSha256,
+          workRoot,
+          remoteUrl: `https://github.com/${task.delivery.repository}.git`,
+          httpExtraHeader,
+          push: true,
+        });
+        return {
+          port: createGitHubDraftPrPort({ token }, materializer),
+          redactSecrets: [token, basic],
+        };
+      },
+    });
+}
 
 let app: ReturnType<typeof buildApp> | undefined;
 let cloudflare: CloudControl | undefined;
@@ -53,7 +172,8 @@ try {
   const workflows = config && checks ? createCloudWorkflowControl(dbPath,
     createHash('sha256').update(JSON.stringify({scope:configurationScope(config),checks})).digest('hex'),
     createCloudWorkflowPort(config,checks)) : undefined;
-  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy});
+  const deliveryOrchestratorFactory = createAwsDeliveryOrchestratorFactory(port, [operatorToken, workerToken]);
+  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory});
   const address = await app.listen({host,port});
   console.log(`HIVEMIND control service: ${address}`);
   for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,() => { void app!.close(); });

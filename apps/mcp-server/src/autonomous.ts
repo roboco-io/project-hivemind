@@ -1,3 +1,5 @@
+import {WorkloadDescriptorSchema} from '../../../packages/contracts/src/delegated.ts';
+import {workloadFingerprint} from '../../../packages/core/src/delegated.ts';
 import type {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import type {CallToolResult} from '@modelcontextprotocol/sdk/types.js';
 import {z} from 'zod';
@@ -49,9 +51,19 @@ export function registerAutonomousOperatorTools(server:McpServer,options:Autonom
       const profiles=refs.map(ref=>{
         const p=record((raw.profiles as unknown[]).find(v=>record(v).id===ref)),target=record(p.target);
         if(p.enabled!==true||!['aws','hf','github'].includes(String(p.provider))||typeof p.profileHash!=='string'||!/^[a-f0-9]{64}$/.test(p.profileHash)||number(p.upperBoundMicros)===null||!Array.isArray(p.operations))throw Error(errorText);
-        const fields=p.provider==='aws'?['accountId','region','workloadId']:p.provider==='hf'?['repository','revision']:['repository','branch'];
+        const fields=p.provider==='aws'?['accountId','region','workloadId']:p.provider==='hf'?['repository','revision',...('visibility'in target?['visibility']:[])]:['repository','branch'];
         if(fields.some(k=>typeof target[k]!=='string'||!target[k]))throw Error(errorText);
-        return {id:text(p.id,128)!,provider:String(p.provider),profileHash:p.profileHash,target:Object.fromEntries(fields.map(k=>[k,text(target[k],200)])),operations:p.operations.slice(0,4).map(v=>text(v,128)),upperBoundMicros:number(p.upperBoundMicros),maxLifetimeMs:number(p.maxLifetimeMs),maxActiveActions:number(p.maxActiveActions)};
+        const hasLargeConsent='allowPublicLarge'in target;
+        if(hasLargeConsent&&(p.provider!=='hf'||target.allowPublicLarge!==true||target.visibility!=='public'||!p.operations.includes('hf.model.lfs_commit')))throw Error(errorText);
+        if(p.provider==='hf'&&target.visibility!==undefined&&target.visibility!=='private'&&target.visibility!=='public')throw Error(errorText);
+        if(p.provider==='hf'&&target.visibility==='public'&&p.operations.includes('hf.model.lfs_commit')&&!hasLargeConsent)throw Error(errorText);
+        const display=p.provider==='hf'?record(p.hfVisibilityDisplay??{}):{};
+        if(p.provider==='hf'&&target.visibility==='public'&&(display.visibility!=='public'||display.publicEffect!==true||typeof display.notice!=='string'))throw Error(errorText);
+        const oidc=p.oidc===undefined?undefined:record(p.oidc);let oidcDisplay:Record<string,unknown>|undefined;
+        if(oidc){oidcDisplay={issuer:text(oidc.issuer,256),audience:text(oidc.audience,255)};for(const purpose of ['execute','inspect','cleanup']){const v=record(oidc[purpose]);if(typeof v.roleArn!=='string'||!/^arn:aws:iam::[0-9]{12}:role\/[A-Za-z0-9_+=,.@/-]+$/.test(v.roleArn)||typeof v.subject!=='string'||!/^hivemind:task:[a-f0-9]{64}:rev:[1-9][0-9]*:profile:[a-f0-9]{64}:(execute|inspect|cleanup)$/.test(v.subject)||typeof v.policyHash!=='string'||!/^[a-f0-9]{64}$/.test(v.policyHash)||!Number.isInteger(v.durationSeconds)||Number(v.durationSeconds)<1||Number(v.durationSeconds)>120)throw Error(errorText);oidcDisplay[purpose]={roleArn:text(v.roleArn,600),subject:text(v.subject,255),policyHash:v.policyHash,durationSeconds:v.durationSeconds};}}
+        let delegatedDisplay:Record<string,unknown>|undefined;
+        if(p.delegated!==undefined){const v=record(p.delegated),d=WorkloadDescriptorSchema.parse(v.descriptor);if(workloadFingerprint(d)!==v.descriptorHash||typeof v.inputManifestDigest!=='string'||!/^[a-f0-9]{64}$/.test(v.inputManifestDigest)||!d.inputManifestDigests.includes(v.inputManifestDigest))throw Error(errorText);delegatedDisplay={descriptorHash:v.descriptorHash,inputManifestDigest:v.inputManifestDigest,descriptor:d};}
+        return {...(oidcDisplay?{oidc:oidcDisplay}:{}),...(delegatedDisplay?{delegated:delegatedDisplay}:{}),id:text(p.id,128)!,provider:String(p.provider),profileHash:p.profileHash,target:{...Object.fromEntries(fields.map(k=>[k,text(target[k],200)])),...(hasLargeConsent?{allowPublicLarge:true}:{})},...(p.provider==='hf'?{publicEffect:target.visibility==='public',...(typeof display.notice==='string'?{visibilityNotice:text(display.notice,300)}:{})}:{}),operations:p.operations.slice(0,4).map(v=>text(v,128)),upperBoundMicros:number(p.upperBoundMicros),maxLifetimeMs:number(p.maxLifetimeMs),maxActiveActions:number(p.maxActiveActions)};
       });
       if(new Set(profiles.map(p=>p.provider)).size!==profiles.length)throw Error(errorText);return {profiles,available:true};
     }catch{return {profiles:[],available:false};}
@@ -64,11 +76,13 @@ export function registerAutonomousOperatorTools(server:McpServer,options:Autonom
     return out;
   }
   async function run(work:()=>Promise<Record<string,unknown>>):Promise<CallToolResult>{try{const data=await work();return {content:[{type:'text',text:JSON.stringify(data)}],structuredContent:data};}catch{return {isError:true,content:[{type:'text',text:errorText}]};}}
-  function approvedTargetView(value:unknown):Record<string,string>|undefined {
+  function approvedTargetView(value:unknown):Record<string,string|boolean>|undefined {
     if(!value||typeof value!=='object'||Array.isArray(value))return;
-    const v=record(value),fields='accountId'in v?['accountId','region','workloadId']:'repository'in v&&('branch'in v)!==('revision'in v)?['repository','branch'in v?'branch':'revision']:[];
+    const v=record(value),fields='accountId'in v?['accountId','region','workloadId']:'repository'in v&&('branch'in v)!==('revision'in v)?['repository','branch'in v?'branch':'revision',...('visibility'in v?['visibility']:[])]:[];
     if(!fields.length||fields.some(k=>typeof v[k]!=='string'||!(v[k] as string).length||(v[k] as string).length>256))return;
-    return Object.fromEntries(fields.map(k=>[k,text(v[k],256)!]));
+    if('visibility'in v&&v.visibility!=='private'&&v.visibility!=='public')return;
+    if('allowPublicLarge'in v&&(v.allowPublicLarge!==true||v.visibility!=='public'||!('revision'in v)))return;
+    return {...Object.fromEntries(fields.map(k=>[k,text(v[k],256)!])),...('allowPublicLarge'in v?{allowPublicLarge:true}:{})};
   }
   const auditHash=z.string().regex(/^[a-f0-9]{64}$/);
   const auditParameters=z.object({lifetimeMs:integer.min(1).optional(),startActionId:externalRequestId.optional(),artifactDigest:auditHash.optional(),expectedHead:z.string().regex(/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/).optional()}).refine(v=>Object.keys(v).length>0);

@@ -27,7 +27,7 @@ export function createAcceptancePlan(input:PlanInput,now=Date.now()):Manifest {
  const spec:AutonomousSpec={requestId:input.requestId,provider:'claude',model:input.model,subagentModel:input.subagentModel,
  goal:'Use Bash to increment counter.txt once each iteration and use Agent with the approved subagent model to check the counter. Preserve this session. First iteration return only {"outcome":"continue"}. Second iteration request a five-minute wait with {"outcome":"wait","wakeAt":ABSOLUTE_UNIX_MS}. Thereafter repeat with five-minute waits until the approved deadline. Do not finish early. Do not use external systems or change the approved scope. Tool requests are instructions, not acceptance evidence.',
  billingPolicy:{model:'subscription',budget:'external_actions'},endsAt:input.endsAt,budgetMicros:input.budgetMicros,tools:['Bash','Agent'],systems:[],credentialIds:[input.credentialId],maxRunMs:input.maxRunMs,maxIterations:input.maxIterations,
- execution:{backend:'cloudflare',mode:'long_running',snapshotId:snapshot.digest,checks:[{id:'counter',argv:['node','-e',"if(!/^[1-9][0-9]*\\n$/.test(require('node:fs').readFileSync('counter.txt','utf8')))process.exit(1)"],timeoutMs:1000}]}};
+ execution:{backend:'cloudflare',mode:'long_running',snapshotId:snapshot.digest,checks:[{id:'counter',argv:['node','-e',"if(!/^[1-9][0-9]*\\n$/.test(require('node:fs').readFileSync('counter.txt','utf8')))process.exit(1)"],timeoutMs:10000}]}};
  const m={version:1 as const,createdAt:now,origin:input.origin,spec,snapshot,registration:'planned' as const,planHash:''};m.planHash=fingerprint(m);return m;
 }
 async function privateRead(file:string){

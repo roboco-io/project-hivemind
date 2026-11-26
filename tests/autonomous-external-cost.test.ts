@@ -30,7 +30,7 @@ test('disabled, incomplete scope, absent resource proof and missing active-tag e
 test('fixed CE us-east-1 signature, exact account/region/owner filters and decimal upward micro conversion',async()=>{
  const f=fixture();try{
  const r=await f.reader().read(invocation,proof);assert.equal(r.verifiedCostMicros,10001);assert.equal(r.final,false);assert.equal(f.calls.length,2);
- for(const call of f.calls){assert.equal(call.url,'https://ce.us-east-1.amazonaws.com/');assert.equal(call.init.redirect,'error');const h=new Headers(call.init.headers),auth=h.get('authorization')!;
+ for(const call of f.calls){assert.equal(call.url,'https://ce.us-east-1.amazonaws.com/');assert.equal(call.init.redirect,'manual');const h=new Headers(call.init.headers),auth=h.get('authorization')!;
   const m=/Credential=SYNTHETIC\/(\d{8})\/us-east-1\/ce\/aws4_request, SignedHeaders=([^,]+), Signature=([a-f0-9]{64})$/.exec(auth);assert.ok(m);
   const names=m[2]!,headers=names.split(';').map(k=>`${k}:${h.get(k)!.trim()}\n`).join(''),request=['POST','/','',headers,names,hash(String(call.init.body))].join('\n'),scope=`${m[1]}/us-east-1/ce/aws4_request`;
   let key:Buffer=Buffer.from('AWS4synthetic-secret');for(const s of [m[1]!,'us-east-1','ce','aws4_request'])key=createHmac('sha256',key).update(s).digest();
@@ -90,4 +90,26 @@ test('cost quote refuses a cache without a real transaction function',()=>{
 });
 test('CE group definition JSON field order does not change its verified meaning',async()=>{
  const f=fixture();try{f.setData({...usage(),GroupDefinitions:[{Key:'LINKED_ACCOUNT',Type:'DIMENSION'},{Key:'hivemind:owner',Type:'TAG'}]});assert.equal((await f.reader().read(invocation,proof)).verifiedCostMicros,10001);}finally{f.db.close();}
+});
+
+test('Ohio resource cost scope keeps fixed billing endpoint and passes actual resource region',async()=>{
+ const f=fixture();try{
+ const i=structuredClone(invocation);i.profile.target={...i.profile.target,region:'us-east-2'};i.parametersHash=externalParametersHash(i.profile,i.operation,i.parameters);
+ Object.assign(f.options,{resourceRegion:'us-east-2',allowedRegions:['us-east-2']});let credentialScope:unknown;
+ f.options.credentials=async(scope:unknown)=>{credentialScope=scope;return {accessKeyId:'SYNTHETIC',secretAccessKey:'synthetic-secret'};};
+ assert.equal((await f.reader().read(i,proof)).verifiedCostMicros,10001);
+ assert.deepEqual(credentialScope,{accountId:'123456789012',resourceRegion:'us-east-2',billingRegion:'us-east-1',purpose:'cost_read'});
+ assert.deepEqual(f.calls[1]!.body.Filter.And[1].Dimensions.Values,['us-east-2']);assert.equal(f.calls[1]!.url,'https://ce.us-east-1.amazonaws.com/');
+ }finally{f.db.close();}
+ const g=fixture();try{g.options.resourceRegion='us-east-2';assert.equal(g.reader().quote(invocation),null);await g.reader().read(invocation,proof);assert.equal(g.calls.length,0);assert.equal(g.credentials,0);}finally{g.db.close();}
+});
+
+test('Workers-compatible CE fetch avoids unsupported redirect error mode',async()=>{
+ const f=fixture();try{const base=f.options.fetch;f.options.fetch=async(url:string,init:RequestInit)=>{if(init.redirect==='error')throw new TypeError('Unsupported redirect mode: error');return base(url,init);};assert.equal((await f.reader().read(invocation,proof)).verifiedCostMicros,10001);assert.equal(f.calls.length,2);assert.ok(f.calls.every(c=>c.init.redirect==='manual'));}finally{f.db.close();}
+});
+test('CE refuses 302 without following location or claiming verified cost',async()=>{
+ const f=fixture();try{const calls:{url:string;redirect:RequestRedirect|undefined}[]=[];f.options.fetch=async(url:string,init:RequestInit)=>{calls.push({url,redirect:init.redirect});return new Response('redirect',{status:302,headers:{location:'https://foreign.example.org/credential-target'}});};assert.deepEqual(await f.reader().read(invocation,proof),{verifiedCostMicros:null,final:false});assert.equal(calls.length,1);assert.equal(calls[0]!.redirect,'manual');assert.equal(calls[0]!.url,'https://ce.us-east-1.amazonaws.com/');}finally{f.db.close();}
+});
+test('CE rejects a response marked redirected even when status is 200',async()=>{
+ const f=fixture();try{let calls=0;f.options.fetch=async()=>{calls++;const r=Response.json(activation(),{headers:{'x-amzn-requestid':'redirected-fixture'}});Object.defineProperty(r,'redirected',{value:true});return r;};assert.deepEqual(await f.reader().read(invocation,proof),{verifiedCostMicros:null,final:false});assert.equal(calls,1);}finally{f.db.close();}
 });

@@ -2,7 +2,7 @@
 
 ## Overview
 
-이 디렉터리는 HIVEMIND MCP 서버를 사용자 프로젝트의 로컬 설정에 등록하는 설치 스크립트 2개를 담는다. `configure-hivemind-mcp.ts`는 Codex 설정 파일 `.codex/config.toml`에 등록하고, `configure-hivemind-claude.ts`는 Claude Code 설정 파일 `.mcp.json`에 등록한다. 두 스크립트 모두 빌드된 MCP 서버 진입점 `dist/apps/mcp-server/src/main.js`를 Node로 실행하는 항목을 만들고, 그 설정 파일이 Git에 추적되지 않도록 `info/exclude`에 규칙을 추가한다.
+이 디렉터리는 HIVEMIND MCP 서버를 사용자 프로젝트의 로컬 설정에 등록하는 설치 스크립트 2개와 [세션 분할 실험](./experiments/README.md)을 담는다. `configure-hivemind-mcp.ts`는 Codex 설정 파일 `.codex/config.toml`에 등록하고, `configure-hivemind-claude.ts`는 Claude Code 설정 파일 `.mcp.json`에 등록한다. 두 스크립트 모두 빌드된 MCP 서버 진입점 `dist/apps/mcp-server/src/main.js`를 Node로 실행하는 항목을 만들고, 그 설정 파일이 Git에 추적되지 않도록 `info/exclude`에 규칙을 추가한다.
 
 두 스크립트는 운영자 토큰 값을 읽거나 저장하지 않는다. `operatorTokenFile` 옵션으로 받은 파일의 경로만 환경 변수 `HIVEMIND_OPERATOR_TOKEN_FILE`에 기록한다.
 

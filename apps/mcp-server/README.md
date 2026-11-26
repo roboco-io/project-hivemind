@@ -6,7 +6,7 @@ MCP 클라이언트용 stdio 서버 앱이다. 관제 서비스의 운영자 HTT
 
 ## Subdirectories & Boundaries
 
-- src: [./src/README.md](./src/README.md) - `createHivemindMcpServer`, `loadMcpSettings`와 실행 진입점. 기존 작업·워크플로 10개와 장기 자율 작업 운영자 8개, 총 `hivemind_*` 도구 18개를 등록한다. generic 오류와 비밀 redaction을 유지한다.
+- src: [./src/README.md](./src/README.md) - `createHivemindMcpServer`, `loadMcpSettings`와 실행 진입점. 기존 작업·워크플로 10개와 장기 자율 작업 운영자 9개, 총 `hivemind_*` 도구 19개를 등록한다. generic 오류와 비밀 redaction을 유지한다.
 
 ## 장기 자율 작업 운영자 계약
 
@@ -20,6 +20,7 @@ MCP 클라이언트용 stdio 서버 앱이다. 관제 서비스의 운영자 HTT
 | `hivemind_autonomous_message` | 메시지 기록. 승인·재개·범위 확장 권한 없음 |
 | `hivemind_autonomous_audit` | bounded 이력 네 종류와 외부 행동의 정확한 revision·resourceId·청구 근거 조회 |
 | `hivemind_autonomous_record_external_cost` | 명시적 사용자 invoice 금액·근거·사유를 정확한 taskId/requestId/revision에 결속해 기록 |
+| `hivemind_autonomous_tool_calls` | 워커가 보고한 내부 도구 호출 기록을 `limit`/`cursor` 페이지로 읽기 전용 조회. 워커 보고이며 독립 증명이 아니다. `totals`의 `droppedByWorker`·`droppedByStore`는 버려진 건수다. 입력은 가린 요약만 반환 |
 
 Cloudflare proxy `/api/cloudflare/autonomous-tasks`만 사용한다. 미설정·503에서 local API로 우회하지 않는다. 일반 로컬 코드 작업과 Cloudflare 배포는 이 operator 기능의 범위가 아니다. 기능 구현 요청으로 실제 원격 작업을 시작하지 않는다.
 
@@ -31,7 +32,7 @@ Cloudflare proxy `/api/cloudflare/autonomous-tasks`만 사용한다. 미설정·
 
 `null` 비용은 미확정, `usageUnavailable`의 0은 미측정 placeholder다. `accepted`는 실행 수락이며 청구 확정이 아니다. 예약 상한·원장 확인 비용·실제 공급자 청구액을 구분한다. 로컬 SDK/DOM 통과를 실제 24시간 운영·AWS 배포·원격 비용 집행 근거로 설명하지 않는다. factory/backend/native wiring과 원격 실증은 별도 확인 대상이다.
 
-사용 절차는 [프로젝트 HIVEMIND 스킬](../../.agents/skills/hivemind/SKILL.md), 구현·검증 경계는 [operator 설계](../../docs/plans/2026-11-20-autonomous-operator.md)를 참고한다. native 모델 sidecar의 `mcp__hivemind__action`은 이 18개 운영자 도구에 포함하지 않는다.
+사용 절차는 [프로젝트 HIVEMIND 스킬](../../.agents/skills/hivemind/SKILL.md), 구현·검증 경계는 [operator 설계](../../docs/plans/2026-11-20-autonomous-operator.md)를 참고한다. native 모델 sidecar의 `mcp__hivemind__action`은 이 19개 운영자 도구에 포함하지 않는다.
 
 
 ## 운영자 확인 최종 비용
@@ -43,10 +44,59 @@ Cloudflare proxy `/api/cloudflare/autonomous-tasks`만 사용한다. 미설정·
 기록 응답 유실은 부재의 증거가 아니다. 자동 재시도하지 않고 동일 immutable key의 audit을 먼저 확인한다. native 모델 sidecar와 `ExternalOperation` 목록에는 이 billing 도구를 추가하지 않는다. 실제 비용 기록을 요청받지 않은 구현·테스트 과정에서 이 도구를 실행하지 않는다.
 
 
-외부 행동 audit의 `profileId`, `approvedTarget`, `approvedProfileHash`는 해당 행동의 영속 승인 근거다. `approvedTarget`은 “승인 당시 대상”으로 표시하며 AWS account/region/workload 또는 HF repository/revision, GitHub repository/branch만 제한된 텍스트로 투영한다. 현재 registry에서 같은 profile ID의 target이 바뀌어도 과거 행동의 대상·hash로 대체하지 않는다. 근거가 없으면 미보고로 두며 비용 출처·청구 확정과 별개다. Producer와 proxy가 이 필드를 전달해야 실제 조회에서 보인다.
+외부 행동 audit의 `profileId`, `approvedTarget`, `approvedProfileHash`는 해당 행동의 영속 승인 근거다. `approvedTarget`은 “승인 당시 대상”으로 표시하며 AWS account/region/workload, HF repository/revision(지정한 경우 `visibility` 포함), GitHub repository/branch만 제한된 텍스트로 투영한다. 현재 registry에서 같은 profile ID의 target이 바뀌어도 과거 행동의 대상·hash로 대체하지 않는다. 근거가 없으면 미보고로 두며 비용 출처·청구 확정과 별개다. Producer와 proxy가 이 필드를 전달해야 실제 조회에서 보인다.
 
 
 최종 로컬 연결 검사에서는 실제 MCP operator billing → proxy → C1 API → SQL broker/core를 합성 invoice로 검증했다. worker·live resource 거절, 부재 확인 뒤 정확한 revision 기록, 동일 입력 재전송의 인간 reconciliation 1건과 provenance 전달을 확인했다. 격리 root focused 61개와 backend focused 33개가 통과했으며 전체 프로젝트 gate·실제 24시간·과금·배포의 근거는 아니다.
 
 
-R9 행동별 공개 근거로 `parameterHash`, `parametersSubset`, `providerResult`를 제한적으로 전달한다. 현재 producer의 typed `parameters`도 같은 allowlist로 검사해 `parametersSubset`으로 정규화한다. subset은 lifetimeMs/startActionId/artifactDigest/expectedHead만, 결과는 aws_instance의 i-hex ID 또는 hf_commit/github_commit의 40/64자리 hex OID만 허용한다. 임의 message·raw provider evidence·auth·ownership은 전달하지 않는다. Dashboard는 JSON을 textContent로만 표시하며 새 도구·실행·비용 확정 동작은 없다.
+R9 행동별 공개 근거로 `parameterHash`, `parametersSubset`, `providerResult`를 제한적으로 전달한다. 현재 producer의 typed `parameters`도 같은 allowlist로 검사해 `parametersSubset`으로 정규화한다. proxy의 subset 허용 목록은 lifetimeMs/startActionId/artifactDigest/expectedHead/manifestDigest/keySuffix/putActionId다. 현재 MCP와 Dashboard는 lifetimeMs/startActionId/artifactDigest/expectedHead만 표시한다. 결과는 aws_instance의 i-hex ID 또는 hf_commit/github_commit의 40/64자리 hex OID만 허용한다. 임의 message·raw provider evidence·auth·ownership은 전달하지 않는다. Dashboard는 JSON을 textContent로만 표시하며 새 도구·실행·비용 확정 동작은 없다.
+
+## Interface
+
+- `[src/server.ts:createHivemindMcpServer]`, `[src/autonomous.ts:registerAutonomousOperatorTools]`, `[src/autonomous-tool-audit.ts:registerToolAuditTool]`가 총 19개 도구를 등록한다.
+
+## Invariants
+
+- 설정·프로토콜 오류는 일반 문구로 바꾸고, 초안 등록과 실행 승인은 별도 도구다 `[src/server.ts:SafeMcpServer]`, `[src/autonomous.ts:registerAutonomousOperatorTools]`.
+
+## Side Effects
+
+- 운영자 HTTP 요청과 stdin/stdout MCP 전송을 수행한다 `[src/server.ts:createHivemindMcpServer]`, `[src/main.ts:StdioServerTransport]`.
+
+## Verification
+
+- 저장소 루트에서 `npm run check`를 실행한다. 타입 검사 후 루트 테스트를 실행한다.
+
+## Workflow 팀 원장
+
+운영자 전용 `hivemind_workflow_team_get`·`hivemind_workflow_team_block`·`hivemind_workflow_team_review`를 제공한다. 등록된 원격 workflow binding을 확인하고 고정 경로로 호출하며 local fallback은 없다. block은 실제 정리 완료가 아니고 review는 재개가 아니다. 새 backend feature는 기본 비활성이다. [범위와 HTTP 계약](../../docs/team-coordination.md)을 따른다. 이 변경만으로 현재 연결된 앱 서버가 자동 재시작되거나 실제 모델에 team 도구가 주입되지는 않는다.
+
+## SW 전달 전용 프로필 (`HIVEMIND_MCP_PROFILE=delivery`)
+
+AWS 단일 실행 경로의 일상 SW 개발에서는 `HIVEMIND_MCP_PROFILE=delivery`로 6개 핵심 도구만 노출한다(`src/delivery.ts:registerDeliveryOperatorTools`). 기본 프로필(`default`, 미설정)은 기존 22개 도구를 그대로 유지한다.
+
+| 도구 | 동작 |
+|---|---|
+| `hivemind_delivery_list` | `/api/delivery/tasks` 목록·이벤트 조회 |
+| `hivemind_delivery_get` | 고정 수용 테스트·검증 해시·Draft PR(`changeSummary` 포함)·사람 판단 조회 |
+| `hivemind_delivery_create` | 불변 수용 테스트와 `draft_pr` 정책으로 초안만 등록 |
+| `hivemind_delivery_approve` | 표시된 `approvalFingerprint`에 결속한 실행 승인 |
+| `hivemind_delivery_human_decision` | Draft PR 승인/반려와 `openedDiff`·`durationMinutes` 기록 |
+| `hivemind_delivery_cancel` | 명시적 작업 중단 |
+
+### AWS SSM 포트 포워딩 연결 절차 (Codex · Claude Code 공통)
+
+AWS 상시 `ControlPlaneService`는 퍼블릭 인바운드 CIDR이 0개이므로 로컬에서 SSM 터널을 연 뒤 `http://127.0.0.1:4310`으로 연결한다.
+
+```sh
+# 1. 터미널 A: 암호화 SSM 포트 포워딩 열기 (IAM 인증, $0)
+AWS_PROFILE=roboco node --import ./infrastructure/aws-runtime/node_modules/tsx/dist/loader.mjs scripts/aws-ssm-tunnel.ts
+
+# 2. MCP 서버 실행 환경 변수 (Codex / Claude Code 클라이언트 설정)
+# HIVEMIND_MCP_PROFILE=delivery
+# HIVEMIND_API_URL=http://127.0.0.1:4310
+# HIVEMIND_OPERATOR_TOKEN=<Secrets Manager hivemind-runtime/operator-token 값>
+```
+
+실제 AWS `ControlPlaneService` 대상 `HIVEMIND_MCP_PROFILE=delivery` 종단 검증은 `scripts/aws-ssm-mcp-verify.ts`로 재현할 수 있다([검증 기록](../../docs/verification/2026-11-25-phase3-evidence-and-mcp-ssm.md)).

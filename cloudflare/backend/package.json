@@ -6,7 +6,7 @@
   "license": "Apache-2.0",
   "engines": { "node": ">=24.14.0 <25" },
   "scripts": {
-    "test": "node --test test/*.test.ts",
+    "test": "node --import ./scripts/source-test-loader.mjs --test test/*.test.ts",
     "types": "wrangler types worker-env.d.ts --config wrangler.json --include-env false",
     "typecheck": "tsc --noEmit",
     "runtime:stamp": "node scripts/runtime-build.ts --write",

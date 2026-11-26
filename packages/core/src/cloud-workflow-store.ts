@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
-import {workflowApproval, workflowDraft, workflowId, type CloudWorkflowControl, type CloudWorkflowPort, type WorkflowBinding} from '../../contracts/src/workflow.js';
+import {teamBlockInput, teamReviewInput, teamPageQuery, workflowApproval, workflowDraft, workflowId, type CloudWorkflowControl, type CloudWorkflowPort, type WorkflowBinding} from '../../contracts/src/workflow.js';
 import {DomainError} from './store.js';
 
 interface SavedWorkflow extends WorkflowBinding {
@@ -58,6 +58,24 @@ export function createCloudWorkflowControl(dbPath: string, scope: string, port: 
     async read(id,result,includeDiff) {
       const entry = find(id);
       return {...entry,...await port.read(entry,result,includeDiff)};
+    },
+    async teamRead(id,section,query={}) {
+      const entry=find(id);
+      if(!port.teamRead)throw new DomainError('Team operation unavailable',503);
+      if(!['summary','tasks','events','notes'].includes(section)||!teamPageQuery.safeParse(query).success||(['summary','tasks'].includes(section)&&Object.keys(query).length))throw new DomainError('Invalid team request',400);
+      return port.teamRead(entry,section,query);
+    },
+    async teamBlock(id,input) {
+      const entry=find(id),parsed=teamBlockInput.safeParse(input);
+      if(!parsed.success)throw new DomainError('Invalid team request',400);
+      if(!port.teamBlock)throw new DomainError('Team operation unavailable',503);
+      return port.teamBlock(entry,parsed.data);
+    },
+    async teamReview(id,input) {
+      const entry=find(id),parsed=teamReviewInput.safeParse(input);
+      if(!parsed.success)throw new DomainError('Invalid team request',400);
+      if(!port.teamReview)throw new DomainError('Team operation unavailable',503);
+      return port.teamReview(entry,parsed.data);
     },
     close() {db.close();},
   };

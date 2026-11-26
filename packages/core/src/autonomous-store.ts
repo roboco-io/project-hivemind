@@ -57,7 +57,7 @@ export function createAutonomousStore(path: string): AutonomousStore {
   }
   return new AutonomousEngine({version:1,tasks},{ownership:'exclusive'});
  }
- const recoveryOperations=new Set(['acceptExternal','settleExternal','cleanedExternal','nativeReady','recordNativeReceipt','workerState','cancel','cleaned','tick','heartbeat','settle','finish','finishCloud','finishUnstartedCloud','abandonCloud','reconcile','reconcileRun','get','getSummary','historyPage','list','listPage','snapshot']);
+ const recoveryOperations=new Set(['acceptExternal','settleExternal','cleanedExternal','nativeReady','recordNativeReceipt','workerState','cancel','cleaned','tick','stopExternalBudget','toolAuditScope','heartbeat','settle','finish','finishCloud','finishUnstartedCloud','abandonCloud','reconcile','reconcileRun','get','getSummary','historyPage','list','listPage','snapshot']);
  function persist(engine:AutonomousEngine,recovery=true){
   let total=Number(db.prepare('SELECT COALESCE(SUM(bytes),0) AS total FROM autonomous_tasks').get()!.total),changed=false;
   for(const serialized of engine.persistenceRecords()){
@@ -121,7 +121,7 @@ export function createAutonomousStore(path: string): AutonomousStore {
   const entries=db.prepare('SELECT sequence,summary FROM autonomous_tasks ORDER BY sequence').all().map(row=>({sequence:Number(row.sequence),task:JSON.parse(String(row.summary)) as AutonomousTask}));
   return pageAutonomousTasks(entries,query,String(meta.secret));
  }
- const methods=new Set(['acceptExternal','settleExternal','cleanedExternal','snapshot','create','get','getSummary','historyPage','list','approve','revise','claim','claimCloud','finishCloud','finishUnstartedCloud','abandonCloud','nativeStart','nativeReady','recordNativeReceipt','workerState','heartbeat','finish','cancel','message','reserve','settle','reconcile','resume','reconcileRun','cleaned','tick']);
+ const methods=new Set(['acceptExternal','settleExternal','cleanedExternal','snapshot','create','get','getSummary','historyPage','list','approve','revise','claim','claimCloud','finishCloud','finishUnstartedCloud','abandonCloud','nativeStart','nativeReady','recordNativeReceipt','workerState','heartbeat','finish','cancel','message','reserve','settle','reconcile','resume','reconcileRun','cleaned','tick','stopExternalBudget','toolAuditScope']);
  return new Proxy(Object.create(null) as AutonomousStore,{
   get(_target,property){
    if(property==='transaction') return transaction;
