@@ -254,3 +254,42 @@ test('sets HIVEMIND_MF_STORAGE only when the Model Factory ledger is configured 
   const dsql = JSON.stringify(synth({ modelFactoryStorage: 'aurora-dsql' }).toJSON());
   assert.ok(dsql.includes('"Name":"HIVEMIND_MF_STORAGE","Value":"aurora-dsql"'));
 });
+
+test('TTL Guard Lambda is a bundled asset and gets DSQL ledger access only with the Aurora DSQL ledger', async () => {
+  const { createRequire } = await import('node:module');
+  const { join } = await import('node:path');
+  const { bundleLambda } = await import('../lib/bundle-lambda.ts');
+
+  // The bundle loads in plain Node (pg and repository code included) and exports the handler.
+  const bundleDir = bundleLambda('mf-ttl-guard.ts');
+  const bundle = createRequire(import.meta.url)(join(bundleDir, 'index.js')) as { handler?: unknown };
+  assert.equal(typeof bundle.handler, 'function');
+  assert.equal(bundleLambda('mf-ttl-guard.ts'), bundleDir, 'bundling is cached per process');
+
+  const guardEnv = (template: Template) => {
+    const fn = Object.values(template.findResources('AWS::Lambda::Function')).find(
+      (r) => (r as { Properties: { FunctionName?: string } }).Properties.FunctionName === 'hivemind-dev-mf-ttl-guard',
+    ) as { Properties: { Code: Record<string, unknown>; Environment: { Variables: Record<string, unknown> } } };
+    assert.ok(fn.Properties.Code.S3Key, 'code is an S3 asset, not inline');
+    assert.equal(fn.Properties.Code.ZipFile, undefined);
+    return fn.Properties.Environment.Variables;
+  };
+
+  const sqlite = synth();
+  assert.equal(guardEnv(sqlite).HIVEMIND_MF_STORAGE, undefined);
+  assert.equal(guardEnv(sqlite).HIVEMIND_DSQL_ENDPOINT, undefined);
+  const guardPolicyOf = (template: Template) =>
+    JSON.stringify(Object.entries(template.findResources('AWS::IAM::Policy')).find(([id]) => id.startsWith('ModelFactoryTtlGuardRole'))![1]);
+  assert.ok(!guardPolicyOf(sqlite).includes('dsql:'));
+
+  const dsqlTemplate = synth({ modelFactoryStorage: 'aurora-dsql' });
+  const env = guardEnv(dsqlTemplate);
+  assert.equal(env.HIVEMIND_MF_STORAGE, 'aurora-dsql');
+  assert.equal(env.HIVEMIND_DSQL_REGION, 'ap-northeast-2');
+  assert.ok(env.HIVEMIND_DSQL_ENDPOINT);
+  const guardPolicy = guardPolicyOf(dsqlTemplate);
+  assert.ok(guardPolicy.includes('"dsql:DbConnectAdmin"'));
+  // The guard still cannot launch instances or read any secret.
+  assert.ok(!guardPolicy.includes('ec2:RunInstances'));
+  assert.ok(!guardPolicy.includes('secretsmanager'));
+});

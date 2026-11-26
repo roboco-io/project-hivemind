@@ -20,6 +20,7 @@ import {
 } from 'aws-cdk-lib';
 import type { Construct } from 'constructs';
 import { assertAwsRegion } from '../../../packages/adapters/src/autonomous-aws-region.ts';
+import { bundleLambda } from './bundle-lambda.ts';
 
 export interface AwsRuntimeConfig {
   /**
@@ -609,94 +610,34 @@ export class AwsRuntimeStack extends Stack {
       }),
     );
 
-    const ttlGuardCode = [
-      "const crypto = require('node:crypto');",
-      "const sha256 = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex');",
-      "const hmac = (k, s) => crypto.createHmac('sha256', k).update(s, 'utf8').digest();",
-      'function sign(region, body) {',
-      "  const now = new Date().toISOString().replace(/[:-]|\\.\\d{3}/g, '');",
-      "  const amzDate = now.slice(0, 15) + 'Z', dateStamp = now.slice(0, 8);",
-      '  const host = `ec2.${region}.amazonaws.com`;',
-      "  const headers = { 'content-type': 'application/x-www-form-urlencoded; charset=utf-8', host, 'x-amz-date': amzDate };",
-      "  if (process.env.AWS_SESSION_TOKEN) headers['x-amz-security-token'] = process.env.AWS_SESSION_TOKEN;",
-      '  const keys = Object.keys(headers).sort();',
-      "  const canon = ['POST', '/', '', keys.map((k) => `${k}:${headers[k]}\\n`).join(''), keys.join(';'), sha256(body)].join('\\n');",
-      '  const scope = `${dateStamp}/${region}/ec2/aws4_request`;',
-      "  const sts = ['AWS4-HMAC-SHA256', amzDate, scope, sha256(canon)].join('\\n');",
-      "  const kSig = hmac(hmac(hmac(hmac('AWS4' + process.env.AWS_SECRET_ACCESS_KEY, dateStamp), region), 'ec2'), 'aws4_request');",
-      '  headers.authorization = `AWS4-HMAC-SHA256 Credential=${process.env.AWS_ACCESS_KEY_ID}/${scope}, SignedHeaders=${keys.join(\';\')}, Signature=${crypto.createHmac(\'sha256\', kSig).update(sts, \'utf8\').digest(\'hex\')}`;',
-      '  return headers;',
-      '}',
-      'async function ec2Call(region, params) {',
-      "  const body = new URLSearchParams({ Version: '2016-11-15', ...params }).toString();",
-      '  const res = await fetch(`https://ec2.${region}.amazonaws.com/`, { method: \'POST\', headers: sign(region, body), body });',
-      '  const text = await res.text();',
-      '  if (!res.ok) throw new Error(`EC2 ${region} ${params.Action} HTTP ${res.status}: ${text.slice(0, 200)}`);',
-      '  return text;',
-      '}',
-      'function firstTag(xml, name) {',
-      '  const o = `<${name}>`, c = `</${name}>`, s = xml.indexOf(o);',
-      '  if (s === -1) return null;',
-      '  const e = xml.indexOf(c, s + o.length);',
-      '  return e === -1 ? null : xml.slice(s + o.length, e).trim();',
-      '}',
-      'function parseInstances(xml) {',
-      '  const out = [];',
-      "  for (const part of xml.split('<instancesSet>').slice(1)) {",
-      "    const setXml = part.split('</instancesSet>')[0] || '';",
-      '    let idx = 0;',
-      '    while (idx < setXml.length) {',
-      "      const start = setXml.indexOf('<item>', idx); if (start === -1) break;",
-      '      let depth = 0, cur = start, end = -1;',
-      '      while (cur < setXml.length) {',
-      "        const no = setXml.indexOf('<item>', cur), nc = setXml.indexOf('</item>', cur);",
-      '        if (nc === -1) break;',
-      '        if (no !== -1 && no < nc) { depth++; cur = no + 6; } else { depth--; cur = nc + 7; if (depth === 0) { end = nc; break; } }',
-      '      }',
-      '      if (end === -1) break;',
-      '      const item = setXml.slice(start + 6, end);',
-      "      const id = firstTag(item, 'instanceId');",
-      "      const tagXml = firstTag(item, 'tagSet') || '';",
-      '      const tags = {};',
-      "      for (const t of tagXml.split('<item>').slice(1)) { const k = firstTag(t, 'key'), v = firstTag(t, 'value'); if (k) tags[k] = v || ''; }",
-      '      if (id) out.push({ id, tags });',
-      '      idx = end + 7;',
-      '    }',
-      '  }',
-      '  return out;',
-      '}',
-      'exports.handler = async () => {',
-      "  const regions = (process.env.HIVEMIND_GUARD_REGIONS || 'ap-northeast-2,us-east-2').split(',').map((s) => s.trim()).filter(Boolean);",
-      '  const nowMs = Date.now(), summary = [];',
-      '  for (const region of regions) {',
-      "    const xml = await ec2Call(region, { Action: 'DescribeInstances', 'Filter.1.Name': 'tag:hivemind:managed-by', 'Filter.1.Value.1': 'hivemind-model-factory', 'Filter.2.Name': 'instance-state-name', 'Filter.2.Value.1': 'pending', 'Filter.2.Value.2': 'running', 'Filter.2.Value.3': 'stopping', 'Filter.2.Value.4': 'stopped' });",
-      '    const instances = parseInstances(xml);',
-      '    const terminated = [];',
-      '    for (const inst of instances) {',
-      "      const exp = inst.tags['hivemind:expires-at'] || null;",
-      '      const expMs = exp ? Date.parse(exp) : Number.NaN;',
-      '      if (!Number.isFinite(expMs) || expMs <= nowMs) {',
-      "        await ec2Call(region, { Action: 'TerminateInstances', 'InstanceId.1': inst.id });",
-      '        terminated.push({ instanceId: inst.id, expiresAt: exp });',
-      '      }',
-      '    }',
-      '    summary.push({ region, checked: instances.length, terminated });',
-      '  }',
-      "  console.log(JSON.stringify({ event: 'hivemind.mf_ttl_guard.sweep', summary }));",
-      '  return { ok: true, summary };',
-      '};',
-    ].join('\n');
+    // With the DSQL ledger, the guard also settles the terminated job's cost, so it needs to connect.
+    const guardSettlesInDsql = cfg.modelFactoryStorage === 'aurora-dsql';
+    if (guardSettlesInDsql) {
+      ttlGuardRole.addToPolicy(
+        new iam.PolicyStatement({
+          actions: ['dsql:DbConnectAdmin'],
+          resources: [this.collabDsqlCluster.attrResourceArn],
+        }),
+      );
+    }
 
     this.modelFactoryTtlGuardFn = new lambda.Function(this, 'ModelFactoryTtlGuardFn', {
       functionName: `${prefix}-mf-ttl-guard`,
       runtime: lambda.Runtime.NODEJS_22_X,
       handler: 'index.handler',
-      code: lambda.Code.fromInline(ttlGuardCode),
-      timeout: Duration.seconds(30),
-      memorySize: 128,
+      code: lambda.Code.fromAsset(bundleLambda('mf-ttl-guard.ts')),
+      timeout: Duration.seconds(60),
+      memorySize: 256,
       role: ttlGuardRole,
       environment: {
         HIVEMIND_GUARD_REGIONS: 'ap-northeast-2,us-east-2,us-east-1,us-west-2,ap-northeast-1',
+        ...(guardSettlesInDsql
+          ? {
+              HIVEMIND_MF_STORAGE: 'aurora-dsql',
+              HIVEMIND_DSQL_ENDPOINT: `${this.collabDsqlCluster.attrIdentifier}.dsql.${cfg.region}.on.aws`,
+              HIVEMIND_DSQL_REGION: cfg.region,
+            }
+          : {}),
       },
       description: 'Autonomous $0-idle multi-region TTL Guard sweeping expired hivemind-model-factory EC2 Spot instances',
     });

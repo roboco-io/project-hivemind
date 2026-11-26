@@ -16,6 +16,7 @@ import {
 } from '../../../packages/adapters/src/aws-ssm-public-ami.js';
 import type { SpotPlacementFeedPort } from '../../../packages/adapters/src/spot-placement-feed.js';
 import type { ModelFactoryStore } from '../../../packages/core/src/model-factory.js';
+import { calculateActualCostMicros } from '../../../packages/core/src/model-factory-guard-settlement.js';
 import { selectOptimalSpotPlacement } from '../../../packages/core/src/multi-region.js';
 
 export interface TrustedHfReleasePublisherPort {
@@ -451,17 +452,6 @@ export class ModelFactoryOrchestrator {
     }
   }
 
-  private calculateActualCostMicros(job: ModelFactoryJob, endedMs: number): { actualCostMicros: number; instanceSeconds: number } {
-    const launchedMs = job.instance?.launchedAt ? Date.parse(job.instance.launchedAt) : endedMs;
-    const elapsedSeconds = Math.max(1, Math.ceil(Math.max(0, endedMs - launchedMs) / 1000));
-    const billedSeconds = Math.max(60, elapsedSeconds); // AWS EC2 Linux per-second billing (60s minimum)
-    const rawMicros = Math.ceil((billedSeconds / 3600) * job.compute.maxHourlyPriceUsd * 1_000_000);
-    return {
-      actualCostMicros: Math.min(rawMicros, job.cost.reservedMicros || rawMicros),
-      instanceSeconds: billedSeconds,
-    };
-  }
-
   async wakeJob(jobId: string, signal?: AbortSignal): Promise<ModelFactoryJob> {
     let job = await this.options.store.get(jobId);
     const needsTrainingWake = job.status === 'training_running';
@@ -500,7 +490,7 @@ export class ModelFactoryOrchestrator {
     }
 
     if (isEnded && job.cost.settledMicros === null) {
-      const settlement = this.calculateActualCostMicros(job, nowMs);
+      const settlement = calculateActualCostMicros(job, nowMs);
       job = await this.options.store.settleCost(job.id, {
         ...settlement,
         ...(forcedReason ? { diagnostic: 'Settled after TTL Guard forced termination' } : {}),
@@ -543,7 +533,7 @@ export class ModelFactoryOrchestrator {
     }
     let cancelled = await this.options.store.cancel(jobId, reason);
     if (cancelled.instance && cancelled.cost.settledMicros === null) {
-      const settlement = this.calculateActualCostMicros(cancelled, this.now());
+      const settlement = calculateActualCostMicros(cancelled, this.now());
       cancelled = await this.options.store.settleCost(jobId, {
         ...settlement,
         diagnostic: 'Settled on operator cancellation',
