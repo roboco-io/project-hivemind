@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { setUpCollabWorkerOrFailSubtask } from './collab-worker-setup.js';
 import { join } from 'node:path';
 import type { DeliveryPreflightReport } from '../../../packages/contracts/src/delivery.js';
 import { createAwsS3ArtifactsPort } from '../../../packages/adapters/src/aws-s3-artifacts.js';
@@ -126,10 +127,6 @@ async function runCollabWorkerMode(): Promise<void> {
   const subtask = snapshot.subtasks.find((s) => s.id === subtaskId);
   if (!subtask) throw new Error(`Subtask ${subtaskId} not found in session ${sessionId}`);
 
-  const provider = subtask.provider;
-  const secretString = await secretsManager.getSecretString(modelAuthSecretArn, AbortSignal.timeout(15_000));
-  const auth = await materializeProviderAuth(provider, secretString, join(workRoot, `collab-auth-${agentId}`));
-
   const postCollab = async (path: string, body: Record<string, unknown>) => {
     const res = await fetch(new URL(path, controlApiUrl), {
       method: 'POST',
@@ -140,6 +137,20 @@ async function runCollabWorkerMode(): Promise<void> {
     });
     if (!res.ok) throw new Error(`Collab API ${path} failed with HTTP ${res.status}`);
   };
+
+  const provider = subtask.provider;
+  const auth = await setUpCollabWorkerOrFailSubtask(
+    async () => {
+      const secretString = await secretsManager.getSecretString(modelAuthSecretArn, AbortSignal.timeout(15_000));
+      return materializeProviderAuth(provider, secretString, join(workRoot, `collab-auth-${agentId}`));
+    },
+    (failureReason) =>
+      postCollab(`/api/collab/sessions/${encodeURIComponent(sessionId)}/subtasks/${encodeURIComponent(subtaskId)}/finish`, {
+        agentId,
+        status: 'failed',
+        failureReason,
+      }),
+  );
 
   try {
     const prompt = [
