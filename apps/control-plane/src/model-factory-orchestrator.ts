@@ -111,6 +111,15 @@ export function parseRegionNetworkRegistry(
   return registry;
 }
 
+export interface PlacementAttemptRecord {
+  jobId: string;
+  region: string;
+  subnetId?: string;
+  amiId?: string;
+  outcome: 'launched' | 'capacity_failover' | 'ami_lookup_failed' | 'fatal';
+  detail?: string;
+}
+
 export interface ModelFactoryOrchestratorOptions {
   store: ModelFactoryStore;
   ec2: Ec2SpotTrainerPort;
@@ -125,6 +134,11 @@ export interface ModelFactoryOrchestratorOptions {
   regionNetworks?: Record<string, RegionNetworkDefaults>;
   /** Resolves `RegionNetworkDefaults.amiSsmParameter`; without it that field is ignored. */
   amiResolver?: PublicAmiResolverPort;
+  /**
+   * Called once per placement attempt so an operator can audit which regions were tried and why a region
+   * was skipped. The detail is the provider error text truncated to 200 characters; it never holds secrets.
+   */
+  onPlacementAttempt?: (attempt: PlacementAttemptRecord) => void;
   wakeIntervalMs?: number;
   now?: () => number;
 }
@@ -196,6 +210,18 @@ export class ModelFactoryOrchestrator {
       return requested;
     }
     return this.options.defaultInstanceProfileArn;
+  }
+
+  private reportPlacementAttempt(attempt: PlacementAttemptRecord): void {
+    if (!this.options.onPlacementAttempt) return;
+    try {
+      this.options.onPlacementAttempt({
+        ...attempt,
+        ...(attempt.detail !== undefined ? { detail: attempt.detail.slice(0, 200) } : {}),
+      });
+    } catch {
+      // An audit sink failure must never change the launch result.
+    }
   }
 
   private async verifyPinnedInputsInS3(job: ModelFactoryJob, signal?: AbortSignal): Promise<void> {
@@ -315,6 +341,12 @@ export class ModelFactoryOrchestrator {
           } catch (resolveError) {
             const msg = resolveError instanceof Error ? resolveError.message : String(resolveError);
             attemptErrors.push(`${target.region}: AMI lookup failed: ${msg}`);
+            this.reportPlacementAttempt({
+              jobId: approved.id,
+              region: target.region,
+              outcome: 'ami_lookup_failed',
+              detail: msg,
+            });
             continue;
           }
         }
@@ -356,6 +388,13 @@ export class ModelFactoryOrchestrator {
               signal,
             );
 
+            this.reportPlacementAttempt({
+              jobId: approved.id,
+              region: launched.region,
+              ...(subnetId ? { subnetId } : {}),
+              amiId: launched.amiId,
+              outcome: 'launched',
+            });
             return this.options.store.recordInstanceLaunched(approved.id, {
               region: launched.region,
               availabilityZone: launched.availabilityZone,
@@ -369,7 +408,16 @@ export class ModelFactoryOrchestrator {
             const msg = attemptError instanceof Error ? attemptError.message : String(attemptError);
             attemptErrors.push(`${target.region}${subnetId ? `/${subnetId}` : ''}: ${msg}`);
             // Only fail over on capacity/spot availability errors; immediately rethrow IAM/parameter/auth errors.
-            if (!/InsufficientInstanceCapacity|SpotMaxPriceTooLow|Unsupported|MaxSpotInstanceCountExceeded/i.test(msg)) {
+            const failover = /InsufficientInstanceCapacity|SpotMaxPriceTooLow|Unsupported|MaxSpotInstanceCountExceeded/i.test(msg);
+            this.reportPlacementAttempt({
+              jobId: approved.id,
+              region: target.region,
+              ...(subnetId ? { subnetId } : {}),
+              amiId,
+              outcome: failover ? 'capacity_failover' : 'fatal',
+              detail: msg,
+            });
+            if (!failover) {
               throw attemptError;
             }
           }

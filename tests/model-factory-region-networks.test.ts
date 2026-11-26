@@ -115,10 +115,15 @@ test('registry supplies subnet, SG and SSM-resolved AMI for a non-primary region
   const store = new ModelFactoryStore(':memory:', { globalBudgetCapMicros: 1_000_000 });
   const ec2 = fakeEc2({ 'us-east-2': 'InsufficientInstanceCapacity: no g5 capacity' });
   const resolved: [string, string][] = [];
+  const attempts: { region: string; outcome: string; subnetId?: string }[] = [];
   const orchestrator = new ModelFactoryOrchestrator({
     store,
     ec2: ec2.port,
     s3: emptyS3,
+    onPlacementAttempt: (a) => {
+      attempts.push({ region: a.region, outcome: a.outcome, ...(a.subnetId ? { subnetId: a.subnetId } : {}) });
+      if (a.outcome === 'launched') throw new Error('audit sink failure must be ignored');
+    },
     regionNetworks: {
       'us-east-2': { subnetIds: ['subnet-0bedc9f4179d6205f'], securityGroupIds: ['sg-0e3ac45935e27429c'] },
       'us-east-1': {
@@ -150,6 +155,10 @@ test('registry supplies subnet, SG and SSM-resolved AMI for a non-primary region
     assert.equal(last.subnetId, 'subnet-067ecf91041a44411');
     assert.deepEqual(last.securityGroupIds, ['sg-02c88111a9073a681']);
     assert.deepEqual(resolved, [['us-east-1', DLAMI_PARAM]]);
+    assert.deepEqual(attempts, [
+      { region: 'us-east-2', outcome: 'capacity_failover', subnetId: 'subnet-0bedc9f4179d6205f' },
+      { region: 'us-east-1', outcome: 'launched', subnetId: 'subnet-067ecf91041a44411' },
+    ]);
   } finally {
     store.close();
   }

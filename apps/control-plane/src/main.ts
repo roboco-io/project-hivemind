@@ -253,6 +253,8 @@ function createAwsModelFactoryOrchestratorFactory() {
       artifactsBucket: bucket,
       artifactsRegion: region,
       ...(regionNetworks ? { regionNetworks, amiResolver } : {}),
+      onPlacementAttempt: (attempt) =>
+        console.log(JSON.stringify({ event: 'hivemind.model_factory.placement_attempt', ...attempt })),
       ...(defaultInstanceProfileArn ? { defaultInstanceProfileArn } : {}),
       ...(allowedInstanceProfileArns.length ? { allowedInstanceProfileArns } : {}),
       spotFeed,
