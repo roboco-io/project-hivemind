@@ -7,6 +7,7 @@
   <title>Project HIVEMIND · 관제실</title>
   <link rel="icon" type="image/png" href="/brand/hivemind-bee.png">
   <link rel="stylesheet" href="/styles.css">
+  <script src="/tool-audit.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -69,6 +70,7 @@
           <div class="panel-heading"><h3 id="autonomous-current"></h3><span id="autonomous-status" class="pill"></span></div><p id="autonomous-goal" class="instructions"></p>
           <dl class="repository-facts"><div><dt>고정 모델</dt><dd id="autonomous-model"></dd></div><div><dt>종료 시각</dt><dd id="autonomous-ends"></dd></div><div class="wide"><dt>허용 도구</dt><dd id="autonomous-tools"></dd></div><div class="wide"><dt>웹 호스트 범위</dt><dd id="autonomous-web"></dd></div><div class="wide"><dt>자격 증명 reference · 비밀 값 아님</dt><dd id="autonomous-credentials"></dd></div><div class="wide"><dt>외부 profile · 대상과 상한</dt><dd id="autonomous-profiles"></dd></div><div class="wide"><dt>고정 source snapshot · 검사</dt><dd id="autonomous-source"></dd></div><div><dt>승인 예산</dt><dd id="autonomous-budget"></dd></div><div><dt>예약 상한 · 청구액 아님</dt><dd id="autonomous-reserved"></dd></div><div><dt>원장 확인 비용 · 전체 청구액 아님</dt><dd id="autonomous-spent"></dd></div><div><dt>모델 금액</dt><dd id="autonomous-model-cost"></dd></div><div><dt>토큰 사용량</dt><dd id="autonomous-usage"></dd></div><div><dt>정리 상태</dt><dd id="autonomous-cleanup"></dd></div></dl>
           <form id="autonomous-decision-form" class="decision-panel"><label for="autonomous-reason">이번 결정 사유 또는 메시지<textarea id="autonomous-reason" maxlength="2000" rows="2" required></textarea></label><div class="actions"><button id="autonomous-approve" type="submit" value="approve">현재 revision 실행 승인</button><button id="autonomous-cancel" class="danger" type="submit" value="cancel">작업 중단</button><button id="autonomous-message" class="secondary" type="submit" value="message">메시지 기록</button><button id="autonomous-resume" class="secondary" type="submit" value="resume">같은 범위 재개</button></div><p class="help">예약·원장 정산은 실제 공급자 청구 확정과 다릅니다. 미확정 금액과 정리 대기는 그대로 보존합니다.</p></form>
+          <section id="autonomous-tool-audit" class="process-evidence" aria-labelledby="autonomous-tool-audit-title"><div class="section-title"><h4 id="autonomous-tool-audit-title">워커 도구 호출 기록</h4><span class="quiet">워커 보고 · 독립 증명 아님</span></div><div id="autonomous-tool-audit-body"><p class="empty">기록을 불러오는 중입니다.</p></div></section>
         </section>
       </div>
     </section>

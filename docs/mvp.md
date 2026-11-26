@@ -1,5 +1,7 @@
 # MVP 범위
 
+> **2026-11-25 전환 및 Milestone 1 통과:** Cloudflare 실행 백엔드는 폐기·아카이브하고 원격 리소스를 전량 정리했다. 현행 원격 실행과 자동 Draft PR 전달 기준은 [AWS 단일 실행 마스터 플랜](plans/2026-11-25-realignment-aws-plan.md)과 [ADR-0008](adr/0008-aws-single-path-and-verified-draft-pr.md)을 따르며, `project-hivemind` 실제 과제 1건의 AWS `FARGATE_SPOT` 무인 Draft PR 전달 및 무검토 30초 승인·병합을 실증했다([Milestone 1 기록](verification/2026-11-25-milestone1-unattended-draft-pr.md), [Phase 3 보강·SSM MCP 검증](verification/2026-11-25-phase3-evidence-and-mcp-ssm.md)). 아래 Cloudflare 절은 과거 기록이다.
+
 ## 제품 목표
 
 대규모 개발 목표를 검증 가능한 작업 단위로 분산한다. 사람은 작업 범위와 실행을 승인하고 원격 AI 워커의 변경과 검증 결과를 검토한다.

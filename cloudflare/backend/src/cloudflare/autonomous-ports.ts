@@ -28,9 +28,9 @@ export function nativeConfigurationFingerprint(env:NativeCloudEnv,runtimeRevisio
 }
 export function allowNativeControl(request:Request,env:NativeCloudEnv):boolean {
  try {const url=new URL(request.url);if(url.origin!==controlOrigin(env)||url.username||url.password||url.search||url.hash||request.method!=='POST')return false;
- const match=/^\/v1\/autonomous-tasks\/[A-Za-z0-9_-]{1,128}\/(native-start|heartbeat|native-ready|native-receipt|external-action)$/.exec(url.pathname);if(!match)return false;
- if(match[1]==='external-action'&&env.AUTONOMOUS_EXTERNAL_ENABLED!=='true')return false;
- const token=['native-ready','native-receipt'].includes(match[1]!)?env.AUTONOMOUS_REPORTER_TOKEN:env.AUTONOMOUS_WORKER_TOKEN;
+ const match=/^\/v1\/autonomous-tasks\/[A-Za-z0-9_-]{1,128}\/(native-start|heartbeat|native-ready|native-receipt|external-action|tool-calls|external-large\/(?:begin|part|complete|abort|manifest))$/.exec(url.pathname);if(!match)return false;
+ if((match[1]==='external-action'||match[1]!.startsWith('external-large/'))&&env.AUTONOMOUS_EXTERNAL_ENABLED!=='true')return false;
+ const token=['native-ready','native-receipt','tool-calls'].includes(match[1]!)?env.AUTONOMOUS_REPORTER_TOKEN:env.AUTONOMOUS_WORKER_TOKEN;
  return !!token&&token!==env.CONTROL_TOKEN&&env.AUTONOMOUS_REPORTER_TOKEN!==env.AUTONOMOUS_WORKER_TOKEN&&request.headers.get('authorization')==='Bearer '+token;
  }catch{return false;}
 }

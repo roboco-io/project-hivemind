@@ -4,7 +4,7 @@ export interface AutonomousCloudProxyConfig {baseUrl:string;controlToken:string}
 export interface AutonomousCloudProxyOptions {fetch?:typeof fetch;localTokens?:readonly string[]}
 const PREFIX='/api/cloudflare/autonomous-tasks',REMOTE='/v1/autonomous-tasks';
 const REQUEST_LIMIT=65536,RESPONSE_LIMIT=2*1024*1024,TIMEOUT_MS=5000;
-class ProxyError extends Error{constructor(readonly statusCode=503){super('Cloudflare autonomous request unavailable');}}
+class ProxyError extends Error{readonly statusCode:number;constructor(statusCode=503){super('Cloudflare autonomous request unavailable');this.statusCode=statusCode;}}
 const fail=(status=400):never=>{throw new ProxyError(status);};
 const errorResponse=(status:number)=>Response.json({error:'Cloudflare autonomous request unavailable'},{status,headers:{'cache-control':'no-store'}});
 function route(request:Request):string{
@@ -13,15 +13,17 @@ function route(request:Request):string{
  const suffix=url.pathname.slice(PREFIX.length),parts=suffix?suffix.slice(1).split('/').map(s=>{try{return decodeURIComponent(s);}catch{return fail();}}):[];
  for(const [index,part] of parts.entries()){const pattern=index===2&&parts[1]==='external-actions'?/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,255}$/:/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/;if(!pattern.test(part))fail(404);}
  const [id,action,requestId,operation]=parts;
- const allowed=request.method==='GET'?(parts.length===0||parts.length===1||(parts.length===2&&['external-actions','external-profiles','history'].includes(action!))):
+ const allowed=request.method==='GET'?(parts.length===0||parts.length===1||(parts.length===2&&['external-actions','external-profiles','history','tool-calls','delegated','external-oidc-audit'].includes(action!))):
   (parts.length===0||(parts.length===2&&['approve','revise','cancel','message','resume','reconcile','reconcile-run','cleaned','external-approval','external-cancel'].includes(action!))||(parts.length===4&&action==='external-actions'&&!!requestId&&['reconcile','cleanup','billing'].includes(operation!)));
- if(!allowed)fail(404);
+ const delegated=action==='delegated';if(!allowed&&!(request.method==='POST'&&parts.length===3&&delegated&&['register','verify','publish','recover-publication','cleanup'].includes(requestId!)))fail(404);
  const params=url.searchParams;
  if(params.has('view')){if(request.method!=='GET'||parts.length!==1||params.size!==1||params.get('view')!=='summary')fail();return REMOTE+'/'+parts.map(encodeURIComponent).join('/')+url.search;}
- const history=request.method==='GET'&&parts.length===2&&action==='history';
- if(url.search&&(request.method!=='GET'||!(id===undefined||parts.length===2&&['external-actions','history'].includes(action!))))fail();
+ const history=request.method==='GET'&&parts.length===2&&action==='history',oidcAudit=action==='external-oidc-audit';
+ if(url.search&&!delegated&&(request.method!=='GET'||!(id===undefined||parts.length===2&&['external-actions','history','tool-calls','external-oidc-audit'].includes(action!))))fail();
  if(history&&!params.has('kind'))fail();
- for(const key of params.keys())if(!(history?['kind','limit','cursor']:['limit','cursor']).includes(key)||params.getAll(key).length!==1)fail();
+ for(const key of params.keys())if(!(oidcAudit?['after','limit']:delegated?['actionId','instanceId','revision','after','limit']:history?['kind','limit','cursor']:['limit','cursor']).includes(key)||params.getAll(key).length!==1)fail();
+ if(oidcAudit&&params.has('after')&&(!/^(0|[1-9][0-9]{0,15})$/.test(params.get('after')!)||!Number.isSafeInteger(Number(params.get('after')))))fail();
+ if(delegated){for(const key of ['actionId','instanceId'])if(params.has(key)&&!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(params.get(key)!))fail();for(const key of ['revision','after'])if(params.has(key)&&! /^(0|[1-9][0-9]{0,8})$/.test(params.get(key)!))fail();}
  if(history&&!['runs','actions','resources','interventions'].includes(params.get('kind')!))fail();
  if(params.has('limit')){const n=params.get('limit')!;if(!/^[1-9][0-9]{0,2}$/.test(n)||Number(n)>100)fail();}
  if(params.has('cursor')){const c=params.get('cursor')!;if(!c||c.length>4096||!/^[A-Za-z0-9_.-]+$/.test(c))fail();}
@@ -38,9 +40,13 @@ type Shape=true|{[key:string]:Shape}|readonly [Shape];
 const usage:Shape={inputTokens:true,cacheReadTokens:true,cacheWriteTokens:true,outputTokens:true};
 const spec:Shape={requestId:true,goal:true,provider:true,model:true,subagentModel:true,endsAt:true,budgetMicros:true,tools:[true],systems:[true],credentialIds:[true],maxRunMs:true,maxIterations:true,externalProfiles:[true],web:{allowedHosts:[true]},billingPolicy:{model:true,budget:true},schedule:{kind:true,timeZone:true,localTime:true},execution:{backend:true,mode:true,snapshotId:true,checks:[{id:true,argv:[true],timeoutMs:true}]}};
 const action:Shape={id:true,requestId:true,tool:true,system:true,operation:true,estimatedCostMicros:true,status:true,actualCostMicros:true,resourceId:true};
-const externalAction:Shape={parameterHash:true,parameters:{lifetimeMs:true,startActionId:true,artifactDigest:true,expectedHead:true},parametersSubset:{lifetimeMs:true,startActionId:true,artifactDigest:true,expectedHead:true},providerResult:{kind:true,id:true,oid:true},profileId:true,approvedTarget:{accountId:true,region:true,workloadId:true,repository:true,revision:true,branch:true},approvedProfileHash:true,operatorBillingEvidence:{source:true,evidenceRef:true,reasonHash:true,at:true},revision:true,resourceId:true,billingSource:true,evidenceRef:true,attestedAt:true,requestId:true,phase:true,actionId:true,status:true,operation:true,effect:true,cleanupStatus:true,verifiedCostMicros:true,billingFinal:true};
-const profile:Shape={id:true,profileHash:true,enabled:true,provider:true,target:{accountId:true,region:true,workloadId:true,repository:true,revision:true,branch:true},operations:[true],maxLifetimeMs:true,upperBoundMicros:true,maxActiveActions:true};
-const task:Shape={id:true,spec,revision:true,status:true,createdAt:true,approvedAt:true,nextRunAt:true,iteration:true,activeRunStartedAt:true,spentMicros:true,reservedMicros:true,stopReason:true,counts:{humanInterventions:true,helpRequests:true,toolCalls:true},lease:{expiresAt:true},runs:[{runId:true,workerId:true,startedAt:true,finishedAt:true,scheduledAt:true,outcome:true,usage,costMicros:true,wakeAt:true,message:true,usageUnavailable:true,reconciledCostMicros:true,billingEvidence:true,quota:{kind:true,resetsAt:true,evidence:true}}],actions:[action],resources:[{id:true,system:true,cleanupOperation:true,status:true,actionId:true}],interventions:[{kind:true,message:true,at:true,revision:true}]};
+const externalAction:Shape={parameterHash:true,parameters:{lifetimeMs:true,startActionId:true,artifactDigest:true,expectedHead:true,manifestDigest:true,keySuffix:true,putActionId:true},parametersSubset:{lifetimeMs:true,startActionId:true,artifactDigest:true,expectedHead:true,manifestDigest:true,keySuffix:true,putActionId:true},providerResult:{kind:true,id:true,oid:true},profileId:true,approvedTarget:{accountId:true,region:true,workloadId:true,repository:true,revision:true,branch:true,bucket:true,prefix:true,visibility:true},approvedProfileHash:true,operatorBillingEvidence:{source:true,evidenceRef:true,reasonHash:true,at:true},revision:true,resourceId:true,billingSource:true,evidenceRef:true,attestedAt:true,requestId:true,phase:true,actionId:true,status:true,operation:true,effect:true,cleanupStatus:true,verifiedCostMicros:true,billingFinal:true};
+const oidcPurpose:Shape={roleArn:true,subject:true,policyHash:true,durationSeconds:true};
+const delegatedDescriptor:Shape={version:true,workloadId:true,amiId:true,bootstrapSha256:true,inputManifestDigests:[true],iam:{instanceProfileArn:true,policyRevision:true,policySha256:true},accountId:true,region:true,availabilityZoneId:true,s3:{bucket:true,prefix:true,ownerCanonicalId:true,maxObjects:true,maxObjectBytes:true,maxTotalBytes:true,retentionMs:true,storageReserveMicros:true,requestReserveMicros:true,transferReserveMicros:true},hf:{repo:true,visibility:true,tokenRef:true,delivery:{mode:true,audience:true,path:true,fileMode:true,ttlMs:true,trainingEnvironment:true}},awsDelivery:{mode:true,policySha256:true,durationSeconds:true,purpose:true,roleArn:true},qualityGateIds:[true],releasePolicy:{id:true,revision:true,allowPublicTransition:true}};
+const delegatedBinding:Shape={taskId:true,revision:true,workloadId:true,descriptorHash:true,instanceId:true,accountId:true,region:true};
+const delegatedPage:Shape={binding:delegatedBinding,descriptorHash:true,reservedMicros:true,actualBillingMicros:true,items:[{sequence:true,receiptId:true,kind:true,status:true,cleanup:true,reportedAt:true,verifiedAt:true,proofCode:true,checksumEvidence:true,wholeSha256Status:true,commit:true,visibility:true,versionId:true,size:true}],nextAfter:true,publication:{receiptId:true,commit:true,state:true,at:true,qualityProofId:true}};
+const profile:Shape={oidc:{issuer:true,audience:true,execute:oidcPurpose,inspect:oidcPurpose,cleanup:oidcPurpose},delegated:{descriptorHash:true,inputManifestDigest:true,descriptor:delegatedDescriptor},id:true,profileHash:true,enabled:true,provider:true,target:{accountId:true,region:true,workloadId:true,repository:true,revision:true,branch:true,visibility:true,bucket:true,prefix:true,kmsKeyId:true,maxObjectBytes:true,retentionDays:true},hfVisibilityDisplay:{visibility:true,publicEffect:true,notice:true},operations:[true],maxLifetimeMs:true,upperBoundMicros:true,maxActiveActions:true};
+const task:Shape={id:true,spec,revision:true,status:true,createdAt:true,approvedAt:true,nextRunAt:true,iteration:true,activeRunStartedAt:true,spentMicros:true,reservedMicros:true,stopReason:true,counts:{humanInterventions:true,helpRequests:true,toolCalls:true,workerToolCalls:true},lease:{expiresAt:true},runs:[{runId:true,workerId:true,startedAt:true,finishedAt:true,scheduledAt:true,outcome:true,usage,costMicros:true,wakeAt:true,message:true,usageUnavailable:true,reconciledCostMicros:true,billingEvidence:true,quota:{kind:true,resetsAt:true,evidence:true}}],actions:[action],resources:[{id:true,system:true,cleanupOperation:true,status:true,actionId:true}],interventions:[{kind:true,message:true,at:true,revision:true}]};
 function project(value:unknown,shape:Shape,tokens:readonly string[]):unknown{
  if(shape===true){
   if(value===null||typeof value==='boolean'||typeof value==='number'&&Number.isFinite(value))return value;
@@ -52,9 +58,16 @@ function project(value:unknown,shape:Shape,tokens:readonly string[]):unknown{
  if(!value||typeof value!=='object'||Array.isArray(value))return undefined;
  const result:Record<string,unknown>={};for(const [key,child] of Object.entries(shape))if(Object.hasOwn(value,key)){const v=project((value as Record<string,unknown>)[key],child,tokens);if(v!==undefined){if(key==='resourceId'&&(typeof v!=='string'||!v.length||v.length>240||/[\p{Cc}]/u.test(v)))fail(503);if(key==='evidenceRef'&&(typeof v!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(v)||v.includes('://')))fail(503);if(key==='billingSource'&&!['provider_verified','operator_attested'].includes(v as string))fail(503);if(key==='attestedAt'&&(!Number.isSafeInteger(v)||Number(v)<0))fail(503);result[key]=v;}}return result;
 }
+/** Worker-reported tool calls. The values are the worker's own report, not independent proof. */
+const toolAuditRecord:Shape={sequence:true,tool:true,inputDigest:true,inputSummary:true,inputTruncated:true,outcome:true,startedAt:true,durationMs:true,subagent:true,runId:true,iteration:true,receivedAt:true,source:true};
+const toolAuditPage:Shape={source:true,items:[toolAuditRecord],totals:{recorded:true,denied:true,errors:true,droppedByWorker:true,droppedByStore:true},nextCursor:true};
 function publicValue(value:unknown,tokens:readonly string[]):unknown{
  if(Array.isArray(value))return value.map(v=>publicValue(v,tokens));
  if(!value||typeof value!=='object')fail(503);const v=value as Record<string,unknown>;
+ if(v.source==='oidc_broker'){if(!Array.isArray(v.items)||v.items.length>100)fail(503);return project(v,{source:true,items:[{sequence:true,at:true,taskId:true,revision:true,profileId:true,profileHash:true,actionId:true,purpose:true,roleArn:true,kid:true,status:true}],nextAfter:true},tokens);}
+ if(v.source==='worker_report'&&Object.hasOwn(v,'totals')){if(!Array.isArray(v.items)||v.items.length>100)fail(503);return project(v,toolAuditPage,tokens);}
+ if(Object.hasOwn(v,'binding'))return project(v,Object.hasOwn(v,'items')?delegatedPage:{binding:delegatedBinding,reservedMicros:true,registered:true},tokens);
+ if(Object.hasOwn(v,'receiptId'))return project(v,{receiptId:true,status:true,cleanup:true,proofCode:true,checksumEvidence:true,wholeSha256Status:true,commit:true,state:true,at:true,qualityProofId:true},tokens);
  if(Object.hasOwn(v,'items')&&Object.hasOwn(v,'kind')){
   const shapes:Record<string,Shape>={runs:{runId:true,workerId:true,startedAt:true,finishedAt:true,scheduledAt:true,outcome:true,usage,costMicros:true,wakeAt:true,message:true,usageUnavailable:true,reconciledCostMicros:true,billingEvidence:true,quota:{kind:true,resetsAt:true,evidence:true}},actions:action,resources:{id:true,system:true,cleanupOperation:true,status:true,actionId:true},interventions:{kind:true,message:true,at:true,revision:true}};
   if(typeof v.kind!=='string'||!Object.hasOwn(shapes,v.kind)||!Array.isArray(v.items)||v.items.length>100)fail(503);
@@ -71,6 +84,9 @@ function publicValue(value:unknown,tokens:readonly string[]):unknown{
    if(Object.hasOwn(source,'startActionId')&&(typeof subset.startActionId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(subset.startActionId)||subset.startActionId.includes('://')))fail(503);
    if(Object.hasOwn(source,'artifactDigest')&&!hex(subset.artifactDigest,[64]))fail(503);
    if(Object.hasOwn(source,'expectedHead')&&!hex(subset.expectedHead,[40,64]))fail(503);
+   if(Object.hasOwn(source,'manifestDigest')&&!hex(subset.manifestDigest,[64]))fail(503);
+   if(Object.hasOwn(source,'keySuffix')&&(typeof subset.keySuffix!=='string'||!/^[A-Za-z0-9_][A-Za-z0-9_./-]{0,239}$/.test(subset.keySuffix)||subset.keySuffix.includes('..')||subset.keySuffix.includes('//')||subset.keySuffix.endsWith('/')))fail(503);
+   if(Object.hasOwn(source,'putActionId')&&(typeof subset.putActionId!=='string'||!/^[A-Za-z0-9][A-Za-z0-9._:/-]{0,199}$/.test(subset.putActionId)||subset.putActionId.includes('://')))fail(503);
   }
   if(v.providerResult!==undefined){const result=out.providerResult as Record<string,unknown>|undefined;if(!result||!v.providerResult||typeof v.providerResult!=='object'||Array.isArray(v.providerResult))return fail(503);
    if(result.kind==='aws_instance'){if(typeof result.id!=='string'||!/^i-[a-f0-9]{8,32}$/.test(result.id))fail(503);out.providerResult={kind:result.kind,id:result.id};}
@@ -81,8 +97,13 @@ function publicValue(value:unknown,tokens:readonly string[]):unknown{
   if(out.approvedProfileHash!==undefined&&(typeof out.approvedProfileHash!=='string'||!/^[a-f0-9]{64}$/.test(out.approvedProfileHash)))fail(503);
   if(v.approvedTarget!==undefined){const target=v.approvedTarget;if(!target||typeof target!=='object'||Array.isArray(target))fail(503);const t=target as Record<string,unknown>,keys=Object.keys(t);
    const text=(x:unknown,max:number)=>typeof x==='string'&&x.length>0&&x.length<=max&&!/[\p{Cc}]/u.test(x);
-   if(Object.hasOwn(t,'accountId')){if(keys.length!==3||!keys.every(k=>['accountId','region','workloadId'].includes(k))||typeof t.accountId!=='string'||!/^\d{12}$/.test(t.accountId)||typeof t.region!=='string'||!/^[a-z]{2}-[a-z]+-\d$/.test(t.region)||!text(t.workloadId,100))fail(503);}
-   else{const ref=Object.hasOwn(t,'revision')?'revision':'branch';if(keys.length!==2||!keys.every(k=>['repository',ref].includes(k))||typeof t.repository!=='string'||t.repository.length>200||!/^[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+$/.test(t.repository)||!text(t[ref],150)||! /^[A-Za-z0-9][A-Za-z0-9_./-]*$/.test(t[ref] as string)||(t[ref] as string).includes('..')||(t[ref] as string).includes('//'))fail(503);}
+   if(Object.hasOwn(t,'accountId')){
+    const s3=Object.hasOwn(t,'bucket'),allowed=s3?['accountId','region','bucket','prefix']:['accountId','region','workloadId'];
+    if(keys.length!==allowed.length||!keys.every(k=>allowed.includes(k))||typeof t.accountId!=='string'||!/^\d{12}$/.test(t.accountId)||typeof t.region!=='string'||!/^[a-z]{2}-[a-z]+-\d$/.test(t.region))fail(503);
+    if(s3){if(typeof t.bucket!=='string'||!/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(t.bucket)||typeof t.prefix!=='string'||!/^[A-Za-z0-9_][A-Za-z0-9_./-]{0,126}\/$/.test(t.prefix)||t.prefix.includes('..')||t.prefix.includes('//'))fail(503);}
+    else if(!text(t.workloadId,100))fail(503);
+   }
+   else{const ref=Object.hasOwn(t,'revision')?'revision':'branch',visible=ref==='revision'&&Object.hasOwn(t,'visibility');if(keys.length!==(visible?3:2)||visible&&t.visibility!=='private'&&t.visibility!=='public'||!keys.every(k=>['repository',ref,...(visible?['visibility']:[])].includes(k))||typeof t.repository!=='string'||t.repository.length>200||!/^[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+$/.test(t.repository)||!text(t[ref],150)||! /^[A-Za-z0-9][A-Za-z0-9_./-]*$/.test(t[ref] as string)||(t[ref] as string).includes('..')||(t[ref] as string).includes('//'))fail(503);}
   }
   if(out.revision!==undefined&&(!Number.isSafeInteger(out.revision)||Number(out.revision)<1))fail(503);
   const evidence=out.operatorBillingEvidence as Record<string,unknown>|undefined;

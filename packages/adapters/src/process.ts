@@ -31,15 +31,17 @@ export function processEnvironment(home: string, mode: boolean | 'claude' = fals
   return environment;
 }
 
-export async function runProcess(command: string[], options: ProcessOptions): Promise<ProcessEvidence> {
+export async function runExecutable(executable: string, args: string[], options: ProcessOptions): Promise<ProcessEvidence> {
   options.signal.throwIfAborted();
-  if (!command.length || command.some(part => typeof part !== 'string' || part.includes('\0')) || !command[0]) throw new Error('Invalid process command');
+  if (typeof executable !== 'string' || !executable || executable.includes('\0')) throw new Error('Invalid process command');
+  if (args.some(part => typeof part !== 'string' || part.includes('\0'))) throw new Error('Invalid process command');
   if (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 2_147_483_647) throw new Error('Invalid process timeout');
   const maximum = options.maxOutputBytes ?? 16000;
   if (!Number.isSafeInteger(maximum) || maximum < 1) throw new Error('Invalid output limit');
+  const command = [executable, ...args];
   const started = Date.now();
   return new Promise<ProcessEvidence>((resolve, reject) => {
-    const child = spawn(command[0]!, command.slice(1), {
+    const child = spawn(executable, args, {
       cwd: options.cwd, env: options.env ?? processEnvironment(options.cwd),
       shell: false, detached: process.platform !== 'win32', stdio: ['pipe','pipe','pipe'],
     });
@@ -96,4 +98,9 @@ export async function runProcess(command: string[], options: ProcessOptions): Pr
       })().catch(reject);
     });
   });
+}
+
+export async function runProcess(command: string[], options: ProcessOptions): Promise<ProcessEvidence> {
+  if (!command.length || !command[0]) throw new Error('Invalid process command');
+  return runExecutable(command[0], command.slice(1), options);
 }

@@ -14,3 +14,12 @@ coverage/
 .handoff.md
 
 __pycache__/
+
+# Source and tests for the STS API; override the user-wide *credentials* mask.
+!packages/adapters/src/aws-scoped-credentials.ts
+!tests/aws-scoped-credentials.test.ts
+
+# Source, scripts, and tests for AWS Secrets Manager; override the user-wide *secret* mask.
+!packages/adapters/src/aws-secrets-manager.ts
+!tests/aws-secrets-manager.test.ts
+!scripts/aws-set-github-secret.ts

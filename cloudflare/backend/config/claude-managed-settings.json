@@ -62,6 +62,41 @@
       "onFailure": "block"
      }
     ]
+   },
+   {
+    "matcher": ".*",
+    "hooks": [
+     {
+      "type": "command",
+      "command": "/usr/local/bin/node /opt/hivemind/backend/src/runtime/tool-audit-hook.ts PreToolUse",
+      "timeout": 5,
+      "onFailure": "block"
+     }
+    ]
+   }
+  ],
+  "PostToolUse": [
+   {
+    "matcher": ".*",
+    "hooks": [
+     {
+      "type": "command",
+      "command": "/usr/local/bin/node /opt/hivemind/backend/src/runtime/tool-audit-hook.ts PostToolUse",
+      "timeout": 5
+     }
+    ]
+   }
+  ],
+  "PostToolUseFailure": [
+   {
+    "matcher": ".*",
+    "hooks": [
+     {
+      "type": "command",
+      "command": "/usr/local/bin/node /opt/hivemind/backend/src/runtime/tool-audit-hook.ts PostToolUseFailure",
+      "timeout": 5
+     }
+    ]
    }
   ],
   "SubagentStart": [

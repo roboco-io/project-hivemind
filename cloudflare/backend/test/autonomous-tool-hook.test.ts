@@ -8,10 +8,15 @@ test('synthetic managed gate permits only approved worker and model',()=>{
  assert.throws(()=>autonomousToolGate({tool_name:'Bash',tool_input:{}},{...policy,tools:['Agent']}));
  assert.doesNotThrow(()=>autonomousToolGate({tool_name:'Agent'},undefined));
 });
+test('real Claude Code 2.1.319 Agent payload with run_in_background false is allowed',()=>{
+ const input={description:'Check counter value',prompt:'Read /workspace/counter.txt with `cat /workspace/counter.txt` and report its exact contents. Do not modify anything.',run_in_background:false,subagent_type:'worker'};
+ assert.doesNotThrow(()=>autonomousToolGate({tool_name:'Agent',tool_input:input},policy));
+ assert.doesNotThrow(()=>autonomousToolGate({tool_name:'Agent',tool_input:{...input,max_turns:5}},policy));
+});
 test('managed policy rejects duplicate and Agent-only tools, permits safe model identifier',()=>{
  for(const tools of [[],['Agent'],['Bash','Bash'],['Bash','Agent','Agent']])assert.throws(()=>autonomousToolGate({tool_name:'Bash'},{...policy,tools}));
  assert.doesNotThrow(()=>autonomousToolGate({tool_name:'Bash'},{...policy,model:'Fable-1',subagentModel:'Fable-1'}));
- for(const option of [{run_in_background:true},{isolation:'worktree'},{team_name:'x'},{max_turns:0},{model:policy.model}])assert.throws(()=>autonomousToolGate({tool_name:'Agent',tool_input:{subagent_type:'worker',prompt:'work',description:'work',...option}},policy));
+ for(const option of [{run_in_background:true},{run_in_background:'false'},{run_in_background:null},{run_in_background:0},{isolation:'worktree'},{team_name:'x'},{max_turns:0},{model:policy.model},{run_in_background:false,model:policy.model},{run_in_background:false,unknown:1}])assert.throws(()=>autonomousToolGate({tool_name:'Agent',tool_input:{subagent_type:'worker',prompt:'work',description:'work',...option}},policy));
 });
 import {mkdtemp,mkdir,rm,realpath} from 'node:fs/promises';
 import {tmpdir} from 'node:os';

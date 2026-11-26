@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {z} from 'zod';
-import {workflowDigest,workflowId,type CloudWorkflowPort,type WorkflowBinding} from '../../contracts/src/workflow.js';
+import {projectTeamResponse,teamPageQuery,teamBlockInput,teamReviewInput,workflowDigest,workflowId,type CloudWorkflowPort,type WorkflowBinding} from '../../contracts/src/workflow.js';
 import type {CloudPortOptions} from './cloudflare.js';
 import {createWorkspace} from './workspace.js';
 import {processEnvironment,runProcess} from './process.js';
@@ -47,7 +47,29 @@ function binding(value:unknown,expected:WorkflowBinding) {
     throw new Error('Workflow approval binding differs');
   return parsed;
 }
-export function createCloudWorkflowPort(config:CloudPortOptions,checks:WorkflowChecks):CloudWorkflowPort {
+export function createCloudWorkflowPort(config:CloudPortOptions,checks:WorkflowChecks,fetchImpl:typeof fetch=fetch):CloudWorkflowPort {
+  config=structuredClone(config);
+  const origin=new URL(config.baseUrl);
+  if(origin.protocol!=='https:'||origin.username||origin.password||origin.pathname!=='/'||origin.search||origin.hash||!config.controlToken||/[\s\p{Cc}]/u.test(config.controlToken))throw new Error('Invalid Cloudflare workflow configuration');
+  async function teamRequest(path:string,body?:unknown):Promise<unknown>{
+    const response=await fetchImpl(new URL(path,origin),{method:body===undefined?'GET':'POST',redirect:'error',headers:{authorization:'Bearer '+config.controlToken,...(body===undefined?{}:{'content-type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(30000)});
+    if(!response.ok||response.redirected||Number(response.headers.get('content-length'))>1048576){await response.body?.cancel();throw new Error('Team operation unavailable');}
+    const reader=response.body?.getReader();if(!reader)throw new Error('Team operation unavailable');
+    let size=0;const chunks:Uint8Array[]=[];
+    try{while(true){const chunk=await reader.read();if(chunk.done)break;size+=chunk.value.byteLength;if(size>1048576){await reader.cancel();throw new Error('Team operation unavailable');}chunks.push(chunk.value);}}finally{reader.releaseLock();}
+    return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  }
+  async function teamOperation(entry:WorkflowBinding,operation:'summary'|'tasks'|'events'|'notes'|'block'|'review',query:Record<string,number|undefined>={},body?:unknown){
+    try{
+      workflowId.parse(entry.id);workflowDigest.parse(entry.contractHash);workflowDigest.parse(entry.inputSnapshotId);
+      const current=z.object({workflow:remoteWorkflow}).parse(await teamRequest('/v1/workflows/'+entry.id));binding(current.workflow,entry);
+      const params=new URLSearchParams();for(const [key,value] of Object.entries(query))if(value!==undefined)params.set(key,String(value));
+      const path='/v1/workflows/'+entry.id+'/team'+(operation==='summary'?'':'/'+operation)+(params.size?'?'+params:'');
+      const result=projectTeamResponse(await teamRequest(path,body),operation,[config.controlToken]);
+      if(['summary','block','review'].includes(operation)&&result.workflowId!==entry.id)throw new Error('Team binding differs');
+      return result;
+    }catch{throw new Error('Team operation unavailable');}
+  }
   const moduleRoot=config.moduleRoot??fileURLToPath(new URL('../../../../',import.meta.url));
   let loaded:Promise<Native>|undefined;
   async function backend() {
@@ -59,6 +81,12 @@ export function createCloudWorkflowPort(config:CloudPortOptions,checks:WorkflowC
     ['git','-c','core.hooksPath=/dev/null','-c','core.fsmonitor=false',...args],
     {cwd,env:processEnvironment(home),signal:AbortSignal.timeout(10000),timeoutMs:10000,maxOutputBytes});
   return {
+    async teamRead(entry,section,query={}){
+      if(!['summary','tasks','events','notes'].includes(section)||!teamPageQuery.safeParse(query).success||(['summary','tasks'].includes(section)&&Object.keys(query).length))throw new Error('Invalid team request');
+      return teamOperation(entry,section,query);
+    },
+    async teamBlock(entry,input){return teamOperation(entry,'block',{},teamBlockInput.parse(input));},
+    async teamReview(entry,input){return teamOperation(entry,'review',{},teamReviewInput.parse(input));},
     async draft(input,key) {
       if(input.baseCommit!==config.policy.baseCommit)throw new Error('Configured base commit differs');
       const checkFiles=[...checks.codex,...checks.claude,checks.integration].flatMap(check=>check.argv)

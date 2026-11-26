@@ -15,6 +15,8 @@ test('plan requires explicit concrete scope and binds a long-running snapshot',(
  const m=api.createAcceptancePlan(input,now);
  assert.equal(m.spec.execution.mode,'long_running');assert.deepEqual(m.spec.tools,['Bash','Agent']);
  assert.equal(m.spec.subagentModel,input.subagentModel);assert.equal(m.spec.execution.snapshotId,m.snapshot.digest);
+ // Check deadlines start at dispatch, before the verification container starts node; 1000 ms leaves no margin. 10000 ms passed the real pilot.
+ assert.deepEqual(m.spec.execution.checks.map((c:{timeoutMs:number})=>c.timeoutMs),[10000]);
  for(const key of Object.keys(input))assert.throws(()=>api.createAcceptancePlan({...input,[key]:undefined},now));
  for(const model of ['opus','latest','inherit'])assert.throws(()=>api.createAcceptancePlan({...input,model},now));
  assert.throws(()=>api.createAcceptancePlan({...input,endsAt:now+1000},now));

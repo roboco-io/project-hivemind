@@ -16,6 +16,8 @@
 
 `[worker.ts:runOnce]`가 호출하는 관제 API는 `POST /api/workers/register`, `POST /api/workers/claim`, `POST /api/tasks/:id/heartbeat`, `POST /api/tasks/:id/result`, `POST /api/tasks/:id/fail`이다.
 
+- `[autonomous-mock.ts:mockAutonomousExecutor]`, `[autonomous-mock.ts:runAutonomousMockDemo]` - 명시적으로 실행하는 합성 장기 작업 예제다. 메모리 세션을 공유하며 두 번의 반복을 시도한다.
+
 ## Invariants
 
 - `HIVEMIND_PROVIDER`는 `mock`, `codex`, `claude` 중 하나여야 하고 기본값은 `mock`이다 `[config.ts:loadWorkerSettings]`.
@@ -29,11 +31,16 @@
 - 결과는 heartbeat 루프가 끝나고 중단 신호가 없을 때만 보고한다. 중단된 실행은 결과도 실패도 보고하지 않는다.
 - 실패 보고는 최선 노력이다. 실패 메시지는 2000자로 자르며, 보고 요청이 거부되어도 원래 오류를 다시 던진다.
 
+- `[autonomous-mock.ts:mockAutonomousExecutor]`는 `provider:mock`만 허용한다. 결과에 합성 근거임을 명시하고 실제 CLI나 외부 자원을 만들지 않는다.
+- `[autonomous-mock.ts:runAutonomousMockDemo]`의 실행 진입점은 운영자·워커 토큰을 명시적으로 요구한다. 운영자 토큰은 초안·승인용 trust adapter에만 있고 executor context에는 넘기지 않는다.
+
 ## Side Effects
 
 - 관제 서비스로 HTTP `POST` 요청을 보낸다. 각 요청의 제한 시간은 15초다 `[worker.ts:runOnce]`.
 - `adapter.execute`를 호출한다. 어댑터가 일으키는 부수 효과(worktree 생성, 모델 CLI 실행, 테스트 실행)는 `packages/adapters`의 계약에 속한다.
 - `[main.ts]`는 진행 상황을 stdout·stderr에 쓰고, `SIGINT`·`SIGTERM`에 실행을 중단한다. `--once` 실행이 실패하면 `process.exitCode`를 1로 설정한다.
+
+- `[autonomous-mock.ts:runAutonomousMockDemo]`는 장기 작업 초안과 합성 실행 승인을 HTTP로 기록하고 `createAutonomousHttpClient`로 claim·heartbeat·finish를 수행한다. 실행 예제 자체가 중앙 상태를 변경한다.
 
 ## Verification
 

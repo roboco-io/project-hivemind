@@ -33,3 +33,10 @@ test('R11 guard EBS permissions are read-only discovery plus tag-scoped deletion
  const workload=resources.find(r=>r.Type==='AWS::IAM::Role'&&r.Properties.RoleName==='fixture-hivemind-workload')!;assert.equal(workload.Properties.Policies[0].PolicyDocument.Statement.filter((s:any)=>s.Effect==='Allow').some((s:any)=>s.Action.some((a:string)=>a.startsWith('ec2:'))),false);
  const boundaries=resources.filter(r=>r.Type==='AWS::IAM::ManagedPolicy');const boundary=boundaries.find(r=>r.Properties.ManagedPolicyName==='fixture-hivemind-guard')!;assert.deepEqual(boundary.Properties.PolicyDocument,guard.Properties.Policies[0].PolicyDocument);
 });
+test('Ohio requires explicit allowlist and binds AZ ID in manifest',()=>{
+ const ohio={...config,region:'us-east-2',allowedRegions:['us-east-2'],profiles:config.profiles.map(p=>({...p,availabilityZoneId:'use2-az2'}))};
+ const stack=new AwsExternalGuardStack(new App(),'Ohio',{configuration:ohio,fixture:true,env:{account,region:'us-east-2'}});
+ const json=Template.fromStack(stack).toJSON();assert.match(JSON.stringify(json),/arn:aws:ec2:us-east-2:/);assert.doesNotMatch(JSON.stringify(json),/arn:aws:ec2:ap-northeast-2:/);
+ assert.equal(stack.manifest.profiles[0]!.availabilityZoneId,'use2-az2');
+ for(const bad of [{allowedRegions:undefined},{allowedRegions:[]},{region:'us-west-2'},{profiles:ohio.profiles.map(p=>({...p,availabilityZoneId:'apne2-az1'}))}])assert.throws(()=>new AwsExternalGuardStack(new App(),'Denied',{configuration:{...ohio,...bad},fixture:true,env:{account,region:'us-east-2'}}));
+});

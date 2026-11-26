@@ -13,6 +13,7 @@
 
 - [cloudflare](./cloudflare/README.md) - Worker, Durable Object, Container, R2 연결과 HTTP 경로.
 - [runtime](./runtime/README.md) - 컨테이너 안에서 실행하는 Linux 런타임.
+- [runtime-shared](./runtime-shared/README.md) - 런타임 이미지에 복사하는 자율 작업 계약·검증 코드.
 
 ### 계약과 스케줄러
 
@@ -22,7 +23,7 @@
 - `[contracts.ts:SchedulerState]`, `[contracts.ts:CredentialRecord]`, `[contracts.ts:SealedAuth]` - 스케줄러 상태와 인증 기록의 타입.
 - `[contracts.ts:RalphPolicy]`, `[contracts.ts:RalphRound]`, `[contracts.ts:RalphCheckpoint]`, `[contracts.ts:RalphFeedback]` - 반복 실행(Ralph)의 타입.
 - `[contracts.ts:terminal]` - 상태가 종료 상태인지 판정한다.
-- `[scheduler.ts:Scheduler]` - 메서드는 `submit`, `enqueueCompute`, `registerCredential`, `dispatch`, `running`, `agentFinished`, `computeFinished`, `quarantine`, `requestCancel`, `expire`, `get`, `list`다.
+- `[scheduler.ts:Scheduler]` - 메서드는 `submit`, `enqueueCompute`, `registerCredential`, `dispatch`, `running`, `agentFinished`, `computeFinished`, `quarantine`, `failUnstartedNative`, `requestCancel`, `expire`, `get`, `list`다.
 - `[scheduler.ts:validateJobSpec]`, `[scheduler.ts:validateCheckSpec]`, `[scheduler.ts:validateModelSelection]` - 제출 입력을 검증한다.
 - `[scheduler.ts:SchedulerError]`, `[scheduler.ts:AgentOutcome]`, `[scheduler.ts:ComputeOutcome]` - 오류와 완료 보고의 타입.
 
@@ -64,6 +65,17 @@
 - `[client.ts:createClient]` - 메서드는 `upload`, `submit`, `get`, `result`, `draftWorkflow`, `approveWorkflow`, `getWorkflow`다.
 - `[client.ts:runClientCli]` - 하위 명령은 `snapshot`, `upload`, `submit`, `get`, `result`, `apply`, `workflow-draft`, `workflow-approve`, `workflow-get`, `workflow-result`다. `HIVEMIND_URL`과 `HIVEMIND_CONTROL_TOKEN`을 읽는다.
 
+### 영속 스케줄러와 자율 작업
+
+- `[scheduler-storage.ts:SchedulerStoragePort]`, `SchedulerStorage`, `createSchedulerStorage`, `loadSchedulerState`, `schedulerLegacyByteLength`: 주입한 비동기 storage에 상태를 저장·복원하고 작업 요약 페이지를 제공한다. `SCHEDULER_STATE_NORMAL_BYTES`, `SCHEDULER_STATE_HARD_BYTES`, `SCHEDULER_STATE_LEGACY_BYTES`는 각각 30MiB·32MiB·2MiB다.
+- `[scheduler-jobs.ts:SchedulerJobQuery]`, `JobSummary`, `SchedulerJobPage`, `pageSchedulerJobs`: 작업 상세 본문 없이 순서·서명 cursor에 따른 요약 페이지를 반환한다.
+- `[autonomous-service.ts:AutonomousService]`: `execute`, `tick`, `supportsLongRunning`으로 공통 `AutonomousEngine`을 Durable Object storage에 연결한다. core 엔진과 API 연산은 저장소의 `/packages/core/src/autonomous.ts`, `/apps/control-plane/src/autonomous-api.ts`에서 가져온다. `AutonomousStorage`, `AutonomousStorageCapacityError`, `AUTONOMOUS_STATE_MAX_BYTES`, `AUTONOMOUS_STATE_HARD_MAX_BYTES`가 저장 계약이다.
+- `[autonomous-cloud.ts:AutonomousCloudController]`: `status`, `step`으로 claim·제출·조회·완료·복구를 짧은 영속 단계로 진행한다. `AutonomousCloudRecord`, `AutonomousCloudSubmission`, `AutonomousCloudPoll`, `AutonomousCloudPorts`, `AutonomousCloudOptions`가 단계 상태와 주입 포트 계약이다.
+- `[autonomous-cloud-protocol.ts:AutonomousCloudInput]`, `AutonomousCloudOutput`, `SealedAuth`, `AUTONOMOUS_CLOUD_MAX_BYTES`, `validateAutonomousCloudInput`, `validateAutonomousCloudOutput`: 비공개 native 입출력 envelope를 검증한다. 이 파일의 `SealedAuth`는 별도 선언이며 `contracts.ts`에도 같은 이름의 타입이 있다.
+- `[autonomous-session-objects.ts:PrivateR2Bucket]`, `R2PrivateBlobStore`: `durable=true`인 private session blob 저장 포트다. `get`, `put`만 제공하며 명시적으로 받은 비공개 bucket을 사용한다.
+- `[autonomous-external.ts:ExternalEnvironment]`, `ExternalArtifactBucket`, `ExternalRuntimeOptions`, `AutonomousExternalRuntime`, `createAutonomousExternalRuntime`: 신뢰된 설정·core·SQL·artifact bucket으로 외부 행동 runtime을 구성한다. 반환값은 `enabled`, `service`, `configurationFingerprint`, 선택적 `large`, `configuredSecretValues`, `recover`, `cleanupDue`다.
+- `[autonomous-external.ts:createExternalArtifactLoader]`, `externalConfiguredSecretValues`, `openLargeFor`: 제한된 artifact 읽기, 비공개 안전 검사 입력과 owner에 결속된 대형 파일 읽기를 제공한다. 비밀 값 목록은 공개 응답용이 아니다.
+
 ## Invariants
 
 - 종료 상태는 `SUCCEEDED`, `FAILED`, `CANCELLED`, `TIMED_OUT`, `NEEDS_REAUTH`, `AUTH_SYNC_FAILED`다. `[contracts.ts:terminal]`
@@ -78,7 +90,7 @@
 - 같은 작업·시도의 완료 보고가 다른 내용으로 다시 오면 거부한다. `[scheduler.ts:Scheduler.agentFinished]`
 - snapshot은 1,000파일, 4MiB 이하다. 경로는 512자 이하의 상대 경로이며 `.`·`..` 구간을 받지 않는다. `[snapshot.ts:canonicalSourcePath]`, `[snapshot.ts:MAX_SOURCE_FILES]`, `[snapshot.ts:MAX_SOURCE_BYTES]`
 - `.git`, `.hivemind`, `node_modules`, `auth.json`, `.env*`, `*.pem` 등 비공개 경로는 snapshot에서 제외한다. `[snapshot.ts:excludedSourcePath]`
-- `applySnapshot`은 현재 소스의 digest가 기준 snapshot과 같을 때만 적용한다. 실패하면 이미 쓴 파일을 되돌린다. `[files.ts:applySnapshot]`
+- `applySnapshot`은 현재 소스의 digest가 기준 snapshot과 같을 때만 적용한다. 실패하면 이미 쓴 파일을 되돌리되 동시 수정으로 rollback이 충돌하면 비공개 backup을 남긴다. `[files.ts:applySnapshot]`
 - workflow는 워커가 정확히 2개이고 제공자와 `credentialId`가 서로 달라야 한다. 계약 경로와 쓰기 경로는 서로 겹치지 않아야 한다. `[workflow.ts:validateWorkflowSpec]`
 - 각 워커는 자기 쓰기 범위 안의 파일만 바꿔야 한다. 범위를 벗어나면 병합을 거부한다. `[workflow.ts:mergeWorkflowOutputs]`
 - compute group은 `concurrency`가 1·2·4, `instance`가 `standard-1`·`standard-3`·`standard-4`, checks가 1-4개다. `[compute-group.ts:validateComputeGroupSpec]`
@@ -93,6 +105,18 @@
 - Terra 게이트웨이는 `terraEndpoint`의 POST만 받고 본문은 8MiB 이하다. `[terra-gateway.ts:handleTerraGateway]`
 - `client.ts`의 `apply`는 `SUCCEEDED` 작업만 허용한다. 서버 URL은 https이거나 로컬 호스트의 http여야 한다. `[client.ts:runClientCli]`, `[client.ts:createClient]`
 
+- `[scheduler.ts:Scheduler.failUnstartedNative]`는 신뢰된 `containerStopped:true`, `neverLaunched:true` 증명과 해당 autonomous STARTING 작업·credential 소유권이 맞을 때만 인증을 회수한다. 이미 실행된 작업의 일반 실패 경로로 쓰지 않는다.
+- `[scheduler-storage.ts:createSchedulerStorage]`는 transaction이 있는 storage에서 instruction pool·chunk·generation manifest를 원자적으로 바꾼다. 새 root 작업 등이 추가되지 않는 복구 저장만 32MiB를 쓰며 일반 admission은 30MiB다. history 제거와 generation이 달라진 writer를 거절한다.
+- `[scheduler-storage.ts:createSchedulerStorage]`는 v2 이관 뒤 legacy `state`를 수정하지 않는다. transaction이 사라진 adapter로 v2 상태를 읽거나 쓸 수 없으며 구버전 rollback용 snapshot으로 legacy 키를 사용하지 않는다.
+- `[scheduler-jobs.ts:pageSchedulerJobs]`는 limit 1~100, 기본 20을 적용하고 HMAC cursor를 작업 요약 scope와 최초 상한에 결속한다. `[autonomous-service.ts:AutonomousService]`는 task summary·request index·credential owner를 전체 catalog와 대조한다.
+- `[autonomous-service.ts:AutonomousService.partitioned]`는 transaction storage에서 task별 chunk와 catalog를 원자적으로 저장한다. 일반 30MiB·복구 32MiB 합계 한도이며 tick은 만기가 된 task 최대 25개를 읽는다. transaction 없는 legacy 경로는 일반 1536KiB·복구 1900KiB이고 long_running을 거절한다.
+- `[autonomous-cloud.ts:AutonomousCloudController]`는 제출 전에 polling marker와 고정 job ID를 저장한다. 응답 유실 뒤 submit을 재전송하지 않는다. 불명확한 실행은 pause·취소·정확한 소유권의 credential 격리·`abandonCloud`로 처리한다.
+- `[autonomous-cloud-protocol.ts:validateAutonomousCloudInput]`는 16MiB envelope, 서로 다른 worker/reporter token, HTTPS control origin, native lease·모델·session의 필드 모양을 검사한다. 최초 snapshot은 64KiB·32파일 이하이고 sequence 0에만 제공한다. `[autonomous-cloud-protocol.ts:validateAutonomousCloudOutput]`는 Linux·no-new-privileges·capabilities 제거 증거와 quota checkpoint 모양을 검사한다.
+- `[autonomous-session-objects.ts:R2PrivateBlobStore.put]`는 키·크기를 검증하고 `etagDoesNotMatch:'*'`로 덮어쓰기를 막는다. `get`은 선언 크기와 실제 바이트 수를 대조하며 오류 세부 정보를 정리한다.
+- `[autonomous-external.ts:createAutonomousExternalRuntime]`는 명시적 설정만 사용한다. 새 외부 행동은 전역·profile·provider 활성화와 credential을 요구하며 AWS 시작은 TTL guard와 설정된 비용 정책도 필요하다. 현재 설정이 바뀌어도 복구는 저장된 과거 provider 정책으로 읽기·정리만 수행하며 timer를 새로 만들지 않는다.
+- `[autonomous-external.ts:configuration]`는 HF LFS 공개 게시의 `allowPublicLarge:true`, 명시적 upload host와 크기 한도를 요구한다. 대형 업로드는 multipart bucket·영속 ledger·manifest ledger를 모두 갖춰야 연결한다. `[autonomous-external.ts:openLargeFor]`는 task/revision/profile owner로 파일을 연다.
+- `[autonomous-external.ts:cleanupDue]`는 한 번에 기본 20개·최대 100개 journal을 진행한다. 실패는 비용 0으로 확정하지 않고 backoff로 재조회하며 비용 초과는 core의 `stopExternalBudget`으로 전달한다.
+
 ## Side Effects
 
 - `scheduler.ts`, `snapshot.ts`, `contracts.ts`, `large-artifact.ts`, `terra-latency.ts`, `evidence.ts`는 저장소·네트워크·환경에 접근하지 않는다. `Scheduler`는 메모리 상태만 바꾼다. `[scheduler.ts:Scheduler]`
@@ -104,8 +128,13 @@
 - 파일: 운영자 CLI가 `--out` 파일을 쓰고 JSON을 stdout에 출력한다. `[client.ts:runClientCli]`
 - 상태 변경: workflow와 compute group 진행이 스케줄러의 `requestCancel`, `enqueueCompute`를 호출한다. `[workflow.ts:advanceWorkflow]`, `[compute-group.ts:advanceComputeGroup]`
 
+- Durable storage: `[scheduler-storage.ts:createSchedulerStorage]`는 `scheduler:manifest`, generation별 `scheduler:chunk:*`, 작업 페이지 순서·서명 secret을 저장하고 이전 generation chunk를 지운다. transaction 없는 legacy 경로는 `state`를 사용한다.
+- Durable storage: `[autonomous-service.ts:AutonomousService]`는 legacy `autonomous-state` 또는 `autonomous:catalog`, task manifest·chunk·request index·credential owner를 저장한다. `AutonomousCloudController`는 비공개 `autonomous-cloud:<taskId>` 단계를 저장하며 주입 포트의 submit·poll·cancel·quarantine을 호출한다. [autonomous-cloud.ts:`AutonomousCloudController`]
+- 비공개 R2: `[autonomous-session-objects.ts:R2PrivateBlobStore]`는 명시적으로 받은 bucket의 `autonomous-sessions/` prefix를 읽고 쓴다. 공개 ARTIFACTS 접근 포트는 없다.
+- 외부 행동: `[autonomous-external.ts:createAutonomousExternalRuntime]`는 공통 ExternalBroker·SQL 저장소·provider transport·credential resolver를 연결한다. 생성 자체는 provider를 호출하지 않으며 이후 service/recover/cleanup은 승인된 provider 조회·실행·정리를 호출할 수 있다. `createLargeManifestStore`는 SQL `external_large_manifests`를 만들고 manifest를 저장한다.
+
 ## Verification
 
 - Run: `npm test` (`cloudflare/backend/`에서 실행. `node --test test/*.test.ts`)
 - Run: `npm run typecheck` (`cloudflare/backend/`에서 실행. `tsc --noEmit`)
-- 이 폴더의 `.ts`, `.mjs`, `.py` 파일을 바꾸면 `runtime-build.json`의 `digest`가 달라진다. `npm run runtime:check`로 확인한다.
+- 이 폴더의 `.ts`, `.mjs`, `.py` 파일은 runtime manifest 입력이다. 변경 시 `npm run runtime:check`로 확인한다. 이 디렉터리의 README는 digest 입력이 아니다. [../scripts/runtime-build.ts:`buildRuntimeManifest`, `trees`]

@@ -27,7 +27,7 @@ def instance(expiry=NOW, **changes):
     tags.update(changes)
     return {'InstanceId':'i-0123456789abcdef0','ClientToken':REQUEST['clientToken'],'State':{'Name':'running'},'IamInstanceProfile':{'Arn':manifest()['profiles'][0]['instanceProfileArn']},'Placement':{'AvailabilityZone':'ap-northeast-2a'},'LaunchTime':datetime.fromtimestamp((NOW-60000)/1000,timezone.utc),'Tags':[{'Key':k,'Value':v} for k,v in tags.items()]}
 class FakeEc2:
-    def __init__(self, pages, volume_pages=None): self.pages=pages; self.queries=[]; self.terminated=[]; self.volume_pages=volume_pages or [{'Volumes':[]}]; self.volume_queries=[]; self.deleted=[]; self.volume_readback=None
+    def __init__(self, pages, volume_pages=None): self.meta=types.SimpleNamespace(region_name=REQUEST['region']); self.pages=pages; self.queries=[]; self.terminated=[]; self.volume_pages=volume_pages or [{'Volumes':[]}]; self.volume_queries=[]; self.deleted=[]; self.volume_readback=None
     def describe_instances(self, **kwargs):
         self.queries.append(kwargs)
         return self.pages[int(kwargs.get('NextToken','0'))]
@@ -45,6 +45,7 @@ def page(*instances, token=None):
     if token is not None: value['NextToken']=token
     return value
 class FakeRegistry:
+    def __init__(self):self.meta=types.SimpleNamespace(region_name=REQUEST['region'])
     def get_item(self, **kwargs):
         r=REQUEST
         if kwargs['Key']['owner']['S']!=r['ownershipToken']: return {}

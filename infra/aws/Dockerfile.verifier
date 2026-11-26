@@ -1,0 +1,22 @@
+FROM node:24-slim AS build
+WORKDIR /app
+COPY package.json package-lock.json tsconfig.json ./
+RUN npm ci --ignore-scripts
+COPY packages ./packages
+COPY apps ./apps
+COPY cloudflare/backend/src ./cloudflare/backend/src
+RUN npm run build
+
+FROM node:24-slim
+WORKDIR /app
+# Independent Verification image: runs pinned acceptance tests against SHA-256 verified S3 bundles & patches.
+# Strictly contains ZERO model CLIs, ZERO model subscription auth, and ZERO GitHub credentials.
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts
+COPY --from=build /app/dist ./dist
+RUN mkdir -p /app/.work /tmp/hivemind && chown -R node:node /app /tmp/hivemind
+USER node
+ENV PATH="/app/node_modules/.bin:${PATH}"
+ENV HIVEMIND_WORK_ROOT="/app/.work"
+CMD ["node", "dist/apps/worker/src/aws-verifier-main.js"]

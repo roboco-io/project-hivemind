@@ -55,9 +55,9 @@ HIVEMIND_WORKER_TOKEN=local-worker-only npm run autonomous:mock
 | R5 세션·캐시 | 비공개 세션 복원. 이전 실제 Claude 2회 반복과 cache read 확인. 신규 장기 경로 미검증 |
 | R6 대기 | 일일 시간대·DST·구조화 quota reset 대기·재시작 복원 구현. 실제 제한 도달 미검증 |
 | R7 자격 증명 | 구독 인증 직렬화, 서버 전용 AWS·HF·GitHub resolver. 새 실제 제공자 자격 미사용 |
-| R8 비용 상한 | task 전체 revision 예산·예약·정산·미확정 비용 차단. 실제 청구·하드 상한 보장 미검증 |
-| R9 외부 행동 | AWS Spot·HF private commit·GitHub expected-head commit, 멱등 복구 구현. 실제 제공자 미검증 |
-| R10 사람 개입 | operator MCP 18개 도구와 dashboard, 승인·변경·메시지·취소·청구 근거 기록 |
+| R8 비용 상한 | task 전체 revision 예산·예약·정산·미확정 비용 차단. 외부 행동은 예약 기반 상한이며 실제 청구는 Cost Explorer로 사후 검증한다. 주기 점검이 상한 초과를 보면 작업을 중단한다. 실행 중 실제 청구 기반 집행은 만들지 않았다([비용 상한과 중단](#비용-상한과-중단)). 실제 청구·하드 상한 보장 미검증 |
+| R9 외부 행동 | AWS Spot·AWS S3 put·inspect·HF commit(private 또는 공개)·HF LFS commit(private 기본, 명시 승인 시 공개)·GitHub expected-head commit, 멱등 복구 구현. 모두 가짜 HTTP로만 검사했고 실제 AWS·Hugging Face·GitHub는 미검증 |
+| R10 사람 개입 | operator MCP 19개 도구와 dashboard, 승인·변경·메시지·취소·청구 근거 기록 |
 | R11 정리 | 소유 자원 정리·재시작 복구·AWS TTL guard/CDK 구현. 실제 자원 정리 미검증 |
 
 외부 자원의 `cleaned`·정산 전이는 서버 전용 경로가 실제 부재 근거를 확인한 뒤 수행한다. 공개 API로 이를 우회할 수 없다. 임의 Bash에는 제공자 비밀을 주입하지 않는다. 검증 후보는 Cloudflare에 배포했으며 새 기능은 비활성이다. 원격 격리와 장기 운영 수용은 아직이다. 구현·검사 근거와 잔여 운영 검증은 [잔여 구현 기록](plans/2026-11-20-autonomous-remaining.report.md)을 따른다.
@@ -84,7 +84,7 @@ lease가 만료된 실행은 체크포인트가 있어도 자동 재실행하지
 
 워커는 `createClaudeAutonomousExecutor`와 `createClaudeRuntimeHttpPort`를 명시적으로 주입한다. private runtime URL·토큰은 신뢰하는 워커 설정에만 두며 작업 정책·공개 상태에 저장하지 않는다. private `/iteration`은 인증한 뒤 요청을 처리한다. 실행 요청에는 현재 `executionLease` 복사본을 포함한다. runtime은 자신의 runtime ID로 중앙 `native-start`를 호출해 유효한 claim을 확인하고, 응답의 정규 정책·체크포인트·deadline을 요청과 대조한 뒤 CLI를 시작한다. 같은 lease를 다른 runtime에 결속할 수 없다. 실행 중 중앙 heartbeat가 거절되면 중단한다. runtime의 중앙 authorizer는 신뢰하는 설정 `HIVEMIND_CONTROL_API_URL`과 `HIVEMIND_AUTONOMOUS_WORKER_TOKEN`을 사용한다. 워커가 private runtime에 보내는 토큰은 별도 `HIVEMIND_AUTONOMOUS_RUNTIME_TOKEN`이다. 운영자 토큰은 native-start를 호출할 수 없다. private 포트 인증만으로 중앙 승인을 대신할 수 없다. 전용 bootstrap 직접 실행은 `HIVEMIND_AUTONOMOUS_RUNTIME_TOKEN` 설정으로 명시적으로 선택하며 기본 loopback 포트는 3100이다. 기존 Docker CMD와 rollout 게이트는 유지한다. 로컬 호스트 CLI로 우회하지 않는다.
 
-native는 `durable === true`인 비공개 저장소를 요구한다. `EncryptedSessionStore`는 명시적인 32바이트 키와 durable blob 저장소를 받는다. 파일 저장소와 private R2는 불변 객체를 저장한다. 암호화 AAD는 작업·세션·모델·sequence·객체 키를 결속한다. 주·자식 transcript와 작업 snapshot을 보존하며 제공자 인증 파일은 bundle에서 제외한다. MemorySessionStore는 mock 전용이다.
+native는 `durable === true`인 비공개 저장소를 요구한다. `EncryptedSessionStore`는 명시적인 32바이트 키와 durable blob 저장소를 받는다. 파일 저장소와 private R2는 불변 객체를 저장한다. 암호화 AAD는 작업·세션·모델·sequence·객체 키를 결속한다. 주·자식 transcript와 작업 snapshot을 보존하며 제공자 인증 파일은 bundle에서 제외한다. Claude Code 2.1.319는 자식 transcript 옆에 `agent-<id>.meta.json` 같은 메타데이터 파일을 만든다. 수집기는 `agent-<id>.<종류>.json` 형식의 일반 파일을 건너뛰고 bundle에 넣지 않는다. 그 밖의 이름이나 일반 파일이 아닌 항목은 계속 거절한다. MemorySessionStore는 mock 전용이다.
 
 Claude native는 Bash를 필수로 두며 Agent·WebFetch·`mcp__hivemind__action`을 작업 허용 목록에 추가할 수 있다. WebFetch에는 승인한 exact host 목록, action에는 승인한 외부 profile 목록이 필요하다. 자식 모델은 `subagentModel ?? model`로 고정한다. 주 모델과 자식 모델은 별칭 대신 구체적인 모델 ID를 지정해야 한다. 실제 제공자의 해당 모델 가용성은 별도 검증이 필요하다. 주 세션의 승인 credential ID는 정확히 하나다. 외부 profile을 사용하면 승인한 aws·hf·github만 systems에 지정하며, 제공자 비밀은 서버 전용 resolver가 처리한다.
 
@@ -96,7 +96,7 @@ native 비용은 `costMicros: null`로 보고한다. 기본 metered 정책에서
 
 `billingPolicy: {model:'subscription', budget:'external_actions'}`는 Claude 작업에서만 명시적으로 선택한다. 생략하면 기존 미확정 모델 비용 대사 정책을 유지한다. 정책 변경은 revision과 새 승인이 필요하며, 실행 이력이 있으면 정책을 바꿀 수 없다.
 
-새 정책의 `budgetMicros`는 중앙 외부 행동 예약·정산 예산이다. 구독료·모델 금액·플랫폼·컨테이너·R2 비용은 이 예산에 포함되지 않는다. 실제 외부 클라우드 연결과 유료 호출의 상한 집행은 구현하지 않았다. native 실행의 `costMicros`는 계속 `null`이며 비용 0으로 확정하지 않는다.
+새 정책의 `budgetMicros`는 중앙 외부 행동 예약·정산 예산이다. 구독료·모델 금액·플랫폼·컨테이너·R2 비용은 이 예산에 포함되지 않는다. 외부 행동의 비용 상한은 예약 기반이며, 실제 청구를 읽어 실행 중에 집행하는 기능은 만들지 않았다. 사후 검증과 주기 점검의 범위는 [비용 상한과 중단](#비용-상한과-중단)에 적었다. native 실행의 `costMicros`는 계속 `null`이며 비용 0으로 확정하지 않는다.
 
 별도 reporter는 CLI 시작 전에 ready를 확인하고 프로세스 종료·세션 수집 뒤 완료 receipt를 제출한다. 중앙은 runtime·session·model·sequence·사용량이 finish와 일치할 때만 `subscription_runtime` 근거를 기록한다. 확인된 구독 반복은 사람의 매회 `reconcile-run`·`resume` 없이 이어진다. receipt 누락·lease 유실·실행 결과 불명확은 자동 면제하지 않는다. 기본 metered 정책은 앞 절의 수동 대사 흐름을 유지한다.
 
@@ -108,7 +108,7 @@ native 비용은 `costMicros: null`로 보고한다. 기본 metered 정책에서
 
 로컬 서버의 선택 설정은 `HIVEMIND_NATIVE_REPORTER_TOKEN`, Cloudflare는 `AUTONOMOUS_REPORTER_TOKEN`이다. runtime reporter는 `HIVEMIND_CONTROL_API_URL`과 `HIVEMIND_NATIVE_REPORTER_TOKEN`을 사용한다. reporter 키는 운영자·워커·private ingress 키와 분리한다. CLI 환경·세션·공개 응답에는 넣지 않는다. 워커 HTTP는 GET과 POST 모두 redirect를 거절하여 lease 본문과 인증의 재전송을 막는다. 설정 누락이나 권한 거절 시 새 정책의 CLI 실행을 시작하지 않는다.
 
-`packages/adapters/src/autonomous-loop.ts`의 `runAutonomousLoop(options)`는 선택적 라이브러리다. import나 기존 명령 실행으로 루프를 시작하지 않는다. 기존 `runAutonomousIteration` 옵션에 양의 정수 `maxIterations`와 `maxIdlePolls`를 반드시 지정한다. `pollMs` 기본값은 1000ms이며 1~60000ms만 허용한다. `maxIdlePolls`는 루프 전체의 대기 횟수 상한이다. 성공 결과는 `{iterations, reason}`이며 반복 상한은 `iteration_limit`, 대기 상한은 `idle_limit`이다. `workerState` 없는 구형 클라이언트는 단일 반복에 쓸 수 있지만 루프에는 쓸 수 없다.
+`packages/adapters/src/autonomous-loop.ts`의 `runAutonomousLoop(options)`는 선택적 라이브러리다. import나 기존 명령 실행으로 루프를 시작하지 않는다. 기존 `runAutonomousIteration` 옵션에 양의 정수 `maxIterations`와 `maxIdlePolls`를 반드시 지정한다. `pollMs` 기본값은 1000ms이며 1-60000ms만 허용한다. `maxIdlePolls`는 루프 전체의 대기 횟수 상한이다. 성공 결과는 `{iterations, reason}`이며 반복 상한은 `iteration_limit`, 대기 상한은 `idle_limit`이다. `workerState` 없는 구형 클라이언트는 단일 반복에 쓸 수 있지만 루프에는 쓸 수 없다.
 
 루프는 운영자 credential을 받지 않고 자동 승인하지 않는다. waiting·다른 워커의 running·claim 경합에서는 잠든 뒤 최소 상태만 조회한다. 종료·입력 대기·stopping·승인 대기에서는 새 실행 없이 반환한다. 실제 sleep은 AbortSignal로 중단할 수 있다. 실행·체크포인트·finish 오류는 호출자에게 전파하며 자동 재시도하지 않는다. 호출자는 중앙 상태와 미확정 실행을 확인한 뒤 후속 행동을 결정해야 한다. 테스트용 `now`·`wait` 주입은 합성 시계이며 실제 24시간 무인 운영 근거가 아니다.
 
@@ -157,10 +157,72 @@ exec intent 유실·이미 launch한 실행·종료 미확인은 이 경로를 �
 
 Worker는 기존 CLAUDE_NESTED_APPROVED 설정을 private 입력의 선택 필드 claudeNestedCompatible에 복사한다. 파일 실행기는 이를 trusted options의 nestedCompatible로 전달해 기존 Claude 설정 모드를 선택한다. standalone 기본값은 false로 유지한다. task·native request·공개 JobSpec은 이 필드를 지정할 수 없다. 실패 시 모드를 바꾸는 fallback은 없으며 실제 boundary probe는 인증 전달 전에 계속 필수다. 이 전달은 기존 서버 계정 모드와의 설정 일치이며 새 실행 권한을 부여하지 않는다.
 
+## 비용 상한과 중단
+
+외부 행동의 상한은 예약으로 막는다. 행동을 실행하기 전에 profile의 `upperBoundMicros`를 작업 예산에서 예약한다. 예약과 확인된 비용의 합(exposure)이 작업 상한(cap)을 넘으면 새 행동을 승인하지 않는다. 이 예약은 실제 청구액이 아니라 최대 노출액이다.
+
+실제 청구는 Cost Explorer를 읽어 사후에 확인한다. Cost Explorer 데이터는 최대 48시간 늦게 반영되므로, 실행 중인 자원의 실제 청구를 읽어 바로 차단하는 기능은 만들지 않았다. 검증된 비용이 들어오기 전까지 예약은 유지된다.
+
+Cloudflare 백엔드의 Durable Object alarm은 정리 작업과 함께 주기 점검(sweep)을 한다. 점검은 다음 세 경우 중 하나에서 작업을 중단한다. 첫째, broker가 `cost_exceeded`로 표시한 경우다. 둘째, 검증된 비용(verified)이 cap 이상인 경우다. 셋째, exposure가 cap을 넘는 경우다. exposure가 cap과 같으면 중단하지 않는다. 중단은 기존 `budget_exceeded` 중단 경로를 쓰며, 이미 중단 중이거나 종료된 작업에는 아무 일도 하지 않는다. `stopExternalBudget`은 서버 내부 연산이며 HTTP 경로가 없다. 점검은 자원 만료 시각도 다음 alarm 시각에 반영한다. 로컬 control-plane에는 이 점검을 연결하지 않았다.
+
+이 중단은 새 모델 호출과 새 외부 행동을 막는다. 이미 만들어진 외부 자원의 정리는 기존 정리 절차가 맡으며, 중단이 곧 정리 완료를 뜻하지 않는다.
+
+## 워커 도구 호출 기록
+
+`counts.toolCalls`는 broker를 거친 외부 행동의 건수다. 워커 컨테이너 안에서 Claude가 부른 Bash·WebFetch 같은 내부 도구 호출은 포함하지 않는다. 내부 도구 호출은 별도 기록으로 남기며, `counts.workerToolCalls`에 저장된 건수를 표시한다.
+
+이 기록은 워커가 보고한 내용이며 독립 증명이 아니다. 워커가 기록을 빠뜨리거나 바꿀 수 있고, HIVEMIND는 보고되지 않은 호출을 알 수 없다. 모든 레코드와 응답에 `source: 'worker_report'`를 표시한다. 대시보드와 MCP 도구는 같은 문구로 이 사실을 알린다.
+
+컨테이너 안의 hook(`PreToolUse`, `PostToolUse`, `PostToolUseFailure`)이 호출마다 한 줄을 spool 파일에 추가한다. 워커는 heartbeat와 종료 전에 묶음으로 서버에 전송한다. 서버는 lease를 확인한 뒤 `(작업, 실행, sequence)`를 멱등 키로 저장한다. 재전송은 중복을 만들지 않는다. 건너뛴 sequence는 409와 `expectedSequence`로 거절한다.
+
+| 항목 | 한도 또는 규칙 |
+|---|---|
+| 레코드 크기 | 1024바이트 |
+| 입력 요약 | 512바이트. 가리기를 마친 뒤 UTF-8 경계에서 자른다. 잘리면 `inputTruncated: true` |
+| 전송 묶음 | 32건 |
+| 작업당 저장 | 20000건, 16 MiB |
+| 워커 spool | 8 MiB |
+| 저장하지 않는 값 | `tool_response`. 입력 원문도 저장하지 않고 가린 요약과 원문 SHA-256 digest만 저장한다 |
+
+알려진 비밀 값, API 키·토큰 형태, PEM 블록, `Authorization`·`Bearer` 값, URL의 사용자 정보는 요약에서 `[REDACTED]`로 바꾼다. 가리기는 패턴 기반이므로 모든 비밀을 잡는다고 보장하지 않는다. spool이나 저장소가 가득 차면 작업을 멈추지 않고 버린 건수를 센다. 이 값은 응답의 `totals.droppedByWorker`, `totals.droppedByStore`에 나온다. 버린 건수가 있으면 기록이 완전하지 않다. spool을 쓸 수 없으면 `PreToolUse`는 닫힌 쪽으로 실패해 해당 도구 호출을 막는다.
+
+| 역할 | 메서드·경로 | 본문 또는 쿼리 |
+|---|---|---|
+| 운영자 | GET `/:id/tool-calls` | `limit`(1-100), `cursor` |
+| reporter | POST `/:id/tool-calls` | lease, records, droppedByWorker |
+
+운영자 대시보드는 `/api/cloudflare/autonomous-tasks/:id/tool-calls`를 거쳐 같은 응답을 읽는다. MCP 도구는 `hivemind_autonomous_tool_calls`다. 서버가 준 값은 대시보드에서 `textContent`로만 표시한다. 실제 컨테이너가 보내는 hook payload 필드는 Claude Code 2.1.319 기준의 추정이며 실제 컨테이너에서 확인하지 않았다.
+
+## S3 쓰기·조회
+
+`provider: 's3'` profile은 `aws.s3.put`과 `aws.s3.inspect`를 허용한다. put은 이미 등록한 artifact를 서버가 정한 bucket과 prefix 아래 한 객체로 저장한다. 모델이 정하는 값은 `keySuffix`와 `artifactDigest`뿐이다. inspect는 같은 승인 안의 put을 가리키는 `{putActionId}`만 받으며, 그 put의 키와 digest를 HEAD로 확인한다. bucket·prefix·계정·region·KMS 키는 서버 profile만 정하고, 운영자는 승인 화면에서 bucket과 prefix를 본다.
+
+put은 기존 객체를 덮어쓰지 않으며 HIVEMIND는 객체를 삭제하지 않는다. 비용은 `verifiedCostMicros: null`로 두어 운영자가 정산하기 전까지 예약을 유지한다. 인스턴스 종료나 작업 종료는 저장 비용을 끝내지 않는다. 객체 크기는 artifact 한도(1 MiB)와 `maxObjectBytes` 중 작은 값을 넘을 수 없다. 설계, IAM 예시와 한계는 [S3 설계](plans/2026-11-21-autonomous-external-s3.md)에 있다. 이 경로는 가짜 HTTP로만 검사했으며 실제 AWS S3와의 서명 호환은 확인하지 않았다.
+
+## Hugging Face 공개 범위와 LFS commit
+
+HF target에는 선택 필드 `visibility`(`private` 또는 `public`)가 있다. 공개 대형 게시에는 `allowPublicLarge: true`와 `hf.model.lfs_commit` 허용이 추가로 필요하다. 이 boolean은 승인 hash·대시보드·MCP 검토에 보존된다. 생략하면 private이다. 서버 설정의 visibility와 승인한 profile의 visibility가 다르거나, 저장소가 보고하는 `private` 값이 기대와 다르면 commit하지 않는다. visibility를 정하면 profile 해시가 바뀌므로 운영자는 정확한 공개 범위를 승인한다. 운영자 화면은 `hfVisibilityDisplay`(`visibility`, `publicEffect`, `notice`)를 보여 주어 공개 저장소에 commit한다는 사실을 승인 시점에 드러낸다. 비공개 저장소를 공개로 바꾸거나 저장소를 만드는 기능은 없다.
+
+`hf.model.lfs_commit`은 inline 한도(총 1 MiB)를 넘는 큰 파일을 올리는 별도 작업이다. 매개변수는 `{manifestDigest, message}`다. 흐름은 다음과 같다. 워커가 `external-large/begin`, `part`, `complete`로 파일을 8 MiB 조각 단위로 올리고, `manifest`로 파일 목록을 묶어 digest를 받는다. 서버는 이 manifest가 승인된 작업·revision·profile의 것인지 확인해 grant로 기록한다. grant가 없는 digest로는 commit할 수 없다. 작업을 취소하거나 revision을 바꾸면 해당 작업의 진행 중 업로드를 모두 중단한다.
+
+| 항목 | 한도 또는 규칙 |
+|---|---|
+| 파일 크기 | 파일당 5 GiB, 합계64 GiB, 최대32파일. LFS basic·multipart 지원. 일반 파일 합계16 MiB, commit wire24 MiB |
+| 조각 | 8 MiB. 마지막 조각을 뺀 모든 조각은 정확히 8 MiB |
+| 업로드 기록 수 | 작업·revision당 상태와 무관하게 최대 64개(`maxUploadRecords`, 설정 상한 256). 원장에는 행 삭제 경로가 없어서 `begin`과 `abort`를 반복하면 기록이 끝없이 늘 수 있으므로, 새 `begin`이 상한에서 413으로 거절된다. 같은 파일을 다시 `begin`해 기존 업로드를 이어 가는 호출은 새 기록을 만들지 않아 상한과 무관하게 통과한다. |
+| 무결성 | 조각마다 sha256을 기록하고, 완료 때 객체를 다시 읽어 전체 sha256과 크기를 확인한다. 다르면 객체를 지우고 409 |
+| 소유 | 저장 키는 작업·revision·profile에 묶인다. 다른 작업의 `storageRef`는 거절한다 |
+| 공개 저장소 | 기본 거절. public target과 allowPublicLarge:true가 승인된 프로필만 허용. 저장소 생성·공개 전환은 하지 않는다 |
+| 비밀 검사 | 게시 전 bounded stream으로 전체 파일의 크기·SHA256·알려진 비밀의 raw/base64/URL/JSON 변형과 credential 패턴을 검사한다. 메시지·경로도 검사한다. 완전한 DLP나 모든 은닉 정보의 부재를 보증하지 않는다 |
+| 업로드 검증 | manifest는 `complete`로 hash 검증을 마친 파일만 담을 수 있다. 객체가 저장소에 있다는 사실만으로는 받지 않는다 |
+| 업로드 주소 | 서버가 정한 허용 호스트의 https만 받고, redirect를 따르지 않으며, 그 요청에 Authorization 헤더를 보내지 않는다 |
+
+2026-11-21 공식 HF 문서·huggingface_hub v2.4.0 프로토콜 소스와 공개 모델 metadata를 대조해 multipart·혼합 regular/LFS·빈 verify·중복 OID·만료 후 읽기 복구를 보완했다. 가짜 HTTP로 검사했으며 실제 Hugging Face는 미검증이다. 다중 GiB 객체의 사전 검사·재읽기에 필요한 실제 Worker CPU·시간은 별도 검증해야 한다. [조사와 사용법](hugging-face-publication.md)을 따른다.
+
 ## 실제 프로젝트 검증 이관
 
 2026-11-20 사용자 지시에 따라 실제24시간·외부 제공자·Fable 검증은 실제 프로젝트에서 수행한다. 이는 통과 판정이 아니다. 원문 이슈의 실제 수용과 이번 bounded 구현 완료를 구분한다. [구현 마감 기록](plans/2026-11-20-issue1-implementation-closeout.md), [인수 도구](plans/2026-11-20-issue1-acceptance-harness.md)를 따른다.
 
 HF/GitHub action에는 선택적 `artifact: {files:[{path,contentBase64}]}`를 함께 보낼 수 있다. 기존 action의 `parameters.artifactDigest`는 canonical artifact digest여야 한다. 모델 sidecar는 같은 승인 프로필로 파일을 등록한 뒤 반환 digest와 일치할 때만 원래 requestId의 action을 호출한다. 등록 자체는 외부 게시가 아니다. 파일이 다른 작업/revision/profile에서 등록되었다면 그 digest를 알아도 게시할 수 없다.
 
-현재 inline 상한은 총1MiB·32파일·파일당256KiB다. revision당32개·32MiB까지 저장을 예약하며 실패한 업로드도 할당량에 포함한다. HF는 private commit이며 공개 전환·대형 LFS·범용 S3 API를 지원하지 않는다. 이 범위를 넘어선 모델 배포를 완료했다고 표시하지 않는다.
+현재 inline 상한은 총1MiB·32파일·파일당256KiB다. revision당32개·32MiB까지 저장을 예약하며 실패한 업로드도 할당량에 포함한다. HF commit은 서버가 정한 visibility(생략하면 private)를 따르며, 대형 파일은 LFS 호환 전송을 사용하며 private가 기본이고 공개는 명시적 allowPublicLarge 승인 때만 허용한다. 비공개에서 공개로의 전환과 저장소 생성, 범용 S3 API는 지원하지 않는다. S3는 `aws.s3.put`·`aws.s3.inspect`만 제공한다. 이 범위를 넘어선 모델 배포를 완료했다고 표시하지 않는다.

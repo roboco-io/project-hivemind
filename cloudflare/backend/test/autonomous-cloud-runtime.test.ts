@@ -110,3 +110,8 @@ test('polling bootstrap during a large pending result never parses partial outpu
   release();assert.equal((await running)?.ok,true);const final=await fetch(url+'/autonomous/state',{headers});assert.equal(final.status,200);assert.equal((await final.json() as {resultReady:boolean}).resultReady,true);assert.equal((await fetch(url+'/autonomous/result',{headers})).status,200);
  }finally{release();await running;prototype.writeFile=original;await new Promise<void>(resolve=>server.close(()=>resolve()));if(previous===undefined)delete process.env.HIVEMIND_NATIVE_GATE_TOKEN;else process.env.HIVEMIND_NATIVE_GATE_TOKEN=previous;}
 }));
+test('production file path hands the reporter token and control origin to tool audit shipping',async()=>fixture(async dir=>{
+ const value=input();await writeNativePrivate(join(dir,NATIVE_FILES.input),value);let seen:any;
+ await runAutonomousFromFile(dir,{execute:async(r,options)=>{seen=options?.toolAudit;return {...response(),session:{...r.session,sequence:1,data:{}}};}});
+ assert.deepEqual(seen,{url:value.control.origin,token:value.control.reporterToken});assert.notEqual(seen.token,value.control.workerToken);
+}));

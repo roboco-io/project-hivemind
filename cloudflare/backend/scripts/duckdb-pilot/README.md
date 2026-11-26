@@ -30,6 +30,7 @@ node cloudflare/backend/scripts/duckdb-pilot/pilot.ts memory-batch ROOT NEW_RUN_
 
 - `pilot.ts` CLI - 첫 인자가 하위 명령이다. `prepare ROOT`, `prepare-local-ccache ROOT`, `baseline ROOT [ID] [SECONDS]`, `build ROOT ID C1|C2|C3|C4 JOBS`, `build-batch ROOT ID CONFIGS CONCURRENCY JOBS`, `build-ccache-batch ROOT ID cold|seed|reuse`, `memory ROOT ID BUILD_ID SF MEM_GIB THREADS QUERY_IDS CONCURRENCY`, `memory-batch ROOT ID BUILD_ID SF MEM_GIB THREADS CONCURRENCY`.
 - `[pilot.ts:COMMIT]` - 고정한 DuckDB commit.
+- `[pilot.ts:main]` - 위 CLI 하위 명령을 분기하는 공개 진입점.
 - `pilot.ts`가 읽는 환경 변수 - `DUCKDB_PILOT_OSX_SYSROOT`(SDK 선택), `DUCKDB_SKIP_JEMALLOC`(ccache 실행에 필수).
 - `[batch.ts:validateBuildBatch]`, `[batch.ts:executeBatch]`, `[batch.ts:BatchRecord]` - 빌드 batch 설정을 검증하고 제한된 worker pool로 실행한다.
 - `[memory-batch.ts:validateMemoryBatch]`, `[memory-batch.ts:shardScript]`, `[memory-batch.ts:MEMORY_SHARDS]`, `[memory-batch.ts:FLOAT_COMPARISON]` - 22개 query의 고정 4샤드 분할, 샤드 SQL, float 허용 오차.
@@ -73,6 +74,7 @@ node cloudflare/backend/scripts/duckdb-pilot/pilot.ts memory-batch ROOT NEW_RUN_
 - `oracle.py`는 SF1의 query 3, 9, 18, 21만 판정한다. 그 밖은 판정 불가로 반환한다. `oracle.py`
 - `remote.ts`의 동시 실행 수는 `matrix`와 `jemalloc-off`에서만 `[CONCURRENCY]` 인자로 정하며 1·2·4다. ccache phase는 2이고 `boundary`, `build`, `boundary-then-build`는 인자를 무시하고 1이다. phase 폴더마다 `operator.lock`은 하나다. `[remote.ts:remotePilot]`
 - `main-matrix.py`는 비용 상한 추정과 운영자 예비액의 합이 예산 이상이면 중단한다. manifest가 바뀌어도 중단한다. `main-matrix.py`
+- ccache 캠페인은 `remote/`의 파일 바이트까지 `campaign.json`에 고정한다. 기존 캠페인 도중에는 `remote/README.md`를 포함한 입력을 바꾸지 않는다. `[ccache-campaign.py:plan]`
 
 ## Side Effects
 

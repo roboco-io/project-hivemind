@@ -40,6 +40,16 @@
 - `claude-probe.ts` - `HIVEMIND_CLAUDE_OAUTH_TOKEN`을 읽어 실제 `claude` CLI를 실행한다.
 - `request-codex.ts`, `request-claude.ts` - 로컬 운영자 스크립트. 배포된 probe Worker를 `curl`로 호출하고 판정 결과를 기록한다.
 
+### 보조 인터페이스와 판정 범위
+
+- `codex-boundary-probe.ts:codexBoundaryArgs`, `parseCodexBoundaryObservation`은 고정 sandbox 명령과 제한된 관측값 해석을 제공한다. stdout marker가 정확히 하나이면 우선 사용하고, marker가 없을 때만 workspace receipt로 대체한다. 입력 길이는 128,000자로 제한한다.
+- `compute-stdio-probe.ts:computeStdioArgs`, `computeStdioTestSource`는 고정 TAP 검사 명령과 소스를 제공한다. `runComputeStdioProbe`는 정상 단언과 실패 단언을 모두 실행해 양성·음성 대조를 확인한다.
+- `claude-codex-layer-probe.ts:assessNativeNamespaceProbe`는 네이티브 namespace 결과를 허용 필드로 줄이고 반환 코드·UID·거부 errno를 대조한다. 같은 파일의 `claudeCodexLayerSettings`, `claudeCodexLayerEnvironment`, `claudeCodexLayerArgs`, `claudeCodexLayerCommand`는 고정 probe 구성을 만든다.
+- `claude-command-concurrency-probe.ts:collectConcurrencyDiagnostics`, `collectConcurrencyWaitState`는 제한된 guard trace·파일 metadata·프로세스 대기를 읽는다. 인증·비밀 이름 항목은 첫 함수의 캐시 목록에서 제외한다. `concurrencyBashCommand`, `claudeCommandConcurrencyArgs`, `claudeCommandConcurrencyEnvironment`는 고정 명령을 구성한다.
+- `claude-command-concurrency-probe.ts:warmupNestedBwrapPid`, `nestedBwrapCauseArgs`, `nestedBwrapCauseScript`, `assessNestedBwrapCause`는 원인 가설을 위한 별도 무인증 probe다. `hypothesisMatched`는 특정 stderr와 부모 종료·고아 프로세스 관측의 일치를 뜻한다. 일반 sandbox 수용을 의미하지 않는다.
+- `native-thread-receipts.ts:readNativeThreads`는 주어진 SQLite를 읽기 전용으로 열고 `threads` 테이블의 `id`, `rollout_path`, 선택적 `source`를 최대 16행 조회한 뒤 닫는다. 중앙 작업 DB에 접근하는 함수가 아니다.
+- `claude-agent-hook.ts`는 stdin을 최대 1MiB까지 받고 `claudeAgentReceipt` 검증을 통과한 항목만 기록한다. `auth-envelope.ts:sealAuth`는 난수를 생성하지만 파일이나 네트워크에 접근하지 않는다.
+
 ## Invariants
 
 - gate는 필수 check가 각각 정확히 한 번 PASS일 때만 PASS다. `[gate.ts:evaluateGate]`
@@ -65,6 +75,6 @@
 ## Verification
 
 - Run: `npm test` (`cloudflare/`에서 실행. `node --test tests/*.test.ts`)
-- Run: `npm run phase0:local` (`cloudflare/`에서 실행. 로컬 도구와 계정 상태만 확인한다)
+- `npm run phase0:local`은 `wrangler whoami` 또는 AWS STS 계정 조회를 수행하므로 기본 오프라인 검증에서 제외한다 (`collect.ts:collectLocal`).
 - `codex-probe.ts`, `claude-probe.ts`, `request-*.ts`는 테스트 명령에 포함하지 않는다. 실제 모델 호출이 발생하므로 운영자가 명시적으로 실행한다.
 - `auth-envelope.ts`, `claude-agent-hook.ts` 등 backend 이미지에 복사되는 파일을 바꾸면 `backend/runtime-build.json`의 `digest`가 달라진다. `cloudflare/backend/`에서 `npm run runtime:check`로 확인한다.

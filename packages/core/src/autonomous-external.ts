@@ -1,10 +1,12 @@
 import {createHash, randomUUID} from 'node:crypto';
+import type {ExternalS3Parameters} from '../../contracts/src/autonomous-external-s3.js';
 import type {
   ExternalAction, ExternalActionRequest, ExternalApproval, ExternalApprovalRequest,
   ExternalBrokerOptions, ExternalCredentialScope, ExternalInvocation, ExternalOperation,
   ExternalProfile, ExternalProviderReceipt, ExternalState,
   ExternalProviderTransport,
 } from '../../contracts/src/autonomous-external.js';
+import {validateExternalS3InspectParameters,validateExternalS3Parameters,validateExternalS3Target} from './autonomous-external-s3.ts';
 
 const copy = structuredClone;
 function reject(message:string):never {throw new Error(message);}
@@ -47,15 +49,28 @@ export interface GuardedExternalProviderTransport<C> extends ExternalProviderTra
   execute(invocation:ExternalInvocation,credential:C,authority?:ExternalDispatchAuthority):Promise<ExternalProviderReceipt>;
 }
 const approvalId=(r:Pick<ExternalApprovalRequest,'taskId'|'revision'|'profileId'>)=>hash([r.taskId,r.revision,r.profileId]);
-const operations:Record<string,ExternalOperation[]>={aws:['aws.spot.start','aws.spot.inspect'],hf:['hf.model.commit'],github:['github.branch.push']};
+const operations:Record<string,ExternalOperation[]>={aws:['aws.spot.start','aws.spot.inspect'],hf:['hf.model.commit','hf.model.lfs_commit'],github:['github.branch.push'],s3:['aws.s3.put','aws.s3.inspect']};
+/** Operations whose success leaves data at the provider and never a cleanup resource. */
+const RETAINED_OPERATIONS:ExternalOperation[]=['hf.model.commit','hf.model.lfs_commit','github.branch.push','aws.s3.put'];
+const isInspection=(operation:ExternalOperation)=>operation==='aws.spot.inspect'||operation==='aws.s3.inspect';
+function successEffect(operation:ExternalOperation):'resource'|'none'|'retained' {return operation==='aws.spot.start'?'resource':isInspection(operation)?'none':'retained';}
+/** Wraps an S3 validator so its errors read like the other profile errors. */
+function s3(validate:()=>unknown):void {try{validate();}catch{reject('Invalid S3 profile or parameters');}}
 function validateProfile(raw:ExternalProfile|undefined):ExternalProfile {
   if(!raw||raw.enabled!==true)reject('Profile disabled');
   object(raw,['id','provider','target','operations','credentialRef','maxLifetimeMs','upperBoundMicros','maxActiveActions'],['enabled']);
   text(raw.id);text(raw.credentialRef);integer(raw.maxLifetimeMs,1);integer(raw.upperBoundMicros);integer(raw.maxActiveActions,1);
   if(!Object.hasOwn(operations,raw.provider)||!Array.isArray(raw.operations)||!raw.operations.length||raw.operations.length>2||Object.keys(raw.operations).length!==raw.operations.length||Array.from(raw.operations).some(op=>!operations[raw.provider]!.includes(op))||new Set(raw.operations).size!==raw.operations.length)reject('Invalid profile operation');
   if(raw.provider==='aws') {object(raw.target,['accountId','region','workloadId']);text(raw.target.accountId,/^\d{12}$/);text(raw.target.region,/^[a-z]{2}-[a-z]+-\d$/);text(raw.target.workloadId,/^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$/);}
+  else if(raw.provider==='s3') {s3(()=>validateExternalS3Target(raw.target));}
   else {
-    object(raw.target,['repository',raw.provider==='hf'?'revision':'branch']);text(raw.target.repository,/^[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+$/);
+    object(raw.target,['repository',raw.provider==='hf'?'revision':'branch'],raw.provider==='hf'?['visibility','allowPublicLarge']:[]);
+    if(raw.provider==='hf'){
+      const visibility=(raw.target as {visibility?:unknown}).visibility;
+      if(visibility!==undefined&&visibility!=='private'&&visibility!=='public')reject('Invalid profile target');
+      if(Object.hasOwn(raw.target,'allowPublicLarge')&&(raw.target.allowPublicLarge!==true||visibility!=='public'||!(raw.operations as string[]).includes('hf.model.lfs_commit')))reject('Invalid public large acknowledgement');
+      if(visibility==='public'&&(raw.operations as string[]).includes('hf.model.lfs_commit')&&raw.target.allowPublicLarge!==true)reject('Public LFS commit requires acknowledgement');
+    }text(raw.target.repository,/^[A-Za-z0-9_-]+\/[A-Za-z0-9_.-]+$/);
     const ref=raw.provider==='hf'?raw.target.revision:raw.target.branch;
     text(ref,/^[A-Za-z0-9][A-Za-z0-9_./-]{0,149}$/);
     if(ref.includes('..')||ref.includes('//')||ref.endsWith('/')||ref.endsWith('.lock'))reject('Invalid profile target');
@@ -73,6 +88,9 @@ function validateParameters(r:ExternalActionRequest,p:ExternalProfile) {
     case 'aws.spot.start':object(r.parameters,['lifetimeMs']);integer(r.parameters.lifetimeMs,1);if(r.parameters.lifetimeMs>p.maxLifetimeMs)reject('Lifetime parameter exceeds profile');break;
     case 'aws.spot.inspect':object(r.parameters,['startActionId']);text(r.parameters.startActionId);break;
     case 'hf.model.commit':object(r.parameters,['artifactDigest','message']);text(r.parameters.artifactDigest,/^[a-f0-9]{64}$/);text(r.parameters.message,/^[^\p{Cc}]{1,200}$/u);break;
+    case 'hf.model.lfs_commit':object(r.parameters,['manifestDigest','message']);text(r.parameters.manifestDigest,/^[a-f0-9]{64}$/);text(r.parameters.message,/^[^\p{Cc}]{1,200}$/u);if(p.provider==='hf'&&p.target.visibility==='public'&&p.target.allowPublicLarge!==true)reject('Public LFS commit requires acknowledgement');break;
+    case 'aws.s3.put':s3(()=>validateExternalS3Parameters(r.parameters));break;
+    case 'aws.s3.inspect':s3(()=>validateExternalS3InspectParameters(r.parameters));break;
     case 'github.branch.push':object(r.parameters,['artifactDigest','expectedHead']);text(r.parameters.artifactDigest,/^[a-f0-9]{64}$/);text(r.parameters.expectedHead,/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/);break;
   }
 }
@@ -119,7 +137,7 @@ export function validateExternalState(value:unknown):asserts value is ExternalSt
    if(p.stoppedAt===undefined?p.stopReason!==undefined:!['cancelled','expired','cost_exceeded'].includes(p.stopReason??''))reject('stop');
    if(p.stoppedAt!==undefined){integer(p.stoppedAt);if(p.stoppedAt<p.approvedAt||p.stopReason==='expired'&&p.stoppedAt<p.endsAt)reject('stop time');}
    const key=JSON.stringify([p.taskId,p.revision]),providers=revisions.get(key)??new Set<string>();
-   if(providers.has(profile.provider)||providers.size>=3)reject('duplicate provider');providers.add(profile.provider);revisions.set(key,providers);
+   if(providers.has(profile.provider)||providers.size>=4)reject('duplicate provider');providers.add(profile.provider);revisions.set(key,providers);
    if(revisionBudgets.has(key)&&revisionBudgets.get(key)!==p.budgetMicros)reject('revision budget mismatch');revisionBudgets.set(key,p.budgetMicros);
    const prior=latest.get(p.taskId)??0;
    if(p.revision>prior){latest.set(p.taskId,p.revision);budgets.set(p.taskId,p.budgetMicros);costStops.set(p.taskId,p.stopReason==='cost_exceeded');}
@@ -146,10 +164,10 @@ export function validateExternalState(value:unknown):asserts value is ExternalSt
     if(resources.has(key))reject('duplicate resource ownership');resources.add(key);
    }
    if((a.effect==='resource')!==!!a.resource||!a.resource&&a.cleanupStatus!=='none')reject('cleanup state');
-   if(a.effect==='retained'&&!['hf.model.commit','github.branch.push'].includes(a.operation))reject('retained effect');
+   if(a.effect==='retained'&&!RETAINED_OPERATIONS.includes(a.operation))reject('retained effect');
    if(['intent','dispatching'].includes(a.status)&&(a.effect!=='unknown'||a.resource||a.evidenceId!==undefined||a.verifiedCostMicros!==null||a.billingFinal))reject('undispatched evidence');
    if(a.status==='cancelled'&&(a.effect!=='none'||a.verifiedCostMicros!==0||!a.billingFinal||a.resource))reject('cancelled evidence');
-   if(a.status==='succeeded'&&a.effect!==(a.operation==='aws.spot.start'?'resource':a.operation==='aws.spot.inspect'?'none':'retained'))reject('success effect');
+   if(a.status==='succeeded'&&a.effect!==successEffect(a.operation))reject('success effect');
    if(a.evidenceId!==undefined)text(a.evidenceId);
    if(['succeeded','failed'].includes(a.status)&&a.evidenceId===undefined)reject('missing receipt');
    if(a.providerRecoveryCursor!==undefined){
@@ -169,6 +187,10 @@ export function validateExternalState(value:unknown):asserts value is ExternalSt
    const expected=a.billingFinal&&(!a.resource||a.cleanupStatus==='cleaned')?0:Math.max(0,a.upperBoundMicros-(a.verifiedCostMicros??0));
    if(a.reservedMicros!==expected)reject('reservation total');
    costs.set(p.taskId,add(costs.get(p.taskId)??0,add(a.verifiedCostMicros??0,a.reservedMicros)));
+  }
+  for(const a of Object.values(s.actions))if(a.operation==='aws.s3.inspect'){
+   const parent=s.actions[(a.parameters as {putActionId:string}).putActionId];
+   if(!parent||parent.approvalId!==a.approvalId||parent.operation!=='aws.s3.put')reject('inspection ownership');
   }
   for(const a of Object.values(s.actions))if(a.operation==='aws.spot.inspect'){
    const parent=s.actions[(a.parameters as {startActionId:string}).startActionId];
@@ -212,7 +234,7 @@ export class ExternalBroker<Credential=unknown> {
         return prior;
       }
       const peers=Object.values(s.approvals).filter(p=>p.taskId===request.taskId&&p.revision===request.revision);
-      if(peers.length>=3||peers.some(p=>p.profile.provider===profile.provider))reject('Approval provider immutable');
+      if(peers.length>=4||peers.some(p=>p.profile.provider===profile.provider))reject('Approval provider immutable');
       if(request.revision<currentTaskApproval(s,request.taskId).revision)reject('Stale approval revision');
       if(peers.some(p=>p.budgetMicros!==request.budgetMicros))reject('Revision budget immutable');
       if(exposure(taskActions(s,request.taskId))>request.budgetMicros)reject('Task budget already committed');
@@ -260,11 +282,16 @@ export class ExternalBroker<Credential=unknown> {
       if(add(exposure(actions),p.profile.upperBoundMicros)>taskCeiling(s,p.taskId))reject('Task budget ceiling exceeded');
       // Inspections have their own bounded concurrency and still reserve budget.
       // A single allowed live Spot resource must not prevent its read-only inspection.
-      const inspection=request.operation==='aws.spot.inspect';
-      if(own.filter(a=>(a.operation==='aws.spot.inspect')===inspection&&(['intent','dispatching','ambiguous'].includes(a.status)||a.resource&&a.cleanupStatus!=='cleaned')).length>=p.profile.maxActiveActions)reject('Active action ceiling exceeded');
+      const inspection=isInspection(request.operation);
+      if(own.filter(a=>isInspection(a.operation)===inspection&&(['intent','dispatching','ambiguous'].includes(a.status)||a.resource&&a.cleanupStatus!=='cleaned')).length>=p.profile.maxActiveActions)reject('Active action ceiling exceeded');
       if(request.operation==='aws.spot.inspect') {
         const parent=s.actions[request.parameters.startActionId];
         if(!parent||parent.approvalId!==p.id||parent.operation!=='aws.spot.start'||!parent.resource||parent.cleanupStatus==='cleaned')reject('Inspect requires owned start action');
+      }
+      if(request.operation==='aws.s3.inspect') {
+        // Inspection can only address an owned, already dispatched put of this approval.
+        const parent=s.actions[request.parameters.putActionId];
+        if(!parent||parent.approvalId!==p.id||parent.operation!=='aws.s3.put'||parent.status==='intent'||parent.status==='cancelled')reject('Inspect requires owned put action');
       }
       const id=randomUUID(),ownershipToken=randomUUID();
       const lifetime=request.operation==='aws.spot.start'?request.parameters.lifetimeMs:p.profile.maxLifetimeMs;
@@ -314,7 +341,7 @@ export class ExternalBroker<Credential=unknown> {
       // A previously attested start resource remains available after EC2 drops
       // terminated instances from inventory; it is not new model-supplied authority.
       const parent=a.operation==='aws.spot.inspect'?s.actions[(a.parameters as {startActionId:string}).startActionId]:a.operation==='aws.spot.start'?a:undefined;
-      return {actionId:a.id,taskId:p.taskId,revision:p.revision,profile:p.profile,operation:a.operation,parameters:a.parameters,parametersHash:a.parametersHash,ownershipToken:a.ownershipToken,idempotencyKey:a.idempotencyKey,expiresAt:a.expiresAt,...(purpose==='inspect'&&a.providerRecoveryCursor!==undefined?{providerRecoveryCursor:a.providerRecoveryCursor}:{}),...(parent?.resource?{ownedResource:{...parent.resource,actionId:parent.id,ownershipToken:parent.ownershipToken,idempotencyKey:parent.idempotencyKey}}:{})} satisfies ExternalInvocation;
+      return {actionId:a.id,taskId:p.taskId,revision:p.revision,profile:p.profile,operation:a.operation,parameters:a.parameters,parametersHash:a.parametersHash,ownershipToken:a.ownershipToken,idempotencyKey:a.idempotencyKey,expiresAt:a.expiresAt,...(purpose==='inspect'&&a.providerRecoveryCursor!==undefined?{providerRecoveryCursor:a.providerRecoveryCursor}:{}),...(a.operation==='aws.s3.inspect'&&s.actions[(a.parameters as {putActionId:string}).putActionId]?.operation==='aws.s3.put'?{ownedPut:(put=>({actionId:put.id,ownershipToken:put.ownershipToken,idempotencyKey:put.idempotencyKey,parametersHash:put.parametersHash,parameters:put.parameters as ExternalS3Parameters}))(s.actions[(a.parameters as {putActionId:string}).putActionId]!)}:{}),...(parent?.resource?{ownedResource:{...parent.resource,actionId:parent.id,ownershipToken:parent.ownershipToken,idempotencyKey:parent.idempotencyKey}}:{})} satisfies ExternalInvocation;
     });
     const scope:ExternalCredentialScope={taskId:inv.taskId,revision:inv.revision,actionId:id,provider:inv.profile.provider,target:copy(inv.profile.target),operation:inv.operation,purpose,expiresAt:inv.expiresAt};
     return this.options.resolver.withCredential(inv.profile.credentialRef,scope,credential=>consume(copy(inv),credential));
@@ -326,9 +353,9 @@ export class ExternalBroker<Credential=unknown> {
       if(a.operatorBilling)throw Object.assign(new Error('Operator billing already attested'),{statusCode:409});
       if(receipt.ownershipToken!==a.ownershipToken||receipt.idempotencyKey!==a.idempotencyKey)reject('Provider ownership mismatch');
       if(receipt.effect==='unknown'&&(receipt.outcome!=='unknown'||receipt.billing.final))reject('Unknown provider effect');
-      if(receipt.outcome==='succeeded'&&receipt.effect!==(a.operation==='aws.spot.start'?'resource':a.operation==='aws.spot.inspect'?'none':'retained'))reject('Successful provider effect missing');
+      if(receipt.outcome==='succeeded'&&receipt.effect!==successEffect(a.operation))reject('Successful provider effect missing');
       if(receipt.effect==='resource'?!receipt.resource:receipt.resource!==undefined)reject('Resource receipt mismatch');
-      if(receipt.effect==='resource'&&a.operation!=='aws.spot.start'||receipt.effect==='retained'&&!['hf.model.commit','github.branch.push'].includes(a.operation))reject('Provider operation effect mismatch');
+      if(receipt.effect==='resource'&&a.operation!=='aws.spot.start'||receipt.effect==='retained'&&!RETAINED_OPERATIONS.includes(a.operation))reject('Provider operation effect mismatch');
       if(a.resource&&receipt.resource?.id!==a.resource.id)reject('Resource identity changed');
       if(a.effect!=='unknown'&&a.effect!==receipt.effect)reject('Provider effect changed');
       if(a.billingFinal&&(receipt.billing.verifiedCostMicros!==a.verifiedCostMicros||!receipt.billing.final)||a.verifiedCostMicros!==null&&(receipt.billing.verifiedCostMicros===null||receipt.billing.verifiedCostMicros<a.verifiedCostMicros))reject('Billing evidence regressed');

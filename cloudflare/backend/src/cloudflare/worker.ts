@@ -1,3 +1,11 @@
+import {createDelegatedRuntime,type DelegatedEnvironment} from '../delegated-runtime.ts';
+import {handleDelegatedApi,isDelegatedPath,type DelegatedApiService} from '../../../../apps/control-plane/src/delegated-api.ts';
+import {createDelegatedProofAdapter} from '../../../../packages/adapters/src/delegated-proof.ts';
+import {signDelegatedS3Request} from '../delegated-s3-sign.ts';
+import type {OidcSignerPort} from '../../../../packages/contracts/src/oidc.ts';
+import type {DelegatedBinding,HfReceipt,TrustedQualityProof} from '../../../../packages/contracts/src/delegated.ts';
+import type {TeamCapabilityAuthority,TeamCapabilityBinding} from '../../../../packages/core/src/team-capability.ts';
+import type {TeamRepository} from '../../../../packages/core/src/team-store.ts';
 import type {SchedulerJobQuery} from '../scheduler-jobs.ts';
 import {createSchedulerStorage,SCHEDULER_STATE_LEGACY_BYTES} from '../scheduler-storage.ts';
 import {createAutonomousExternalRuntime,externalConfiguredSecretValues,type AutonomousExternalRuntime} from '../autonomous-external.ts';
@@ -12,6 +20,8 @@ import {EncryptedSessionStore} from '../../../../packages/adapters/src/autonomou
 import {R2PrivateBlobStore} from '../autonomous-session-objects.ts';
 import {AutonomousService} from '../autonomous-service.ts';
 import {handleAutonomousApi} from './autonomous-api.ts';
+import {handleToolAuditApi} from '../../../../apps/control-plane/src/autonomous-tool-audit-api.ts';
+import {createToolAuditStore,type ToolAuditStore} from '../../../../packages/core/src/autonomous-tool-audit-sql.ts';
 import type {AutonomousTaskSummary} from '../../../../packages/core/src/autonomous-repository.ts';
 import type {AutonomousTask} from '../../../../packages/contracts/src/autonomous.ts';
 import {duckdbCacheIdentity,duckdbCacheOrigin,duckdbCachePath,duckdbCacheMaxBytes,validateDuckdbCacheEvidence} from '../duckdb-build-cache.ts';
@@ -20,15 +30,15 @@ import {largeArtifactKey,authorizeArtifactRead,type LargeArtifactRef,type Artifa
 import {validateClaudeResultMetrics} from '../claude-result-metrics.ts';
 import {advanceComputeGroup,assignGroup,type ComputeGroupSpec,type ComputeGroupRecord} from '../compute-group.ts';
 import {ensureSchedulerAlarm} from './scheduler-alarm.ts';
-import {randomBytes,randomUUID} from 'node:crypto';
+import {createHash,randomBytes,randomUUID} from 'node:crypto';
 import {DurableObject,WorkerEntrypoint} from 'cloudflare:workers';
 import type {CredentialRecord,JobRecord,JobSpec,RuntimeInput,RuntimeResult,Snapshot,RalphCheckpoint,RalphFeedback} from '../contracts.ts';
 import {terminal} from '../contracts.ts';
 import {Scheduler,type AgentOutcome,type ComputeOutcome} from '../scheduler.ts';
 import {validateSnapshot} from '../snapshot.ts';
 import {openAuthReturn,openCredential,sealCredential,validateAuth,type StoredCredential} from '../crypto.ts';
-import {ApiError,authorize,authorizeAutonomousRoute,isAutonomousPath,scheduleAutonomousAlarm,handleApi,json,type ApiService} from './api.ts';
-import {advanceWorkflow,changedPaths,workflowFingerprint,type WorkflowRecord,type WorkflowSpec} from '../workflow.ts';
+import {ApiError,authorize,isTeamRoute,authorizeAutonomousRoute,isAutonomousPath,scheduleAutonomousAlarm,handleApi,json,type ApiService} from './api.ts';
+import {advanceWorkflow,changedPaths,workflowFingerprint,publicWorkflow,createWorkflowTeam,observeWorkflowTeam,enforceWorkflowTeamBlock,type WorkflowRecord,type WorkflowSpec} from '../workflow.ts';
 import {advanceCarbonCampaign,reserveCarbonRequest,settleCarbonRequest,terraSizingOrder,terraCachePairOrder,type NpmCacheMode,type BenchmarkInstance,type CarbonOutcome,type CarbonCampaign,type CarbonEffort,type CarbonUsage} from '../carbon-benchmark.ts';
 import {handleCarbonGateway, syntheticCarbonStream} from '../carbon-gateway.ts';
 import {sha256} from '../snapshot.ts';
@@ -38,7 +48,11 @@ import {npmCacheOrigin,npmCachePath,npmCacheMaxBytes,npmCacheKey,npmCacheLockPat
 import runtimeBuild from '../../runtime-build.json' with {type:'json'};
 declare global {namespace Cloudflare {interface GlobalProps {mainModule:typeof import('./worker.ts')}}}
 
-interface Env {
+interface Env extends DelegatedEnvironment {
+ AUTONOMOUS_EXTERNAL_OIDC_CONFIG?:string;AUTONOMOUS_OIDC_SIGNER?:OidcSignerPort;
+ /** Private trusted checker binding. It never accepts a worker passed:true fact. */
+ AUTONOMOUS_DELEGATED_CHECKER?:{qualityProof(binding:DelegatedBinding,receipt:HfReceipt):Promise<TrustedQualityProof|undefined>};
+ TEAM_COORDINATION_ENABLED?:string;
  CF_VERSION_METADATA?:{id:string};
  ARTIFACTS:R2Bucket;CREDENTIALS:R2Bucket;
  SCHEDULER:DurableObjectNamespace<SchedulerDO>;RUNNER:DurableObjectNamespace<RunnerDO>;
@@ -207,6 +221,7 @@ export class RunnerDO extends DurableObject<Env>{
  private readonly diagnosticScopes=new WeakMap<JobRecord,{aborted:boolean;deadline:number}>();
  private diagnosticScope?:{aborted:boolean;deadline:number};
  private diagnosticInFlight=false;
+ private diagnosticPollMs=1000;
  private diagnosticPending?:Promise<{status:'passed'|'failed';runtimeRevision:string;stopped:boolean}>;
  async boundaryDiagnostic(){
   if(this.diagnosticPending)return this.diagnosticPending;
@@ -233,10 +248,21 @@ export class RunnerDO extends DurableObject<Env>{
    const scope={aborted:false,deadline:Date.now()+30000};this.diagnosticScope=scope;
    const job=Object.freeze({id:'boundary-diagnostic',attempt:runtimeBuild.digest,kind:'compute',deadline:scope.deadline}) as JobRecord;
    this.diagnosticScopes.set(job,scope);this.diagnosticInFlight=true;
-   const ensuring=this.ensure(job).finally(async()=>{
-    this.diagnosticInFlight=false;
-    if(scope.aborted)await this.cleanupDiagnostic();
-   });
+   // A cold container fails its first /health request, so poll ensure like the scheduler does.
+   // A thrown ensure (including a failed boundary probe) ends the loop and is never retried.
+   const ensuring=(async()=>{
+    for(;;){
+     this.diagnosticInFlight=true;
+     let state:Awaited<ReturnType<RunnerDO['ensure']>>;
+     try{state=await this.ensure(job);}
+     finally{
+      this.diagnosticInFlight=false;
+      if(scope.aborted)await this.cleanupDiagnostic();
+     }
+     if(state.ready||state.lost||scope.aborted||Date.now()>=scope.deadline)return state;
+     await new Promise<void>(resolve=>setTimeout(resolve,this.diagnosticPollMs));
+    }
+   })();
    const ready=await Promise.race([ensuring,new Promise<never>((_,reject)=>{timer=setTimeout(()=>{scope.aborted=true;reject(Error('Diagnostic timeout'));},30000);})]);
    const verified=(await this.ctx.storage.get<RunnerMetadata>('metadata'))?.nativeBoundaryVerified===runtimeBuild.digest;
    passed=!scope.aborted&&Date.now()<scope.deadline&&ready.ready&&!ready.lost&&verified;
@@ -397,10 +423,16 @@ export class RunnerDO extends DurableObject<Env>{
 }
 
 export class SchedulerDO extends DurableObject<Env> implements ApiService {
+ private schedulerStateUncertain=false;
+ private teamMutationTail:Promise<void>=Promise.resolve();
+ private teamCapabilityAuthority?:TeamCapabilityAuthority;
+ private teamSigningKey?:string;
  private scheduler=new Scheduler(undefined,{exclusiveOwnership:true});
  private schedulerStorage=createSchedulerStorage(this.ctx.storage);
  private autonomy=new AutonomousService(this.ctx.storage);
  private external?:AutonomousExternalRuntime;
+ private delegated?:DelegatedApiService;
+ private toolAudit?:ToolAuditStore;
  private externalReady:Promise<void>;
  private externalCleanupWake?:number;
  private extraSecretValues(){return [this.env.CONTROL_TOKEN,this.env.AUTH_STORAGE_KEY,this.env.AUTH_RETURN_PRIVATE_KEY,this.env.AUTONOMOUS_SESSION_KEY,this.env.AUTONOMOUS_WORKER_TOKEN,this.env.AUTONOMOUS_REPORTER_TOKEN,this.env.GEMINI_BENCHMARK_KEY,this.env.TERRA_BENCHMARK_AUTH,terraCredential(this.env.TERRA_BENCHMARK_AUTH)?.access,...externalConfiguredSecretValues(this.env)].filter((v):v is string=>!!v);}
@@ -413,6 +445,15 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
  private async syncCanonicalExternalStop(id:string){
   let task:AutonomousTaskSummary;try{task=await this.autonomy.execute('getSummary',{id}) as AutonomousTaskSummary;}catch{return;}
   if(task.spec.externalProfiles?.length&&(task.stopReason||['completed','cancelled','expired','failed','budget_exceeded'].includes(task.status)))await this.stopExternalAdmission(task,'finish');
+ }
+ /** Worker-reported tool calls are overlaid at the view only: the engine rejects stored unknown count fields. */
+ private withWorkerToolCalls(value:unknown):unknown{
+  const store=this.toolAudit;if(!store||!value||typeof value!=='object')return value;
+  if(Array.isArray(value))return value.map(item=>this.withWorkerToolCalls(item));
+  const record=value as {id?:unknown;counts?:unknown;items?:unknown};
+  if(Array.isArray(record.items))return {...record,items:record.items.map(item=>this.withWorkerToolCalls(item))};
+  if(typeof record.id==='string'&&record.counts&&typeof record.counts==='object'&&!Array.isArray(record.counts))return {...record,counts:{...record.counts,workerToolCalls:store.totals(record.id).recorded}};
+  return value;
  }
  private async executeAutonomous(operation:AutonomousOperation,input:Record<string,unknown>):Promise<unknown>{
   const id=(input.id??(input.lease as {taskId?:string}|undefined)?.taskId) as string|undefined;
@@ -503,33 +544,142 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
  }
  constructor(ctx:DurableObjectState,env:Env){super(ctx,env);this.externalReady=ctx.blockConcurrencyWhile(async()=>{
   const state=await this.schedulerStorage.load();this.scheduler=new Scheduler(state,{exclusiveOwnership:true});
+  if(this.env.TEAM_COORDINATION_ENABLED==='true'){
+   this.teamSigningKey=await ctx.storage.get<string>('team:private-signing-key');
+   if(!this.teamSigningKey){this.teamSigningKey=randomBytes(32).toString('hex');await ctx.storage.put('team:private-signing-key',this.teamSigningKey);}
+  }
   this.externalCleanupWake=await this.ctx.storage.get<number>('externalCleanupWake');
+  // Tool audit has its own table set. A failure here never disables external actions, and the reverse also holds.
+  try{
+   const cursorSecret=this.env.AUTONOMOUS_SESSION_KEY??this.env.CONTROL_TOKEN;
+   if(this.ctx.storage.sql&&typeof this.ctx.storage.transactionSync==='function'&&cursorSecret)this.toolAudit=createToolAuditStore({exec:(query,...bindings)=>this.ctx.storage.sql.exec(query,...bindings),transactionSync:fn=>this.ctx.storage.transactionSync(fn)},createHash('sha256').update('hivemind-tool-audit-cursor-v1\n'+cursorSecret).digest('hex'));
+  }catch{this.toolAudit=undefined;}
   // Durable Object startup is the ownership barrier: recover once, never per request.
   try{
    if(this.ctx.storage.sql&&typeof this.ctx.storage.transactionSync==='function'){
-    this.external=createAutonomousExternalRuntime({env:this.env,core:this.autonomy,sql:{exec:(query,...bindings)=>this.ctx.storage.sql.exec(query,...bindings),transactionSync:fn=>this.ctx.storage.transactionSync(fn)},artifacts:this.env.ARTIFACTS,extraSecretValues:this.extraSecretValues()});
+    this.external=createAutonomousExternalRuntime({env:this.env,admitDelegated:(id,input)=>{if(!this.delegated)throw new ApiError(503);return this.delegated.admit(id,input);},oidcSigner:this.env.AUTONOMOUS_OIDC_SIGNER,core:this.autonomy,sql:{exec:(query,...bindings)=>this.ctx.storage.sql.exec(query,...bindings),transactionSync:fn=>this.ctx.storage.transactionSync(fn)},artifacts:this.env.ARTIFACTS,extraSecretValues:this.extraSecretValues()});
+    if(this.external&&this.env.AUTONOMOUS_DELEGATED_ENABLED==='true'){
+     const external=this.external;
+     this.delegated=createDelegatedRuntime({env:this.env,core:this.autonomy,sql:{exec:(q,...b)=>this.ctx.storage.sql.exec(q,...b),transactionSync:fn=>this.ctx.storage.transactionSync(fn)},configurationFingerprint:external.configurationFingerprint,knownSecretValues:()=>external.configuredSecretValues(),
+      resolveHfToken:ref=>external.resolveHfToken(ref),
+      qualityProof:(binding,receipt)=>this.env.AUTONOMOUS_DELEGATED_CHECKER?.qualityProof(binding,receipt)??Promise.resolve(undefined),
+      proofFor:(binding,actionId)=>{let assertScoped:(()=>void)|undefined;return createDelegatedProofAdapter({fetch:async(input,init)=>{if(new URL(input instanceof Request?input.url:String(input)).hostname.endsWith('.amazonaws.com'))assertScoped?.();return globalThis.fetch(input,init);},hfToken:descriptor=>external.resolveHfToken(descriptor.hf.tokenRef),authorizeS3:(request,descriptor)=>external.withOwnedAwsCredential(binding.taskId,binding.revision,actionId,request.method==='DELETE'?'cleanup':'inspect',async(c,control)=>{assertScoped=control?()=>control.assertValid():undefined;control?.assertValid();return signDelegatedS3Request(request,descriptor,c,Date.now());})});}});
+    }
     const pending=await this.external?.recover();if(pending?.needsWork)await this.scheduleExternalWake(pending.nextWake??Date.now()+2000);else {this.externalCleanupWake=undefined;await this.ctx.storage.delete('externalCleanupWake');}
    }
   }catch{this.external=undefined;/* Invalid server configuration disables external actions. */}
  });}
+ private async teamAuthority():Promise<TeamCapabilityAuthority> {
+  if(this.env.TEAM_COORDINATION_ENABLED!=='true'||!this.teamSigningKey)throw new ApiError(503);
+  const {createTeamCapabilityAuthority}=await import('../../../../packages/core/src/team-capability.ts');
+  return this.teamCapabilityAuthority??=createTeamCapabilityAuthority({signingKey:this.teamSigningKey,authorizeCurrent:async binding=>this.currentTeamAuthority(binding)});
+ }
+ private currentTeamAuthority(binding:TeamCapabilityBinding):boolean {
+  if(this.schedulerStateUncertain)return false;
+  const workflow=this.scheduler.state.workflows?.[binding.workflowId],actor=binding.actor;
+  if(!workflow?.team||workflow.approvedAt===undefined||!['RUNNING','INTEGRATING'].includes(workflow.status)||workflow.team.status!=='active'||workflow.deadline!<=Date.now()||workflow.team.spec.id!==actor.teamId||binding.expiresAt>workflow.deadline!)return false;
+  const member=workflow.team.spec.members.find(m=>m.id===actor.memberId),job=this.scheduler.state.jobs[actor.jobId];
+  return !!member&&!member.stopped&&member.jobId===actor.jobId&&member.attempt===actor.attempt&&!!job&&job.attempt===actor.attempt&&
+   (member.role==='worker'?job.kind==='agent'&&workflow.workerIds?.includes(job.id)===true:job.kind==='compute'&&workflow.integrationId===job.id)&&
+   ['STARTING','RUNNING'].includes(job.status)&&!job.containerStopped&&!job.cancellationRequested&&job.deadline>Date.now()&&binding.expiresAt<=job.deadline;
+ }
+ /** Trusted DO RPC only. No HTTP route or production CLI delivery exists in this slice. */
+ async issueTeamCapability(binding:TeamCapabilityBinding):Promise<string> {
+  await this.externalReady;
+  return this.ctx.blockConcurrencyWhile(async()=>{await this.recoverSchedulerState();return (await this.teamAuthority()).issue(binding);});
+ }
+ private serializeTeamMutation<T>(fn:()=>Promise<T>):Promise<T> {
+  const operation=this.teamMutationTail.then(()=>this.ctx.blockConcurrencyWhile(fn));
+  this.teamMutationTail=operation.then(()=>undefined,()=>undefined);
+  return operation;
+ }
+ private teamRepository(revalidateWorker?:()=>Promise<unknown>):TeamRepository {
+  return {
+   read:id=>this.serializeTeamMutation(async()=>{await this.recoverSchedulerState();return structuredClone(this.scheduler.state.workflows?.[id]?.team);}),
+   mutate:(id,fn,options)=>this.serializeTeamMutation(async()=>{
+    await this.recoverSchedulerState();
+    if(revalidateWorker)await revalidateWorker();
+    const candidate=new Scheduler(this.scheduler.state),workflow=candidate.state.workflows?.[id];
+    if(!workflow?.team)throw new ApiError(404);
+    const {TeamEngine}=await import('../../../../packages/core/src/team.ts');
+    const engine=new TeamEngine(workflow.team),result=fn(engine);
+    if(result&&typeof (result as {then?:unknown}).then==='function'){void Promise.resolve(result).catch(()=>{});throw new ApiError(400);}
+    const safeResult=structuredClone(result);
+    workflow.team=engine.snapshot();
+    enforceWorkflowTeamBlock(workflow,candidate,Date.now());
+    await this.commitScheduler(candidate,options?.recovery===true);
+    await this.schedule();
+    return safeResult;
+   }),
+  };
+ }
+ private async handleTeam(request:Request):Promise<Response> {
+  if(this.env.TEAM_COORDINATION_ENABLED!=='true')return json({error:'Not found'},404);
+  const {createTeamService,handleTeamApi}=await import('../../../../apps/control-plane/src/team-api.ts');
+  const workerMutation=request.method==='POST'&&/\/(?:tasks|claim|heartbeat|submit|notes)$/.test(new URL(request.url).pathname);
+  const revalidateWorker=workerMutation?async()=>{const workflowId=new URL(request.url).pathname.split('/')[3]!;return (await this.teamAuthority()).verify((request.headers.get('authorization')??'').slice(7),workflowId);}:undefined;
+  return await handleTeamApi(request,{operatorToken:this.env.CONTROL_TOKEN??'',service:createTeamService({repository:this.teamRepository(revalidateWorker)}),
+   authorizeWorker:async(request,workflowId)=>{
+    const header=request.headers.get('authorization')??'';
+    if(!header.startsWith('Bearer '))throw new ApiError(401);
+    return (await this.teamAuthority()).verify(header.slice(7),workflowId);
+   },forbiddenValues:[this.teamSigningKey??'',this.env.AUTH_STORAGE_KEY,this.env.AUTH_RETURN_PRIVATE_KEY,...this.extraSecretValues()].filter((v):v is string=>!!v),
+  })??json({error:'Not found'},404);
+ }
+ /** A failed acknowledgement may follow a successful commit. Never publish or overwrite guesses. */
+ private async recoverSchedulerState():Promise<void> {
+  if(!this.schedulerStateUncertain)return;
+  const restored=await this.schedulerStorage.load();
+  if(!restored)throw new ApiError(503);
+  this.scheduler=new Scheduler(restored,{exclusiveOwnership:true});
+  this.schedulerStateUncertain=false;
+ }
+ private async commitScheduler(candidate:Scheduler,recovery=false):Promise<void> {
+  if(this.schedulerStateUncertain){
+   await this.recoverSchedulerState();
+   throw new ApiError(503); // Discard a candidate cloned before authoritative recovery.
+  }
+  try{await this.schedulerStorage.save(candidate.state,recovery?{recovery:true}:undefined);this.scheduler=candidate;}
+  catch(error){
+   this.schedulerStateUncertain=true;
+   try{await this.recoverSchedulerState();}catch{/* Admission/dispatch remain fenced until a successful authoritative read. */}
+   throw error;
+  }
+ }
  private async save(){
-  try{await this.schedulerStorage.save(this.scheduler.state,{recovery:true});}
-  catch(error){const restored=await this.schedulerStorage.load();this.scheduler=new Scheduler(restored,{exclusiveOwnership:true});throw error;}
+  await this.recoverSchedulerState();
+  const candidate=new Scheduler(this.scheduler.state);
+  for(const workflow of Object.values(candidate.state.workflows??{}))await observeWorkflowTeam(workflow,candidate,Date.now());
+  await this.commitScheduler(candidate,true);
  }
  private async schedule(){if(Object.values(this.scheduler.state.computeGroups??{}).some(g=>g.status==='RUNNING'||g.status==='INTEGRATING')||Object.values(this.scheduler.state.workflows??{}).some(w=>w.status==='RUNNING'||w.status==='INTEGRATING')||Object.values(this.scheduler.state.carbonCampaigns??{}).some(c=>c.phase!=='done')||Object.values(this.scheduler.state.jobs).some(job=>job.status==='QUEUED'||!job.containerStopped||!terminal(job.status)))await ensureSchedulerAlarm(this.ctx.storage);}
  async fetch(request:Request){
   const externalPath=new URL(request.url).pathname;
-  if(/^\/v1\/autonomous-tasks\/[^/]+\/external-(?:action|profiles|actions|approval|cancel|artifact)(?:\/[^/]+\/(?:reconcile|cleanup|billing))?$/.test(externalPath)){
+  if(isDelegatedPath(externalPath)){await this.externalReady;return handleDelegatedApi(request,this.delegated?{operatorToken:this.env.CONTROL_TOKEN??'',workerToken:this.env.AUTONOMOUS_WORKER_TOKEN??'',service:this.delegated}:undefined);}
+  if(/^\/v1\/autonomous-tasks\/[^/]+\/tool-calls\/?$/.test(externalPath)){
+   const denied=authorizeAutonomousRoute(request,this.env.CONTROL_TOKEN,this.env.AUTONOMOUS_WORKER_TOKEN,this.env.AUTONOMOUS_REPORTER_TOKEN);if(denied)return denied;
+   await this.externalReady;
+   if(!this.toolAudit)return json({error:'Tool audit unavailable'},503);
+   // Lease check is read-only (toolAuditScope). Storage is synchronous SQL, so no blockConcurrencyWhile is needed.
+   const response=await handleToolAuditApi(request,{operatorToken:this.env.CONTROL_TOKEN??'',reporterToken:this.env.AUTONOMOUS_REPORTER_TOKEN,authorize:lease=>this.autonomy.execute('toolAuditScope',{lease}) as Promise<{taskId:string;runId:string;iteration:number}>,store:this.toolAudit});
+   return response??json({error:'Not found'},404);
+  }
+  const largePath=/^\/v1\/autonomous-tasks\/[^/]+\/external-large\/(?:begin|part|complete|abort|manifest)$/.test(externalPath);
+  if(largePath||/^\/v1\/autonomous-tasks\/[^/]+\/external-(?:action|profiles|actions|approval|cancel|artifact|oidc-audit)(?:\/[^/]+\/(?:reconcile|cleanup|billing))?$/.test(externalPath)){
    const denied=authorizeAutonomousRoute(request,this.env.CONTROL_TOKEN,this.env.AUTONOMOUS_WORKER_TOKEN,this.env.AUTONOMOUS_REPORTER_TOKEN);if(denied)return denied;
    await this.externalReady;
    // Provider I/O must not hold blockConcurrencyWhile: cancellation remains available.
-   const response=await handleAutonomousExternalApi(request,this.external?{operatorToken:this.env.CONTROL_TOKEN??'',workerToken:this.env.AUTONOMOUS_WORKER_TOKEN??'',service:this.external.service}:undefined);
+   const response=await handleAutonomousExternalApi(request,this.external?{operatorToken:this.env.CONTROL_TOKEN??'',workerToken:this.env.AUTONOMOUS_WORKER_TOKEN??'',service:this.external.service,...(this.external.large?{large:this.external.large}:{})}:undefined);
+   // Large uploads send many parts. They change no canonical state, so they skip the stop sync and wake scheduling.
+   if(largePath)return response;
    await this.syncCanonicalExternalStop(decodeURIComponent(externalPath.split('/')[3]!));
    if(response.ok&&request.method==='POST'){await this.scheduleExternalWake(Date.now()+2000);await this.scheduleAutonomy();}
    return response;
   }
   await this.externalReady;
+  if(isTeamRoute(externalPath))return this.handleTeam(request);
   return this.ctx.blockConcurrencyWhile(async()=>{
+  await this.recoverSchedulerState();
   const path=new URL(request.url).pathname;
   if(path==='/v1/autonomous-readiness'||/^\/v1\/autonomous-tasks\/[A-Za-z0-9_-]+\/cloud-(status|result)$/.test(path)){
    const denied=authorize(request,this.env.CONTROL_TOKEN);if(denied)return denied;
@@ -553,7 +703,7 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
     if(task.spec.execution&&((task.spec.execution.mode==='long_running'&&!this.longRunningReady())||!cloudReadiness(this.env).ready||!await this.nativeSourceReady(task.spec.execution.snapshotId)))return json({error:'Cloud execution is not ready'},503);
    }
    const response=await handleAutonomousApi(request,{operatorToken:this.env.CONTROL_TOKEN??'',workerToken:this.env.AUTONOMOUS_WORKER_TOKEN??'',reporterToken:this.env.AUTONOMOUS_REPORTER_TOKEN,service:{execute:async(operation,input)=>{
-    return this.executeAutonomous(operation,input);
+    return this.withWorkerToolCalls(await this.executeAutonomous(operation,input));
    }}});
    if(response.ok&&request.method==='POST'&&/\/(approve|resume)$/.test(path)){
     const task=await this.autonomy.execute('get',{id:path.split('/')[3]}) as AutonomousTask;
@@ -567,7 +717,7 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
    return json({present:typeof this.env.TERRA_BENCHMARK_AUTH==='string',valid:!!credential,
      enough:!!credential&&credential.expires-Date.now()>=1500000});
   }
-  const response=await handleApi(request,this.env.CONTROL_TOKEN,this);if(request.method!=='GET')await this.save();await this.schedule();return response;});}
+  const response=await handleApi(request,this.env.CONTROL_TOKEN,this);if(request.method!=='GET'&&!/^\/v1\/workflows(?:\/|$)/.test(path))await this.save();await this.schedule();return response;});}
  private artifactStore(){return new LargeArtifactStore(this.env.ARTIFACTS,this.ctx.storage);}
  async beginLargeArtifact(ref:LargeArtifactRef){return this.artifactStore().begin(ref);}
  async putLargeArtifactPart(id:string,part:number,data:Uint8Array){return this.artifactStore().part(id,part,data);}
@@ -664,16 +814,19 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
   return group;
  }
  async createWorkflow(spec:WorkflowSpec){
-  const workflows=this.scheduler.state.workflows??={};
+  await this.recoverSchedulerState();
+  const candidate=new Scheduler(this.scheduler.state);
+  const workflows=candidate.state.workflows??={};
   const previous=Object.values(workflows).find(w=>w.spec.idempotencyKey===spec.idempotencyKey);
   if(previous){
    if(workflowFingerprint(previous.spec)!==workflowFingerprint(spec))throw new ApiError(409);
-   return previous;
+   return publicWorkflow(previous);
   }
   await this.assertContract(spec);
   const workflow:WorkflowRecord={id:randomUUID(),spec,status:'DRAFT',createdAt:Date.now()};
   workflows[workflow.id]=workflow;
-  return workflow;
+  await this.commitScheduler(candidate);
+  return publicWorkflow(workflow);
  }
  private recordWorkflow(id:string):WorkflowRecord{
   const workflows=this.scheduler.state.workflows??{};
@@ -685,8 +838,9 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
   if(source.files.find(file=>file.path===spec.contractPath)?.sha256!==spec.contractHash)throw new ApiError(422);
  }
  async approveWorkflow(id:string){
+  await this.recoverSchedulerState();
   const draft=this.recordWorkflow(id);
-  if(draft.status!=='DRAFT')return draft;
+  if(draft.status!=='DRAFT')return publicWorkflow(draft);
   await this.assertContract(draft.spec);
   if(this.env.CODEX_SANDBOX_APPROVED!=='true'||this.env.CLAUDE_NESTED_APPROVED!=='true')throw new ApiError(503);
   const candidate=new Scheduler(this.scheduler.state);
@@ -701,16 +855,18 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
   }) as [string,string];
   const deadline=now+workflow.spec.workers.reduce((total,worker)=>total+worker.timeoutMs,0)+workflow.spec.integration.timeoutMs+60000;
   Object.assign(workflow,{workerIds,status:'RUNNING',approvedAt:now,deadline});
-  this.scheduler=candidate;
-  return workflow;
+  if(this.env.TEAM_COORDINATION_ENABLED==='true')await createWorkflowTeam(workflow,now);
+  await this.commitScheduler(candidate);
+  return publicWorkflow(workflow);
  }
  async workflow(id:string,includeResult:boolean){
+  await this.recoverSchedulerState();
   const workflow=this.recordWorkflow(id);
   const workers=(workflow.workerIds??[]).map(id=>this.scheduler.get(id));
   const integration=workflow.integrationId?this.scheduler.get(workflow.integrationId):undefined;
-  if(!includeResult)return {workflow,workers,integration};
+  if(!includeResult)return {workflow:publicWorkflow(workflow),workers,integration};
   if(workflow.status!=='SUCCEEDED'&&workflow.status!=='FAILED')throw new ApiError(409);
-  return {workflow,workers:await Promise.all(workers.map(async job=>({job,result:job.resultKey?await this.readResult(job.resultKey):undefined}))),
+  return {workflow:publicWorkflow(workflow),workers:await Promise.all(workers.map(async job=>({job,result:job.resultKey?await this.readResult(job.resultKey):undefined}))),
    integration:integration?{job:integration,result:integration.resultKey?await this.readResult(integration.resultKey):undefined}:undefined,
    output:workflow.outputSnapshotId?await this.snapshot(workflow.outputSnapshotId):undefined};
  }
@@ -833,20 +989,28 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
  }
  private runner(job:JobRecord){return this.env.RUNNER.getByName(`${job.id}:${job.attempt}`);}
  private async hardDeadline(job:JobRecord){if(job.cancellationRequested&&job.errorCode==='CANCELLED')return (await this.ctx.storage.get<number>(`cancelAt:${job.id}`)??job.deadline)+10000;return job.deadline+10000;}
- async alarm(){await this.externalReady;return this.ctx.blockConcurrencyWhile(async()=>{
+ async alarm(){await this.externalReady;
+  try{await this.ctx.blockConcurrencyWhile(()=>this.recoverSchedulerState());}
+  catch(error){try{await ensureSchedulerAlarm(this.ctx.storage);}catch{}throw error;}
   try{await this.autonomy.tick();
    await this.externalCleanup();
    await this.advanceAutonomy();
-   this.scheduler.expire(Date.now());this.scheduler.dispatch(Date.now());await this.save();
+   await this.ctx.blockConcurrencyWhile(async()=>{
+   const candidate=new Scheduler(this.scheduler.state);
+   for(const workflow of Object.values(candidate.state.workflows??{}))enforceWorkflowTeamBlock(workflow,candidate,Date.now());
+   candidate.expire(Date.now());candidate.dispatch(Date.now());
+   for(const workflow of Object.values(candidate.state.workflows??{}))await observeWorkflowTeam(workflow,candidate,Date.now());
+   await this.commitScheduler(candidate,true);
+   });
    const active=this.scheduler.list().filter(job=>!job.containerStopped),cursor=await this.ctx.storage.get<number>('alarmCursor')??0;
-   // Bound one alarm below the Durable Object concurrency lock deadline.
+   // Provider/container I/O stays outside the scheduler concurrency lock.
    const selected=active.length?Array.from({length:Math.min(2,active.length)},(_,i)=>active[(cursor+i)%active.length]!):[];
    await this.ctx.storage.put('alarmCursor',active.length?(cursor+selected.length)%active.length:0);
    for(const job of selected){
     try{await this.advance(job);}catch{/* Keep the credential lane owned and retry bounded cleanup. */
      if(Date.now()>await this.hardDeadline(job)){let stopped=false;try{stopped=await this.runner(job).stop();}catch{}this.scheduler.quarantine(job.id,job.attempt,'RUNTIME_UNAVAILABLE',Date.now(),stopped);}
     }
-    await this.save();
+    await this.ctx.blockConcurrencyWhile(()=>this.save());
    }
    for(const group of Object.values(this.scheduler.state.computeGroups??{}))advanceComputeGroup(group,this.scheduler,Date.now());
    await this.advanceCarbon();
@@ -854,10 +1018,19 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
    if(plans.length){
     const turn=await this.ctx.storage.get<number>('workflowCursor')??0;
     await this.ctx.storage.put('workflowCursor',(turn+1)%plans.length);
-    await advanceWorkflow(plans[turn%plans.length]!,this.scheduler,{read:id=>this.snapshot(id),write:s=>this.putSnapshot(s)},Date.now());
+    const base=this.scheduler,candidate=new Scheduler(base.state),workflow=candidate.state.workflows![plans[turn%plans.length]!.id]!;
+    await advanceWorkflow(workflow,candidate,{read:id=>this.snapshot(id),write:s=>this.putSnapshot(s)},Date.now());
+    await this.ctx.blockConcurrencyWhile(async()=>{
+     if(this.scheduler!==base)return; // Cancellation or a concurrent team write wins over stale merge work.
+     await this.commitScheduler(candidate,true);
+    });
    }
-  }finally{await this.save();await this.schedule();await this.scheduleAutonomy();}
- });}
+  }finally{await this.ctx.blockConcurrencyWhile(()=>this.save());await this.schedule();await this.scheduleAutonomy();}
+ }
+ private teamJobBlocked(jobId:string):boolean {
+  if(this.schedulerStateUncertain)return true;
+  return Object.values(this.scheduler.state.workflows??{}).some(w=>w.team?.status==='blocked'&&(w.workerIds?.includes(jobId)||w.integrationId===jobId||this.scheduler.state.jobs[jobId]?.executionGroup?.id===w.id));
+ }
  private async advance(job:JobRecord){
   if(job.autonomous){await this.advanceNative(job);return;}
   const runner=this.runner(job);
@@ -866,7 +1039,8 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
   const readiness=await runner.ensure(job);
   if(readiness.lost){const stopped=await runner.stop();this.scheduler.quarantine(job.id,job.attempt,'CONTAINER_LOST',Date.now(),stopped);return;}
   if(!readiness.ready){if(Date.now()>await this.hardDeadline(job)){const stopped=await runner.stop();this.scheduler.quarantine(job.id,job.attempt,'RUNTIME_START_TIMEOUT',Date.now(),stopped);}return;}
-  if(!readiness.legacy&&!readiness.prepared){
+  if(this.teamJobBlocked(job.id)||this.scheduler.get(job.id).cancellationRequested){await runner.cancel();}
+  if(!readiness.legacy&&!readiness.prepared&&!this.teamJobBlocked(job.id)&&!this.scheduler.get(job.id).cancellationRequested){
    const timeoutKey=`runtimeTimeout:${job.id}:${job.attempt}`;
    let timeoutMs=await this.ctx.storage.get<number>(timeoutKey);
    if(timeoutMs===undefined){timeoutMs=Math.max(1000,Math.min(job.timeoutMs,job.deadline-Date.now()));await this.ctx.storage.put(timeoutKey,timeoutMs);}
@@ -899,10 +1073,10 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
      input.carbon={effort:job.carbon.effort,capability:token,probe:job.carbon.probe,model:job.carbon.model,instance:job.carbon.instance,latency:job.carbon.latency,cacheMode:job.carbon.cacheMode};
     }
    }
-   await runner.prepare(input);
+   if(!this.teamJobBlocked(job.id)&&!this.scheduler.get(job.id).cancellationRequested)await runner.prepare(input);
   }
-  if(job.cancellationRequested||job.status==='CANCELLING')await runner.cancel();
-  if(!readiness.legacy)await runner.launch();const polled=JSON.parse(await runner.poll()) as {lost:boolean;state?:RuntimeState;result?:RuntimeResult};
+  if(this.teamJobBlocked(job.id)||this.scheduler.get(job.id).cancellationRequested||job.status==='CANCELLING')await runner.cancel();
+  if(!readiness.legacy&&!this.teamJobBlocked(job.id)&&!this.scheduler.get(job.id).cancellationRequested)await runner.launch();const polled=JSON.parse(await runner.poll()) as {lost:boolean;state?:RuntimeState;result?:RuntimeResult};
   if(polled.lost){const stopped=await runner.stop();this.scheduler.quarantine(job.id,job.attempt,'CONTAINER_LOST',Date.now(),stopped);return;}
   if(polled.state?.started&&job.status==='STARTING')this.scheduler.running(job.id,job.attempt,Date.now());
   if(polled.result){try{await this.complete(job,polled.result);}catch(error){if(!(error instanceof InvalidRuntimeResult))throw error;const stopped=await runner.stop();this.scheduler.quarantine(job.id,job.attempt,'INVALID_RUNTIME_RESULT',Date.now(),stopped);}return;}
@@ -1028,8 +1202,9 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
  }
 
  private async advanceRalph(job:JobRecord,runner:DurableObjectStub<RunnerDO>){
+  if(this.teamJobBlocked(job.id)||this.scheduler.get(job.id).cancellationRequested)return;
   const raw=await runner.checkpoint();
-  if(!raw)return;
+  if(!raw||this.teamJobBlocked(job.id)||this.scheduler.get(job.id).cancellationRequested)return;
   const value=JSON.parse(raw) as RalphCheckpoint;
   if(!Number.isInteger(value.round)||value.round<1||value.round>job.ralph!.maxRounds||
      typeof value.sessionId!=='string'||!/^[a-f0-9-]{36}$/i.test(value.sessionId))throw new InvalidRuntimeResult();
@@ -1042,16 +1217,22 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
    const paths=changedPaths(await this.snapshot(job.snapshotId),snapshot);
    const rejected=!paths.length||paths.some(path=>!job.ralph!.writes.includes(path));
    if(!rejected)await this.putSnapshot(snapshot);
-   const checkIds=rejected?[]:job.checks.map(spec=>{
-    const check=this.scheduler.enqueueCompute(snapshot.digest,spec,Date.now());
-    if(job.executionGroup)this.scheduler.state.jobs[check.id]!.executionGroup={...job.executionGroup};
-    return check.id;
+   if(this.teamJobBlocked(job.id)||this.scheduler.get(job.id).cancellationRequested)return;
+   await this.ctx.blockConcurrencyWhile(async()=>{
+    if(this.teamJobBlocked(job.id)||this.scheduler.get(job.id).cancellationRequested)return;
+    const candidate=new Scheduler(this.scheduler.state),current=candidate.state.jobs[job.id]!;
+    const checkIds=rejected?[]:job.checks.map(spec=>{
+     const check=candidate.enqueueCompute(snapshot.digest,spec,Date.now());
+     if(job.executionGroup)candidate.state.jobs[check.id]!.executionGroup={...job.executionGroup};
+     return check.id;
+    });
+    if(checkpoint)(current.checkpointHistory??=[]).push(checkpoint);
+    checkpoint={round:value.round,sessionId:value.sessionId,snapshotId:snapshot.digest,checkIds,rejected};
+    current.checkpoint=checkpoint;
+    await this.commitScheduler(candidate,true);
    });
-   if(checkpoint)(stored.checkpointHistory??=[]).push(checkpoint);
-   checkpoint={round:value.round,sessionId:value.sessionId,snapshotId:snapshot.digest,checkIds,rejected};
-   stored.checkpoint=checkpoint;
-   await this.save();
   }else if(checkpoint.sessionId!==value.sessionId||checkpoint.snapshotId!==snapshot.digest)throw new InvalidRuntimeResult();
+  if(!checkpoint||this.teamJobBlocked(job.id)||this.scheduler.get(job.id).cancellationRequested)return;
   const checks=checkpoint.checkIds.map(id=>this.scheduler.get(id));
   if(checks.some(job=>!terminal(job.status)||!job.containerStopped))return;
   const accepted=!checkpoint.rejected&&checks.length===job.checks.length&&checks.every(c=>c.status==='SUCCEEDED');
@@ -1064,7 +1245,7 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
   }));
   const message=accepted?'All required independent checks passed.':checkpoint.rejected?'Changes exceeded the approved write scope.':
    `Failed checks: ${failures.map(c=>`${c.checkId}: ${c.errorCode??c.status}`).join(', ')}. Inspect the test specification and repair only your assigned files.\n${diagnostics.join('\n')}`.slice(0,2000);
-  await runner.feedback(checkpoint.round,checkpoint.snapshotId,{accepted,message});
+  if(!this.teamJobBlocked(job.id)&&!this.scheduler.get(job.id).cancellationRequested)await runner.feedback(checkpoint.round,checkpoint.snapshotId,{accepted,message});
  }
  private async complete(job:JobRecord,result:RuntimeResult){
   if(result.version!==1||result.jobId!==job.id||result.attempt!==job.attempt||result.inputSnapshotId!==job.snapshotId||!result.process||!['passed','failed','timed_out','error','not_run'].includes(result.process.status)||(result.errorCode!==undefined&&result.errorCode!=='NEEDS_REAUTH'))throw new InvalidRuntimeResult();
@@ -1152,8 +1333,13 @@ export class SchedulerDO extends DurableObject<Env> implements ApiService {
  private async queueCompletion(job:JobRecord,completion:Completion){await this.ctx.storage.put(`completion:${job.id}`,completion);await this.finish(job,completion);}
  private async finish(job:JobRecord,completion:Completion){
   if(!await this.runner(job).stop())return;
-  if(completion.kind==='agent')this.scheduler.agentFinished(job.id,job.attempt,completion.outcome,Date.now());else this.scheduler.computeFinished(job.id,job.attempt,completion.outcome,Date.now());
-  await this.save();await this.ctx.storage.delete(`completion:${job.id}`);if(job.autonomous)await this.ctx.storage.delete(nativeRecoveryKey(job.id));
+  await this.ctx.blockConcurrencyWhile(async()=>{
+   const candidate=new Scheduler(this.scheduler.state);
+   if(completion.kind==='agent')candidate.agentFinished(job.id,job.attempt,completion.outcome,Date.now());else candidate.computeFinished(job.id,job.attempt,completion.outcome,Date.now());
+   for(const workflow of Object.values(candidate.state.workflows??{}))await observeWorkflowTeam(workflow,candidate,Date.now());
+   await this.commitScheduler(candidate,true);
+   await this.ctx.storage.delete(`completion:${job.id}`);if(job.autonomous)await this.ctx.storage.delete(nativeRecoveryKey(job.id));
+  });
  }
 }
 async function diagnoseCarbon(env:Env):Promise<Response>{
@@ -1182,9 +1368,16 @@ async function diagnoseCarbon(env:Env):Promise<Response>{
    inputTokenLimit:value.inputTokenLimit,outputTokenLimit:value.outputTokenLimit,thinking:value.thinking===true});
  }catch{return json({http:response.status,modelAvailable:false,category:'INVALID_METADATA'});}
 }
-export default {async fetch(request:Request,env:Env){const path=new URL(request.url).pathname;if(path==='/health'&&request.method==='GET')return json({ok:true,service:'hivemind-cloudflare',workerVersion:env.CF_VERSION_METADATA?.id,expectedRuntimeRevision:runtimeBuild.digest});if(!path.startsWith('/v1/'))return json({error:'Not found'},404);const denied=isAutonomousPath(path)?authorizeAutonomousRoute(request,env.CONTROL_TOKEN,env.AUTONOMOUS_WORKER_TOKEN,env.AUTONOMOUS_REPORTER_TOKEN):authorize(request,env.CONTROL_TOKEN);if(denied)return denied;if(path==='/v1/boundary-diagnostics'){
+/** Workers gives a bodiless POST a non-null empty stream, so emptiness is decided by reading at most one chunk. */
+async function emptyBody(request:Request):Promise<boolean>{
+ const length=request.headers.get('content-length');if(length!==null&&length!=='0')return false;
+ if(request.body===null)return true;
+ const reader=request.body.getReader();
+ try{for(let i=0;i<8;i++){const next=await reader.read();if(next.done)return true;if(next.value.byteLength>0){await reader.cancel().catch(()=>{});return false;}}await reader.cancel().catch(()=>{});return false;}catch{return false;}finally{reader.releaseLock();}
+}
+export default {async fetch(request:Request,env:Env){const path=new URL(request.url).pathname;if(path==='/health'&&request.method==='GET')return json({ok:true,service:'hivemind-cloudflare',workerVersion:env.CF_VERSION_METADATA?.id,expectedRuntimeRevision:runtimeBuild.digest});if(!path.startsWith('/v1/'))return json({error:'Not found'},404);if(isDelegatedPath(path)){if(env.AUTONOMOUS_DELEGATED_ENABLED!=='true')return json({error:'Delegated unavailable'},503);try{return await env.SCHEDULER.getByName('owner').fetch(request);}catch{return json({error:'Delegated unavailable'},503);}}if(isTeamRoute(path)){if(env.TEAM_COORDINATION_ENABLED!=='true')return json({error:'Not found'},404);try{return await env.SCHEDULER.getByName('owner').fetch(request);}catch{return json({error:'Service is unavailable'},503);}}const denied=isAutonomousPath(path)?authorizeAutonomousRoute(request,env.CONTROL_TOKEN,env.AUTONOMOUS_WORKER_TOKEN,env.AUTONOMOUS_REPORTER_TOKEN):authorize(request,env.CONTROL_TOKEN);if(denied)return denied;if(path==='/v1/boundary-diagnostics'){
  if(request.method!=='POST')return json({error:'Method not allowed'},405);
  const key=request.headers.get('idempotency-key');
- if(!key||! /^[A-Za-z0-9_-]{8,80}$/.test(key)||new URL(request.url).search||request.body!==null)return json({error:'Empty body and bounded idempotency-key required'},400);
+ if(!key||! /^[A-Za-z0-9_-]{8,80}$/.test(key)||new URL(request.url).search||!await emptyBody(request))return json({error:'Empty body and bounded idempotency-key required'},400);
  try{return json(await env.RUNNER.getByName('boundary-diagnostic:'+runtimeBuild.digest+':'+key).boundaryDiagnostic());}catch{return json({error:'Diagnostic unavailable'},503);}
  }if(path==='/v1/carbon-diagnostics'&&request.method==='GET')return diagnoseCarbon(env);try{return await env.SCHEDULER.getByName('owner').fetch(request);}catch{return json({error:'Service is unavailable'},503);}}};

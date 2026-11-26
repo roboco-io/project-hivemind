@@ -10,6 +10,7 @@ MCP(Model Context Protocol) 클라이언트가 HIVEMIND의 Cloudflare 작업과 
 - `[server.ts:loadMcpSettings]` - `HIVEMIND_API_URL`, `HIVEMIND_OPERATOR_TOKEN`, `HIVEMIND_OPERATOR_TOKEN_FILE`에서 `McpSettings`를 만든다.
 - `[server.ts:McpSettings]` - `apiUrl`, `operatorToken`.
 - `[server.ts:HivemindMcpOptions]` - `McpSettings`에 테스트용 `fetchImpl`을 더한 타입.
+- `[autonomous-tool-audit.ts:registerToolAuditTool]` - 읽기 전용 도구 `hivemind_autonomous_tool_calls`를 등록한다. `GET /api/cloudflare/autonomous-tasks/:id/tool-calls`만 호출하며, 응답은 워커 보고(`source: 'worker_report'`)임을 알리고 입력 요약을 한 번 더 가린다. `[server.ts:createHivemindMcpServer]`가 장기 작업 운영자 도구 뒤에 호출한다.
 - `[main.ts]` - 실행 진입점. `StdioServerTransport`로 서버를 연결한다.
 
 `[server.ts:createHivemindMcpServer]`가 등록하는 MCP 도구는 다음과 같다.
@@ -27,6 +28,8 @@ MCP(Model Context Protocol) 클라이언트가 HIVEMIND의 Cloudflare 작업과 
 | `hivemind_list_workflows` | 읽기 | `GET /api/cloudflare/workflows` |
 | `hivemind_get_workflow` | 읽기 | `GET /api/cloudflare/workflows/:id`, 상태가 `SUCCEEDED` 또는 `FAILED`일 때만 `GET /api/cloudflare/workflows/:id/result` |
 
+- `[autonomous.ts:autonomousDraftSchema]`, `[autonomous.ts:registerAutonomousOperatorTools]` - 장기 작업 목록·범위 조회, 초안 등록, revision 승인, 중단, 메시지, audit, 외부 비용 기록 도구 8개를 추가한다. 도구별 계약은 [앱 안내](../README.md#장기-자율-작업-운영자-계약)에 있다. 위 기본 10개와 도구 감사 1개를 합쳐 총 19개다.
+
 ## Invariants
 
 - `apiUrl`은 경로·인증 정보가 없는 원점이어야 한다. loopback 호스트가 아니면 `https:`여야 하고 개발용 기본 토큰을 쓸 수 없다 `[server.ts:validateSettings]`.
@@ -41,12 +44,19 @@ MCP(Model Context Protocol) 클라이언트가 HIVEMIND의 Cloudflare 작업과 
 - `[server.ts:summary]`는 `actualCostMicros`를 항상 `null`로 반환한다.
 - `hivemind_get_workflow`는 결과 응답의 `id`, `contractHash`, `inputSnapshotId`가 진행 상태 응답과 다르면 실패로 처리한다.
 
+- `[autonomous.ts:registerAutonomousOperatorTools]`는 Cloudflare proxy만 호출한다. summary와 제한된 history 페이지를 사용하며, profile metadata·revision·hash가 승인 입력과 다르면 승인하지 않는다. 외부 profile 검토는 현재 `aws`, `hf`, `github` 제공자만 받는다.
+- `[autonomous.ts:autonomousDraftSchema]`는 Claude 구독·Cloudflare 실행을 명시한다. `Bash`는 필수이며 pilot은 최대 4회, `long_running`은 최대 65536회다. 실제 모델 pin·호스트의 최종 검증은 중앙 정책이 담당한다.
+- `[autonomous.ts:registerAutonomousOperatorTools]`의 audit 매개변수 투영은 현재 `lifetimeMs`, `startActionId`, `artifactDigest`, `expectedHead`만 포함한다. proxy가 전달하는 대형 파일·S3 필드가 모두 MCP 결과에 노출되는 것은 아니다.
+- `[autonomous-tool-audit.ts:registerToolAuditTool]`는 최대 100개 기록의 페이지를 검증하고 워커 보고라는 고지를 붙인다. 누적 `totals`와 현재 페이지 길이는 다르다.
+
 ## Side Effects
 
 - 관제 서비스로 HTTP 요청을 보낸다. 제한 시간은 워크플로 경로가 30초, 그 밖의 경로가 10초다 `[server.ts:api]`.
 - 변경 도구는 관제 서비스의 상태를 바꾼다. `hivemind_decide_task`의 실행 승인과 `hivemind_approve_workflow`는 유료 원격 실행을 시작하게 한다(도구 설명에 명시됨).
 - `HIVEMIND_OPERATOR_TOKEN_FILE`이 지정되면 그 파일을 읽는다.
 - `[main.ts]`는 stdin·stdout을 MCP 전송에 쓰고, 오류 문구를 stderr에 쓴다. stdin 종료, `SIGINT`, `SIGTERM`에 서버를 닫으며, 시작에 실패하면 `process.exitCode`를 1로 설정한다.
+
+- `[autonomous.ts:registerAutonomousOperatorTools]`의 변경 도구는 원격 초안·승인·중단·메시지·인간 비용 확인을 기록한다. 비용 기록은 재시도 루프 없이 정확한 행동 revision에 한 번 요청하며 응답 provenance를 검사한다.
 
 ## Verification
 

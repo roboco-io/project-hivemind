@@ -1,3 +1,4 @@
+import {assertAwsRegion} from './autonomous-aws-region.js';
 import {createHash,createHmac} from 'node:crypto';
 import type {ExternalInvocation} from '../../contracts/src/autonomous-external.js';
 import type {ExternalSqlPort} from '../../core/src/autonomous-external-sql.ts';
@@ -17,11 +18,11 @@ export interface ExternalCostCache {
  transaction<T>(key:string,fn:(record:CostRecord|undefined)=>{record:CostRecord;value:T}):T;
 }
 export interface AwsCostExplorerOptions {
- enabled?:boolean;accountId:string;resourceRegion:'ap-northeast-2';workloadId:string;
+ enabled?:boolean;accountId:string;resourceRegion:string;allowedRegions?:string[];workloadId:string;
  queryUpperBoundMicros:number;maxQueryCount:number;resourceUpperBoundMicros:number;
  tagActivation:{evidenceId:string;activeSince:number;observedAt:number;validUntil:number};
  cache:ExternalCostCache;
- credentials:(scope:Readonly<{accountId:string;resourceRegion:'ap-northeast-2';billingRegion:'us-east-1';purpose:'cost_read'}>)=>Promise<{accessKeyId:string;secretAccessKey:string;sessionToken?:string}>;
+ credentials:(scope:Readonly<{accountId:string;resourceRegion:string;billingRegion:'us-east-1';purpose:'cost_read'}>)=>Promise<{accessKeyId:string;secretAccessKey:string;sessionToken?:string}>;
  /** Separate verified invoice/source for CE queries and every non-owner-EC2/EBS fee.
   * Lookup pre-existing verified receipts only; must not initiate new paid requests.
   * No source is installed here. Never supply model output or an assumed free tariff. */
@@ -63,7 +64,8 @@ export function createAwsCostExplorerReader(options?:AwsCostExplorerOptions):Ext
  const {credentials,cache,supplement,fetch:fetcher=globalThis.fetch,now=Date.now,...raw}=options??{} as Partial<AwsCostExplorerOptions>;
  const c=structuredClone(raw);
  function scope(i:ExternalInvocation){
-  check(c.enabled===true&&cache&&typeof cache.transaction==='function'&&typeof credentials==='function'&&/^\d{12}$/.test(c.accountId??'')&&c.resourceRegion==='ap-northeast-2'&&safe(c.workloadId));
+  assertAwsRegion(c.resourceRegion!,c.allowedRegions);
+  check(c.enabled===true&&cache&&typeof cache.transaction==='function'&&typeof credentials==='function'&&/^\d{12}$/.test(c.accountId??'')&&safe(c.workloadId));
   check(int(c.queryUpperBoundMicros)&&c.queryUpperBoundMicros!>0&&int(c.resourceUpperBoundMicros)&&int(c.maxQueryCount)&&c.maxQueryCount!>=2&&c.maxQueryCount!<=14);
   const a=c.tagActivation;check(a&&safe(a.evidenceId)&&int(a.activeSince)&&int(a.observedAt)&&int(a.validUntil)&&a.activeSince<=a.observedAt&&a.observedAt<=now()&&a.validUntil>now());
   check(i.profile.provider==='aws'&&i.operation==='aws.spot.start'&&i.profile.enabled===true&&i.profile.target.accountId===c.accountId&&i.profile.target.region===c.resourceRegion&&i.profile.target.workloadId===c.workloadId&&externalParametersHash(i.profile,i.operation,i.parameters)===i.parametersHash);
@@ -76,7 +78,7 @@ export function createAwsCostExplorerReader(options?:AwsCostExplorerOptions):Ext
  async function call(action:string,body:unknown):Promise<{body:Record<string,any>;requestId:string}>{
   const control=new AbortController(),timer=setTimeout(()=>control.abort(),5000);let abort:()=>void=()=>{};
   const work=async()=>{
-   const credential=await credentials!({accountId:c.accountId!,resourceRegion:'ap-northeast-2',billingRegion:'us-east-1',purpose:'cost_read'});
+   const credential=await credentials!({accountId:c.accountId!,resourceRegion:c.resourceRegion!,billingRegion:'us-east-1',purpose:'cost_read'});
    check(safe(credential.accessKeyId,128)&&safe(credential.secretAccessKey,4096)&&(credential.sessionToken===undefined||safe(credential.sessionToken,8192)));
    const payload=JSON.stringify(body),stamp=new Date(now()).toISOString().replace(/[:-]|\.\d{3}/g,''),day=stamp.slice(0,8),host='ce.us-east-1.amazonaws.com';
    const headers:Record<string,string>={host,'content-type':'application/x-amz-json-1.1','x-amz-date':stamp,'x-amz-target':'AWSInsightsIndexService.'+action};if(credential.sessionToken)headers['x-amz-security-token']=credential.sessionToken;
@@ -85,7 +87,7 @@ export function createAwsCostExplorerReader(options?:AwsCostExplorerOptions):Ext
    const hmac=(key:string|Uint8Array,v:string)=>createHmac('sha256',key).update(v).digest();
    let key=hmac('AWS4'+credential.secretAccessKey,day);for(const v of ['us-east-1','ce','aws4_request'])key=hmac(key,v);
    headers.authorization=`AWS4-HMAC-SHA256 Credential=${credential.accessKeyId}/${awsScope}, SignedHeaders=${signed}, Signature=${createHmac('sha256',key).update(['AWS4-HMAC-SHA256',stamp,awsScope,sha(request)].join('\n')).digest('hex')}`;
-   control.signal.throwIfAborted();const response=await fetcher('https://ce.us-east-1.amazonaws.com/',{method:'POST',headers,body:payload,redirect:'error',signal:control.signal});check(response.ok&&!response.redirected);
+   control.signal.throwIfAborted();const response=await fetcher('https://ce.us-east-1.amazonaws.com/',{method:'POST',headers,body:payload,redirect:'manual',signal:control.signal});check(response.status>=200&&response.status<300&&!response.redirected);
    const length=response.headers.get('content-length');check(length===null||/^\d+$/.test(length)&&Number(length)<=MAX_BODY);
    const requestId=response.headers.get('x-amzn-requestid');check(safe(requestId,128));const reader=response.body?.getReader();check(reader);const chunks:Uint8Array[]=[];let size=0;
    try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>MAX_BODY){await reader.cancel();throw Error();}chunks.push(part.value);}}finally{reader.releaseLock();}

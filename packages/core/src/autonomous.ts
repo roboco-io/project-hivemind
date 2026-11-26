@@ -483,6 +483,16 @@ export class AutonomousEngine {
     if(t.actions.some(a=>a.id===r.actionId&&a.tool===AUTONOMOUS_EXTERNAL_TOOL))fail('Trusted external absence proof required',409);
     if(r.status==='active') fail('Resource is not pending cleanup',409); this.mutableRecord(t.resources,r).status='cleaned'; this.advance(t,now); this.finalize(t); return this.public(t);
   }); }
+  /** Broker-observed cost overrun stops the task through the existing budget stop. No-op when already stopping or terminal. */
+  stopExternalBudget(id:string,reason:string,now:number):AutonomousTask { return this.atomic(()=>{
+    integer(now); text(id); text(reason); const t=this.task(id);
+    if(terminal.has(t.status)||t.status==='stopping'||t.stopReason) return this.public(t);
+    this.stop(t,'budget_exceeded',reason,now); this.advance(t,now); return this.public(t);
+  }); }
+  /** Read-only lease check for worker-reported tool audit. Never mutates the task. */
+  toolAuditScope(lease:AutonomousLease,now:number):{taskId:string;runId:string;iteration:number} {
+    const t=this.authorize(lease,now,true); return {taskId:t.id,runId:lease.runId,iteration:t.iteration};
+  }
   tick(now:number):void { this.atomic(()=>{ integer(now); for(const id of Object.keys(this.state.tasks))this.advance(this.task(id),now); }); }
   private unresolved(t:AutonomousTask) { return t.actions.some(a=>a.status==='reserved'||a.status==='unknown'); }
   private help(t:AutonomousTask,message:string,now:number) { this.note(t,'help',message,now); t.status='awaiting_input'; for(let i=0;i<t.resources.length;i++)if(t.resources[i]!.status==='active')t.resources[i]={...t.resources[i]!,status:'cleanup_pending'}; }

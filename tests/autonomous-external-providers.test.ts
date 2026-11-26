@@ -43,8 +43,8 @@ const syntheticGuard={guardArn,port:{
 const artifactLoader={async load(){return structuredClone(artifact);}};
 test('AWS fixed endpoint SigV4 start discovers provider-owned instance and confirms termination',async()=>{
  const calls:{url:string;body:URLSearchParams;headers:Headers}[]=[];let terminated=false;
- const xml=()=>`<DescribeInstancesResponse><requestId>req-1</requestId><reservationSet><item><ownerId>123456789012</ownerId><instancesSet><item><instanceId>i-1234abcd</instanceId><clientToken>${hash('idem')}</clientToken><instanceState><name>${terminated?'terminated':'running'}</name></instanceState><tagSet><item><key>hivemind:owner</key><value>owner</value></item><item><key>hivemind:request</key><value>${hash('idem')}</value></item><item><key>hivemind:parameters</key><value>${invocation.parametersHash}</value></item><item><key>hivemind:workload</key><value>w</value></item><item><key>hivemind:guard</key><value>${guardArn}</value></item><item><key>hivemind:expires</key><value>${invocation.expiresAt}</value></item><item><key>hivemind:timer</key><value>arn:aws:scheduler:ap-northeast-2:123456789012:schedule/hivemind/hm-${digest({accountId:aws.accountId,region:aws.region,workloadId:aws.workloadId,actionId:invocation.actionId,ownershipToken:invocation.ownershipToken,clientToken:hash(invocation.idempotencyKey),parametersHash:invocation.parametersHash,expiresAt:invocation.expiresAt,maxExposureMicros:invocation.profile.upperBoundMicros,configurationHash:awsGuardDigest(launchPolicy(aws))}).slice(0,48)}</value></item></tagSet></item></instancesSet></item></reservationSet></DescribeInstancesResponse>`;
- const fake:typeof fetch=async(url,init)=>{assert.equal(init?.redirect,'error');verifySignature(String(url),init!);const body=new URLSearchParams(String(init?.body));calls.push({url:String(url),body,headers:new Headers(init?.headers)});const action=body.get('Action');if(action==='GetCallerIdentity')return new Response(identityXml);if(action==='DescribeVolumes')return new Response('<DescribeVolumesResponse><requestId>vol-1</requestId><volumeSet></volumeSet></DescribeVolumesResponse>');if(action==='TerminateInstances'){terminated=true;return new Response('<TerminateInstancesResponse><requestId>req-2</requestId></TerminateInstancesResponse>');}return new Response(action==='RunInstances'?'<RunInstancesResponse><requestId>req-0</requestId></RunInstancesResponse>':xml());};
+ const xml=()=>`<DescribeInstancesResponse><requestId>req-1</requestId><reservationSet><item><ownerId>123456789012</ownerId><instancesSet><item><instanceId>i-1234abcd</instanceId><placement><availabilityZone>ap-northeast-2a</availabilityZone></placement><clientToken>${hash('idem')}</clientToken><instanceState><name>${terminated?'terminated':'running'}</name></instanceState><tagSet><item><key>hivemind:owner</key><value>owner</value></item><item><key>hivemind:request</key><value>${hash('idem')}</value></item><item><key>hivemind:parameters</key><value>${invocation.parametersHash}</value></item><item><key>hivemind:workload</key><value>w</value></item><item><key>hivemind:guard</key><value>${guardArn}</value></item><item><key>hivemind:expires</key><value>${invocation.expiresAt}</value></item><item><key>hivemind:timer</key><value>arn:aws:scheduler:ap-northeast-2:123456789012:schedule/hivemind/hm-${digest({accountId:aws.accountId,region:aws.region,workloadId:aws.workloadId,actionId:invocation.actionId,ownershipToken:invocation.ownershipToken,clientToken:hash(invocation.idempotencyKey),parametersHash:invocation.parametersHash,expiresAt:invocation.expiresAt,maxExposureMicros:invocation.profile.upperBoundMicros,configurationHash:awsGuardDigest(launchPolicy(aws))}).slice(0,48)}</value></item></tagSet></item></instancesSet></item></reservationSet></DescribeInstancesResponse>`;
+ const fake:typeof fetch=async(url,init)=>{assert.equal(init?.redirect,'manual');verifySignature(String(url),init!);const body=new URLSearchParams(String(init?.body));calls.push({url:String(url),body,headers:new Headers(init?.headers)});const action=body.get('Action');if(action==='GetCallerIdentity')return new Response(identityXml);if(action==='DescribeVolumes')return new Response('<DescribeVolumesResponse><requestId>vol-1</requestId><volumeSet></volumeSet></DescribeVolumesResponse>');if(action==='TerminateInstances'){terminated=true;return new Response('<TerminateInstancesResponse><requestId>req-2</requestId></TerminateInstancesResponse>');}return new Response(action==='RunInstances'?'<RunInstancesResponse><requestId>req-0</requestId></RunInstancesResponse>':xml());};
  const create=await factory();const port=create({enabled:true,aws,awsTtlGuard:syntheticGuard,artifacts,fetch:fake,now:()=>1000});const receipt=await port.execute(invocation,credential);assert.equal(receipt.resource?.id,'i-1234abcd');assert.equal(receipt.billing.verifiedCostMicros,null);const start=calls.find(c=>c.body.get('Action')==='RunInstances')!;assert.equal(start.url,'https://ec2.ap-northeast-2.amazonaws.com/');assert.match(start.headers.get('authorization')!,/^AWS4-HMAC-SHA256 /);assert.equal(start.body.get('ImageId'),aws.imageId);assert.equal(start.body.get('ClientToken'),hash('idem'));
  assert.equal(await port.confirmAbsent(invocation,receipt.resource!,credential),false);await port.cleanup(invocation,receipt.resource!,credential);assert.equal(await port.confirmAbsent(invocation,receipt.resource!,credential),true);assert.ok(!JSON.stringify(receipt).includes('synthetic-secret'));
 });
@@ -90,7 +90,7 @@ test('HF provider ownership title alone is insufficient when blob proof is wrong
  assert.equal(await port.inspect(i,{provider:'hf',token:'synthetic-hf'}),null);
 });
 test('AWS lost-create discovery verifies account and token and never invents zero billing',async()=>{
- const create=await factory();let terminations=0;const port=create({enabled:true,aws,awsTtlGuard:syntheticGuard,artifacts,now:()=>1000,fetch:async(_url,init)=>{const action=new URLSearchParams(String(init?.body)).get('Action');if(action==='GetCallerIdentity')return new Response(identityXml);if(action==='TerminateInstances')terminations++;return new Response('<DescribeInstancesResponse><requestId>req-1</requestId><reservationSet><item><ownerId>999999999999</ownerId><instancesSet><item><instanceId>i-1234abcd</instanceId><clientToken>wrong</clientToken><instanceState><name>running</name></instanceState></item></instancesSet></item></reservationSet></DescribeInstancesResponse>');}});
+ const create=await factory();let terminations=0;const port=create({enabled:true,aws,awsTtlGuard:syntheticGuard,artifacts,now:()=>1000,fetch:async(_url,init)=>{const action=new URLSearchParams(String(init?.body)).get('Action');if(action==='GetCallerIdentity')return new Response(identityXml);if(action==='TerminateInstances')terminations++;return new Response('<DescribeInstancesResponse><requestId>req-1</requestId><reservationSet><item><ownerId>999999999999</ownerId><instancesSet><item><instanceId>i-1234abcd</instanceId><placement><availabilityZone>ap-northeast-2a</availabilityZone></placement><clientToken>wrong</clientToken><instanceState><name>running</name></instanceState></item></instancesSet></item></reservationSet></DescribeInstancesResponse>');}});
  assert.equal(await port.inspect(invocation,credential),null);await assert.rejects(port.cleanup(invocation,{id:'i-1234abcd',cleanupRequired:true},credential));assert.equal(terminations,0);
 });
 test('AWS TTL and operation parameter whitelist reject overrides before signing',async()=>{
@@ -99,7 +99,7 @@ test('AWS TTL and operation parameter whitelist reject overrides before signing'
 });
 test('private repo is required and oversized/redirect/error responses expose no raw data',async()=>{
  const create=await factory();for(const response of [()=>Response.json({private:false,sha}),()=>new Response('private secret',{status:302,headers:{location:'https://attacker.invalid/'}}),()=>new Response('x'.repeat(1024*1024+1)),()=>new Response('provider-secret',{status:500})]){
-  let mutations=0;const port=create({enabled:true,hf:{enabled:true,repository:'owner/repo',revision:'main'},artifacts:artifactLoader,now:()=>1000,fetch:async(url,init)=>{assert.equal(new URL(String(url)).hostname,'huggingface.co');assert.equal(init?.redirect,'error');if(init?.method==='POST')mutations++;return response();}});
+  let mutations=0;const port=create({enabled:true,hf:{enabled:true,repository:'owner/repo',revision:'main'},artifacts:artifactLoader,now:()=>1000,fetch:async(url,init)=>{assert.equal(new URL(String(url)).hostname,'huggingface.co');assert.equal(init?.redirect,'manual');if(init?.method==='POST')mutations++;return response();}});
   await assert.rejects(port.execute(inv('hf'),{provider:'hf',token:'synthetic-hf'}),/^Error: External provider unavailable$/);assert.equal(mutations,0);
  }
 });
@@ -143,7 +143,7 @@ test('GitHub atomic CAS rejects branch movement after preflight without a REST o
  assert.equal(graphql,1);assert.equal(patches,0);assert.equal(current,'0'.repeat(40));
 });
 test('AWS transport recovers a lost creation response only from complete provider ownership evidence',async()=>{
- const create=await factory();let launched=false;const owned=`<DescribeInstancesResponse><requestId>owned-1</requestId><reservationSet><item><ownerId>123456789012</ownerId><instancesSet><item><instanceId>i-1234abcd</instanceId><clientToken>${hash('idem')}</clientToken><instanceState><name>running</name></instanceState><tagSet><item><key>hivemind:owner</key><value>owner</value></item><item><key>hivemind:request</key><value>${hash('idem')}</value></item><item><key>hivemind:parameters</key><value>${invocation.parametersHash}</value></item><item><key>hivemind:workload</key><value>w</value></item></tagSet></item></instancesSet></item></reservationSet></DescribeInstancesResponse>`;
+ const create=await factory();let launched=false;const owned=`<DescribeInstancesResponse><requestId>owned-1</requestId><reservationSet><item><ownerId>123456789012</ownerId><instancesSet><item><instanceId>i-1234abcd</instanceId><placement><availabilityZone>ap-northeast-2a</availabilityZone></placement><clientToken>${hash('idem')}</clientToken><instanceState><name>running</name></instanceState><tagSet><item><key>hivemind:owner</key><value>owner</value></item><item><key>hivemind:request</key><value>${hash('idem')}</value></item><item><key>hivemind:parameters</key><value>${invocation.parametersHash}</value></item><item><key>hivemind:workload</key><value>w</value></item></tagSet></item></instancesSet></item></reservationSet></DescribeInstancesResponse>`;
  const port=create({enabled:true,aws,awsTtlGuard:syntheticGuard,artifacts,now:()=>1000,fetch:async(_url,init)=>{const action=new URLSearchParams(String(init?.body)).get('Action');if(action==='GetCallerIdentity')return new Response(identityXml);if(action==='RunInstances'){launched=true;throw Error('lost');}assert.ok(launched);return new Response(owned);}});
  await assert.rejects(port.execute(invocation,credential));const r=receiptOnly(await port.inspect(invocation,credential));assert.equal(r?.resource?.id,'i-1234abcd');assert.equal(r?.billing.verifiedCostMicros,null);
 });
@@ -183,7 +183,7 @@ test('AWS guard rejects self-echo boolean, stale/foreign proof, or missing timer
 test('AWS guard/account/region/credential reference and exposure ceiling bind before start',async()=>{
  const create=await factory();
  for(const patch of [{credentialRef:'other'},{maxUpperBoundMicros:9},{maxUpperBoundMicros:undefined},{accountId:'999999999999'},{region:'us-east-1'}]){
-  let calls=0;const port=create({enabled:true,aws:{...aws,...patch},awsTtlGuard:syntheticGuard,artifacts,now:()=>1000,fetch:async()=>{calls++;throw Error('unexpected');}});
+  let calls=0;const port=create({enabled:true,aws:{...aws,...patch,...(patch.region?{allowedRegions:[patch.region]}:{})},awsTtlGuard:syntheticGuard,artifacts,now:()=>1000,fetch:async()=>{calls++;throw Error('unexpected');}});
   await assert.rejects(port.execute(invocation,credential));assert.equal(calls,0);
  }
 });
@@ -269,7 +269,7 @@ test('actual provider interoperates with actual guard attestation/arm through fa
  let schedule:any;const registry=new Map<string,unknown>(),observed:string[]=[];
  const xml=(tag:string,value:string)=>`<${tag}>${value}</${tag}>`,encoded=(v:unknown)=>encodeURIComponent(JSON.stringify(v));
  config.fetchImpl=async(url,init)=>{
-  const u=new URL(String(url)),headers=new Headers(init?.headers),form=new URLSearchParams(String(init?.body??''));assert.match(headers.get('authorization')!,/^AWS4-HMAC-SHA256 /);assert.equal(init?.redirect,'error');
+  const u=new URL(String(url)),headers=new Headers(init?.headers),form=new URLSearchParams(String(init?.body??''));assert.match(headers.get('authorization')!,/^AWS4-HMAC-SHA256 /);assert.equal(init?.redirect,'manual');
   const op=headers.get('x-amz-target')?.split('.').at(-1)??(u.hostname.startsWith('lambda.')?(u.pathname.endsWith('/policy')?'GetPolicy':u.pathname.endsWith('/concurrency')?'GetFunctionConcurrency':'GetFunctionConfiguration'):u.hostname.startsWith('scheduler.')?(init?.method==='POST'?'CreateSchedule':'GetSchedule'):form.get('Action')!);
   const body=headers.get('content-type')?.includes('json')?JSON.parse(String(init?.body??'{}')):Object.fromEntries(form);observed.push(op);let v:any;
   if(op==='DescribeRule')v={Arn:guardArn,Name:prefix,State:'ENABLED',ScheduleExpression:'rate(1 minute)',EventBusName:'default'};
@@ -302,7 +302,7 @@ test('actual provider interoperates with actual guard attestation/arm through fa
   const p=new URLSearchParams(String(init?.body));if(p.get('Action')==='GetCallerIdentity')return new Response(identityXml);
   if(p.get('Action')==='RunInstances'){assert.ok(observed.includes('GetSchedule'));observed.push('RunInstances');return new Response('<RunInstancesResponse><requestId>provider-create</requestId></RunInstancesResponse>');}
   const tags=[['hivemind:owner',i.ownershipToken],['hivemind:request',hash(i.idempotencyKey)],['hivemind:parameters',i.parametersHash],['hivemind:workload',aws.workloadId]].map(([k,v])=>xml('item',xml('key',k!)+xml('value',v!))).join('');
-  return new Response(`<DescribeInstancesResponse><requestId>provider-read</requestId><reservationSet><item><ownerId>${account}</ownerId><instancesSet><item><instanceId>i-1234abcd</instanceId><clientToken>${hash(i.idempotencyKey)}</clientToken><instanceState><name>running</name></instanceState><tagSet>${tags}</tagSet></item></instancesSet></item></reservationSet></DescribeInstancesResponse>`);
+  return new Response(`<DescribeInstancesResponse><requestId>provider-read</requestId><reservationSet><item><ownerId>${account}</ownerId><instancesSet><item><instanceId>i-1234abcd</instanceId><placement><availabilityZone>ap-northeast-2a</availabilityZone></placement><clientToken>${hash(i.idempotencyKey)}</clientToken><instanceState><name>running</name></instanceState><tagSet>${tags}</tagSet></item></instancesSet></item></reservationSet></DescribeInstancesResponse>`);
  }});
  const result=await port.execute(i,credential);assert.equal(result.resource?.id,'i-1234abcd');assert.ok(observed.indexOf('GetSchedule')<observed.indexOf('RunInstances'));assert.ok(observed.includes('GetRolePolicy'));assert.equal(registry.size,1);
 });
@@ -318,7 +318,7 @@ async function timingFixture(t:TestContext){
   const p=new URLSearchParams(String(init?.body));if(p.get('Action')==='GetCallerIdentity')return new Response(identityXml);
   if(p.get('Action')==='RunInstances'){creates++;return new Response('<RunInstancesResponse><requestId>r</requestId></RunInstancesResponse>');}
   const tags=[['hivemind:owner',i.ownershipToken],['hivemind:request',hash(i.idempotencyKey)],['hivemind:parameters',i.parametersHash],['hivemind:workload','w']].map(([k,v])=>`<item><key>${k}</key><value>${v}</value></item>`).join('');
-  return new Response(`<DescribeInstancesResponse><requestId>r</requestId><reservationSet><item><ownerId>${aws.accountId}</ownerId><instancesSet><item><instanceId>i-1234abcd</instanceId><clientToken>${hash(i.idempotencyKey)}</clientToken><instanceState><name>running</name></instanceState><tagSet>${tags}</tagSet></item></instancesSet></item></reservationSet></DescribeInstancesResponse>`);
+  return new Response(`<DescribeInstancesResponse><requestId>r</requestId><reservationSet><item><ownerId>${aws.accountId}</ownerId><instancesSet><item><instanceId>i-1234abcd</instanceId><placement><availabilityZone>ap-northeast-2a</availabilityZone></placement><clientToken>${hash(i.idempotencyKey)}</clientToken><instanceState><name>running</name></instanceState><tagSet>${tags}</tagSet></item></instancesSet></item></reservationSet></DescribeInstancesResponse>`);
  }});
  const start=(expiresAt=i.expiresAt)=>port.execute({...i,expiresAt},credential,{signal:controller.signal,assertActive(){controller.signal.throwIfAborted();}});
  return {start,controller,get creates(){return creates;},get attestSignal(){return attestSignal;},get armSignal(){return armSignal;},async attest(){releaseAttest(await syntheticGuard.port.attest(attestRequest));},async arm(){releaseArm(await syntheticGuard.port.arm(armRequest));}};
@@ -400,4 +400,56 @@ test('known resource reference cannot authorize a different instance or a read-o
  const f=await orphanFixture();await assert.rejects(f.port.cleanup(f.i,{id:'i-0000abcd',cleanupRequired:true},credential));assert.equal(f.actions.length,0);
  const read={...f.i,operation:'aws.spot.inspect' as const,parameters:{startActionId:f.i.actionId},parametersHash:''};read.profile={...read.profile,operations:['aws.spot.inspect']} as ExternalInvocation['profile'];read.parametersHash=externalParametersHash(read.profile,read.operation,read.parameters);
  await assert.rejects(f.port.cleanup(read,f.resource,credential));assert.equal(f.deletes,0);
+});
+
+test('HF public large provider forwards validated consent and protected values; private omission stays compatible',async()=>{
+ const {externalLargeManifestDigest,largeOwnerKey,largeStorageRef}=await import('../packages/core/src/autonomous-external-large.ts');
+ const create=await factory();
+ for(const visibility of ['public','private'] as const)for(const secret of [false,true]){
+  const content=Buffer.from(secret?'protected-fixture-value':'safe model bytes'),oid=hash(content.toString()),owner=largeOwnerKey('t',1,'p');
+  const manifest={version:1 as const,taskId:'t',revision:1,profileId:'p',files:[{path:'model.bin',size:content.length,sha256:oid,storageRef:largeStorageRef(owner,oid)}]};
+  const i=inv('hf');i.profile={...i.profile,provider:'hf',target:{repository:'owner/repo',revision:'main',...(visibility==='public'?{visibility,allowPublicLarge:true as const}:{})},operations:['hf.model.lfs_commit']};i.operation='hf.model.lfs_commit';i.parameters={manifestDigest:externalLargeManifestDigest(manifest),message:'model'};i.parametersHash=externalParametersHash(i.profile,i.operation,i.parameters);
+  let committed=false,calls=0;
+  const hf={enabled:true,repository:'owner/repo',revision:'main',...(visibility==='public'?{visibility}:{}),lfs:{limits:{maxFileBytes:1024,maxTotalBytes:1024,maxFiles:32},uploadHosts:['cdn.example.test'],async loadManifest(){return manifest;},async open(){return new Blob([content]).stream();}}};
+  const port=create({enabled:true,hf,artifacts,now:()=>1000,forbiddenValues:['protected-fixture-value'],fetch:async(url,init)=>{
+   calls++;const u=String(url);assert.equal(init?.redirect,'manual');
+   if(u.includes('/commits/'))return Response.json(committed?[{id:next,title:marker(i)}]:[]);
+   if(u.endsWith('/preupload/main'))return Response.json({files:[{path:'model.bin',uploadMode:'lfs',shouldIgnore:false}]});
+   if(u.endsWith('/objects/batch'))return Response.json({objects:[{oid,size:content.length}]});
+   if(u.endsWith('/commit/main')){
+    assert.ok(init?.body instanceof ReadableStream);const reader=init.body.getReader();
+    try{for(;;){const {done,value}=await reader.read();if(done)break;assert.ok(value instanceof Uint8Array);assert.ok(value.byteLength);}}finally{reader.releaseLock();}
+    committed=true;return Response.json({commitOid:next});
+   }
+   return Response.json({private:visibility==='private',sha:committed?next:sha,siblings:committed?[{rfilename:'model.bin',lfs:{sha256:oid,size:content.length}}]:[]});
+  }});
+  if(secret){await assert.rejects(port.execute(i,{provider:'hf',token:'synthetic-hf'}));assert.equal(calls,0);}
+  else{assert.equal((await port.execute(i,{provider:'hf',token:'synthetic-hf'})).effect,'retained');assert.equal(committed,true);}
+ }
+});
+
+test('HF inline requests run on Worker manual redirect mode and reject 302 without following',async()=>{
+ const create=await factory();
+ for(const redirect of [false,true]){
+  const i=inv('hf');let posted=false;const calls:string[]=[];
+  const port=create({enabled:true,hf:{enabled:true,repository:'owner/repo',revision:'main'},artifacts:artifactLoader,now:()=>1000,fetch:async(url,init)=>{
+   // Workers reject this mode before making any network request.
+   if(init?.redirect==='error')throw new TypeError('Unsupported redirect mode');
+   assert.equal(init?.redirect,'manual');const u=String(url);calls.push(u);assert.equal(new URL(u).hostname,'huggingface.co');
+   if(redirect)return new Response(null,{status:302,headers:{location:'https://attacker.invalid/redirect'}});
+   if(init?.method==='POST'){posted=true;return Response.json({commitOid:next});}
+   if(u.includes('/commits/'))return Response.json(posted?[{id:next,title:marker(i)}]:[]);
+   return Response.json({private:true,sha:posted?next:sha,siblings:[{rfilename:'README.md',blobId:blob}]});
+  }});
+  if(redirect){await assert.rejects(port.execute(i,{provider:'hf',token:'synthetic-hf'}),/External provider unavailable/);assert.equal(calls.length,1);assert.equal(posted,false);}
+  else{assert.equal((await port.execute(i,{provider:'hf',token:'synthetic-hf'})).effect,'retained');assert.equal(posted,true);assert.ok(calls.length>=4);}
+ }
+});
+test('delegated launch forces safe IMDS locator tags on instance and volume without replacing ownership tags',async()=>{
+ const create=await factory();let launched:URLSearchParams|undefined;
+ const metadata={taskId:invocation.taskId,revision:invocation.revision,profileId:invocation.profile.id,descriptorHash:'d'.repeat(64),inputManifestDigest:'a'.repeat(64)};
+ const port=create({enabled:true,aws,awsTtlGuard:syntheticGuard,artifacts,now:()=>1000,delegatedLaunch:metadata,fetch:async(_u:RequestInfo|URL,init?:RequestInit)=>{const p=new URLSearchParams(String(init?.body));if(p.get('Action')==='GetCallerIdentity')return new Response(identityXml);if(p.get('Action')==='RunInstances')launched=p;throw Error('stop after captured launch');}} as any);
+ await assert.rejects(port.execute(invocation,credential));assert.ok(launched);assert.equal(launched.get('MetadataOptions.InstanceMetadataTags'),'enabled');assert.equal(launched.get('TagSpecification.1.Tag.1.Key'),'hivemind:owner');
+ const expected=[['hivemind:task',invocation.taskId],['hivemind:revision',String(invocation.revision)],['hivemind:profile',invocation.profile.id],['hivemind:descriptor','d'.repeat(64)],['hivemind:input','a'.repeat(64)]];
+ for(const [index,[key,value]] of expected.entries()){assert.equal(launched.get(`TagSpecification.1.Tag.${index+8}.Key`),key);assert.equal(launched.get(`TagSpecification.1.Tag.${index+8}.Value`),value);assert.equal(launched.get(`TagSpecification.2.Tag.${index+8}.Value`),value);}
 });

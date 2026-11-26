@@ -1,10 +1,13 @@
+import {buildDelegatedInstancePolicy} from './delegated-instance-policy.js';
+import {assertAwsRegion,awsPlacement} from './autonomous-aws-region.js';
 import {createHash,createHmac} from 'node:crypto';
 import type {AwsTtlGuardPort,AwsTtlGuardRequest,AwsTtlGuardEvidence,AwsOwnershipTimerEvidence} from './autonomous-external.js';
-export interface AwsGuardProfile {workloadId:string;configurationHash:string;parameterPolicy:'opaque_broker_sha256';instanceProfileArn:string;maxLifetimeMs:number;launchHeadroomMs:number;quote:{source:string;maxExposureMicros:number;validUntil:number}}
-export interface AwsGuardManifest {schemaVersion:1;ownershipMode:'broker_uuid_registry_v1';registryTableArn:string;guardArn:string;validUntil:number;profiles:AwsGuardProfile[]}
+export interface AwsGuardProfile {availabilityZoneId?:string;workloadId:string;configurationHash:string;parameterPolicy:'opaque_broker_sha256';instanceProfileArn:string;maxLifetimeMs:number;launchHeadroomMs:number;quote:{source:string;maxExposureMicros:number;validUntil:number}}
+export interface AwsDelegatedUpload {bucket:string;prefix:string;maxScopedSeconds:number}
+export interface AwsGuardManifest {delegatedUpload?:AwsDelegatedUpload;region?:string;allowedRegions?:string[];schemaVersion:1;ownershipMode:'broker_uuid_registry_v1';registryTableArn:string;guardArn:string;validUntil:number;profiles:AwsGuardProfile[]}
 export interface AwsGuardRole {kind:'guard'|'scheduler'|'workload';roleArn:string;boundaryArn:string;inlinePolicyName:string}
 export interface AwsGuardOptions {
- enabled?:boolean;accountId:string;region:'ap-northeast-2';guardArn:string;functionArn:string;scheduleGroupArn:string;schedulerRoleArn:string;
+ enabled?:boolean;accountId:string;region:string;allowedRegions?:string[];guardArn:string;functionArn:string;scheduleGroupArn:string;schedulerRoleArn:string;
  expectedCodeSha256:string;manifest:AwsGuardManifest;rolePolicies:AwsGuardRole[];
  credentials:(signal?:AbortSignal)=>Promise<{accessKeyId:string;secretAccessKey:string;sessionToken?:string}>;fetchImpl?:typeof fetch;now?:()=>number;
 }
@@ -17,6 +20,9 @@ export function awsGuardPolicies(c:Pick<AwsGuardOptions,'accountId'|'region'|'gu
  const allow=(Action:string[],Resource:string[],Condition?:unknown)=>({Effect:'Allow',Action,Resource,...(Condition?{Condition}:{})});
  const document=(Statement:unknown[])=>({Version:'2012-10-17',Statement});
  const trust=(service:string,condition?:unknown)=>document([{Effect:'Allow',Principal:{Service:service},Action:'sts:AssumeRole',...(condition?{Condition:condition}:{})}]);
+ const upload=c.manifest.delegatedUpload;
+ if(upload!==undefined&&(!upload||typeof upload!=='object'||Object.keys(upload).sort().join(',')!=='bucket,maxScopedSeconds,prefix'||!Number.isSafeInteger(upload.maxScopedSeconds)))throw fail();
+ const delegated=upload?buildDelegatedInstancePolicy({accountId:c.accountId,region:c.region,bucket:upload.bucket,prefix:upload.prefix,policyRevision:'guard-v1',maxScopedSeconds:upload.maxScopedSeconds}).policy.Statement:[];
  const ownedTags={StringEquals:{'ec2:ResourceTag/hivemind:guard':c.guardArn,'ec2:ResourceTag/hivemind:workload':[...new Set(c.manifest.profiles.map(p=>p.workloadId))]},Null:{'ec2:ResourceTag/hivemind:owner':'false'},StringLike:{'ec2:ResourceTag/hivemind:owner':'????????-????-4???-????-????????????'}};
  return {
  guard:{trust:trust('lambda.amazonaws.com'),policy:document([
@@ -26,7 +32,7 @@ export function awsGuardPolicies(c:Pick<AwsGuardOptions,'accountId'|'region'|'gu
   allow(['dynamodb:GetItem'],[c.manifest.registryTableArn]),
   allow(['logs:CreateLogStream','logs:PutLogEvents'],[`arn:aws:logs:${c.region}:${c.accountId}:log-group:/aws/lambda/${c.functionArn.split(':').at(-1)}:*`])])},
  scheduler:{trust:trust('scheduler.amazonaws.com',{StringEquals:{'aws:SourceAccount':c.accountId},ArnEquals:{'aws:SourceArn':c.scheduleGroupArn}}),policy:document([allow(['lambda:InvokeFunction'],[c.functionArn])])},
- workload:{trust:trust('ec2.amazonaws.com'),policy:document([allow(['sts:GetCallerIdentity'],['*']),{Effect:'Deny',Action:['events:*','scheduler:*','lambda:*','iam:*','sts:AssumeRole','ec2:CreateTags','ec2:DeleteTags','ec2:RunInstances','dynamodb:*'],Resource:['*']}])}
+ workload:{trust:trust('ec2.amazonaws.com'),policy:document([allow(['sts:GetCallerIdentity'],['*']),{Effect:'Deny',Action:['events:*','scheduler:*','lambda:*','iam:*','sts:AssumeRole','ec2:CreateTags','ec2:DeleteTags','ec2:RunInstances','dynamodb:*'],Resource:['*']},...delegated])}
  };
 }
 interface Xml {name:string;text:string;children:Xml[]}
@@ -71,16 +77,17 @@ export function createAwsTtlGuardPort(options?:AwsGuardOptions):AwsTtlGuardPort 
  const {credentials,fetchImpl=fetch,now=Date.now,...settings}=options;const c=structuredClone(settings),issued=new Map<string,{guard:AwsTtlGuardEvidence;at:number}>();
  const guardName=c.guardArn.split('/').at(-1)!,group=c.scheduleGroupArn.split('/').at(-1)!,digest=awsGuardDigest(c.manifest),policies=awsGuardPolicies(c);
  function configuration(){
-  check(/^\d{12}$/.test(c.accountId)&&c.region==='ap-northeast-2'&&typeof credentials==='function');
+  assertAwsRegion(c.region,c.allowedRegions);if(c.manifest.region!==undefined||c.manifest.allowedRegions!==undefined){check(c.manifest.region===c.region);assertAwsRegion(c.region,c.manifest.allowedRegions);}else check(c.region==='ap-northeast-2');
+  check(/^\d{12}$/.test(c.accountId)&&typeof credentials==='function');
   check(new RegExp(`^arn:aws:events:${c.region}:${c.accountId}:rule/[A-Za-z0-9_-]{1,64}$`).test(c.guardArn));
   check(new RegExp(`^arn:aws:lambda:${c.region}:${c.accountId}:function:[A-Za-z0-9_-]{1,64}$`).test(c.functionArn));
   check(new RegExp(`^arn:aws:scheduler:${c.region}:${c.accountId}:schedule-group/[A-Za-z0-9_-]{1,64}$`).test(c.scheduleGroupArn));
   check(/^[A-Za-z0-9+/]{43}=$/.test(c.expectedCodeSha256)&&c.manifest.schemaVersion===1&&c.manifest.ownershipMode==='broker_uuid_registry_v1'&&new RegExp(`^arn:aws:dynamodb:${c.region}:${c.accountId}:table/[A-Za-z0-9_-]{3,255}$`).test(c.manifest.registryTableArn)&&c.manifest.guardArn===c.guardArn&&Number.isSafeInteger(c.manifest.validUntil)&&c.manifest.validUntil>now()&&Buffer.byteLength(awsGuardCanonical(c.manifest))<=3000);
-  fields(c.manifest,['schemaVersion','ownershipMode','registryTableArn','guardArn','validUntil','profiles']);check(Array.isArray(c.manifest.profiles)&&c.manifest.profiles.length>0&&c.manifest.profiles.length<=16&&c.rolePolicies.length===3);
+  fields(c.manifest,[...(c.manifest.delegatedUpload!==undefined?['delegatedUpload']:[]),...(c.manifest.region!==undefined?['region','allowedRegions']:[]),'schemaVersion','ownershipMode','registryTableArn','guardArn','validUntil','profiles']);check(Array.isArray(c.manifest.profiles)&&c.manifest.profiles.length>0&&c.manifest.profiles.length<=16&&c.rolePolicies.length===3);
   check(new Set(c.rolePolicies.map(r=>r.kind)).size===3);
   for(const r of c.rolePolicies){check(['guard','scheduler','workload'].includes(r.kind));safeString(r.inlinePolicyName,128);check(r.roleArn.startsWith(`arn:aws:iam::${c.accountId}:role/`)&&r.boundaryArn.startsWith(`arn:aws:iam::${c.accountId}:policy/`));}
   check(c.rolePolicies.find(r=>r.kind==='scheduler')!.roleArn===c.schedulerRoleArn);
-  for(const p of c.manifest.profiles){fields(p,['workloadId','configurationHash','parameterPolicy','instanceProfileArn','maxLifetimeMs','launchHeadroomMs','quote']);safeString(p.workloadId,128);check(/^[a-f0-9]{64}$/.test(p.configurationHash)&&p.parameterPolicy==='opaque_broker_sha256'&&Number.isSafeInteger(p.launchHeadroomMs)&&p.launchHeadroomMs>=0&&p.launchHeadroomMs<=60000);check(p.instanceProfileArn.startsWith(`arn:aws:iam::${c.accountId}:instance-profile/`)&&Number.isSafeInteger(p.maxLifetimeMs)&&p.maxLifetimeMs>=60000&&p.maxLifetimeMs<=86400000);fields(p.quote,['source','maxExposureMicros','validUntil']);check(typeof p.quote.source==='string'&&p.quote.source.length>0&&p.quote.source.length<2048&&Number.isSafeInteger(p.quote.maxExposureMicros)&&p.quote.maxExposureMicros>0&&Number.isSafeInteger(p.quote.validUntil));}
+  for(const p of c.manifest.profiles){awsPlacement(c.region,p.availabilityZoneId);fields(p,[...(p.availabilityZoneId!==undefined?['availabilityZoneId']:[]),'workloadId','configurationHash','parameterPolicy','instanceProfileArn','maxLifetimeMs','launchHeadroomMs','quote']);safeString(p.workloadId,128);check(/^[a-f0-9]{64}$/.test(p.configurationHash)&&p.parameterPolicy==='opaque_broker_sha256'&&Number.isSafeInteger(p.launchHeadroomMs)&&p.launchHeadroomMs>=0&&p.launchHeadroomMs<=60000);check(p.instanceProfileArn.startsWith(`arn:aws:iam::${c.accountId}:instance-profile/`)&&Number.isSafeInteger(p.maxLifetimeMs)&&p.maxLifetimeMs>=60000&&p.maxLifetimeMs<=86400000);fields(p.quote,['source','maxExposureMicros','validUntil']);check(typeof p.quote.source==='string'&&p.quote.source.length>0&&p.quote.source.length<2048&&Number.isSafeInteger(p.quote.maxExposureMicros)&&p.quote.maxExposureMicros>0&&Number.isSafeInteger(p.quote.validUntil));}
  }
  function request(r:Readonly<AwsTtlGuardRequest>){
   configuration();check(Object.keys(r).join(',')==='accountId,region,workloadId,actionId,ownershipToken,clientToken,parametersHash,expiresAt,maxExposureMicros,configurationHash');fields(r,['accountId','region','workloadId','actionId','ownershipToken','clientToken','parametersHash','expiresAt','maxExposureMicros','configurationHash']);safeString(r.actionId);check(/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(r.ownershipToken)&&/^[a-f0-9]{64}$/.test(r.parametersHash));check(r.accountId===c.accountId&&r.region===c.region&&/^[a-f0-9]{64}$/.test(r.clientToken));
@@ -96,8 +103,8 @@ export function createAwsTtlGuardPort(options?:AwsGuardOptions):AwsTtlGuardPort 
   const names=Object.keys(headers).sort(),signedHeaders=names.join(';'),query=[...url.searchParams].sort(([a,av],[b,bv])=>a<b?-1:a>b?1:av<bv?-1:av>bv?1:0).map(([k,v])=>encode(k)+'='+encode(v)).join('&');
   const scope=`${day}/${signingRegion}/${service}/aws4_request`,canonical=[method,encode(url.pathname).replace(/%2F/g,'/'),query,names.map(k=>k+':'+headers[k]!.trim()+'\n').join(''),signedHeaders,hash(body)].join('\n');
   const key=hmac(hmac(hmac(hmac('AWS4'+credential.secretAccessKey,day),signingRegion),service),'aws4_request');headers.authorization=`AWS4-HMAC-SHA256 Credential=${credential.accessKeyId}/${scope}, SignedHeaders=${signedHeaders}, Signature=${createHmac('sha256',key).update('AWS4-HMAC-SHA256\n'+stamp+'\n'+scope+'\n'+hash(canonical)).digest('hex')}`;
-  const pending=fetchImpl(url,{method,headers,body:method==='GET'?undefined:body,redirect:'error',credentials:'omit',signal});void pending.then(response=>{if(signal.aborted)void response.body?.cancel().catch(()=>{});},()=>{});const response=await bounded(pending,signal);
-  if(!response.ok||response.redirected){await response.body?.cancel();throw Object.assign(fail(),{status:response.status});}check(response.body);const reader=response.body.getReader();let bytes=0,reads=0;const chunks:Uint8Array[]=[];
+  const pending=fetchImpl(url,{method,headers,body:method==='GET'?undefined:body,redirect:'manual',credentials:'omit',signal});void pending.then(response=>{if(signal.aborted)void response.body?.cancel().catch(()=>{});},()=>{});const response=await bounded(pending,signal);
+  if(response.status<200||response.status>=300||response.redirected){await response.body?.cancel();throw Object.assign(fail(),{status:response.status});}check(response.body);const reader=response.body.getReader();let bytes=0,reads=0;const chunks:Uint8Array[]=[];
   try{while(true){signal.throwIfAborted();check(++reads<=10000);const {value,done}=await bounded(reader.read(),signal);if(done)break;bytes+=value.length;check(bytes<=262144);chunks.push(value);}}finally{void reader.cancel().catch(()=>{});reader.releaseLock();}
   const id=response.headers.get('x-amzn-requestid')??response.headers.get('x-amzn-request-id');safeString(id,128);
   const source=new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks));

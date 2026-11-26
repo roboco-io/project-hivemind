@@ -1,5 +1,7 @@
 # 개발 로드맵
 
+> **2026-11-25 전환 및 Milestone 1–Phase 3 완료:** Cloudflare 실행 백엔드는 폐기·아카이브하고 원격 리소스를 전량 정리했다. 현행 실행 로드맵은 [AWS 단일 실행 마스터 플랜](plans/2026-11-25-realignment-aws-plan.md)과 [ADR-0008](adr/0008-aws-single-path-and-verified-draft-pr.md)을 우선한다. Milestone 1([PR #10](https://github.com/roboco-io/project-hivemind/pull/10) 무인 전달·무검토 30초 승인·병합) 및 Phase 3(상세 변경 요약 `DeliveryChangeSummary`·SSM MCP 검증·2단계 EC2 Spot 보류 판정)을 완료했다.
+
 일정과 인프라 비용은 실제 저장소·제공자·리전을 정한 후 산정한다.
 현재 구현 범위와 후속 단계를 구분한다. 검증 결과는 해당 테스트·실행 기록에서 확인한다.
 
