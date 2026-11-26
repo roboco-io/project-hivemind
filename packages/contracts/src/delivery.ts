@@ -1,3 +1,5 @@
+import type { RegionPlacementDecision, RegionRoutingPolicy } from './multi-region.js';
+
 export type DeliveryProvider = 'codex' | 'claude';
 
 export interface AcceptanceTestFile {
@@ -43,6 +45,7 @@ export interface CreateDeliveryTask {
   delivery: DeliveryPolicy;
   bundle?: BundleManifest;
   spot?: SpotInterruptionPolicy;
+  routing?: RegionRoutingPolicy;
 }
 
 export interface VerificationAttestation {
@@ -130,6 +133,9 @@ export interface DeliveryTask {
   delivery: DeliveryPolicy;
   bundle?: BundleManifest;
   spot: SpotInterruptionPolicy;
+  routing?: RegionRoutingPolicy;
+  activeRegion: string | null;
+  lastPlacement: RegionPlacementDecision | null;
   spotRetriesUsed: number;
   activeRunId: string | null;
   activeWorkerId: string | null;

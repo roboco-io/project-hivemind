@@ -34,6 +34,29 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
     events: store.events(),
   }));
 
+  app.get<{
+    Querystring: {
+      workloadClass?: string;
+      minPlacementScore?: string;
+      maxHourlyPriceUsd?: string;
+      trendWindowHours?: string;
+    };
+  }>('/api/delivery/spot-placement', { onRequest: operatorOnly }, async (request) => {
+    if (!orchestrator) {
+      throw new DomainError('AWS Spot placement advisor is unavailable in local mock mode', 503);
+    }
+    const { workloadClass, minPlacementScore, maxHourlyPriceUsd, trendWindowHours } = request.query;
+    return orchestrator.evaluateSpotPlacement(
+      {
+        ...(workloadClass ? { workloadClass } : {}),
+        ...(minPlacementScore !== undefined ? { minPlacementScore: Number(minPlacementScore) } : {}),
+        ...(maxHourlyPriceUsd !== undefined ? { maxHourlyPriceUsd: Number(maxHourlyPriceUsd) } : {}),
+        ...(trendWindowHours !== undefined ? { trendWindowHours: Number(trendWindowHours) } : {}),
+      },
+      AbortSignal.timeout(20_000),
+    );
+  });
+
   app.get<{ Params: { id: string } }>('/api/delivery/tasks/:id', { onRequest: operatorOnly }, async (request) => ({
     task: store.get(request.params.id),
     events: store.events(request.params.id),
