@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# 서울 Hub 스택(HivemindAwsRuntimeStack)을 배포한다. Control Plane 서비스는 desiredCount 0으로 유지한다.
+# 사용법: AWS_PROFILE=<profile> scripts/aws-deploy-hub.sh [diff|deploy]
+#
+# 배포된 Spoke 스택의 출력에서 다음 설정을 만든다.
+#   HIVEMIND_SPOKE_REGIONS            Control Plane 역할에 ECS·PassRole 권한을 줄 Spoke 리전
+#   HIVEMIND_MF_REGION_NETWORKS_JSON  Model Factory의 리전별 기본 서브넷·보안 그룹·AMI 조회 파라미터
+# HIVEMIND_MF_STORAGE(기본 aurora-dsql)는 Model Factory 원장의 저장소를 정한다.
+# HIVEMIND_AWS_SPOKES_JSON은 넣지 않는다. Spoke의 Fargate 워커가 Control Plane에 접속하려면 VPC Peering이
+# 필요한데 아직 없기 때문이다. Peering을 배포한 뒤 HIVEMIND_DEPLOY_SPOKES_JSON=1 로 켠다.
+# 이 스크립트는 비밀 값을 읽지 않는다.
+set -euo pipefail
+
+MODE="${1:-diff}"
+PRIMARY_REGION="${HIVEMIND_AWS_REGION:-ap-northeast-2}"
+SPOKE_REGIONS="${HIVEMIND_SPOKE_REGIONS:-us-east-2,us-east-1,us-west-2,ap-northeast-1}"
+AMI_PARAM="${HIVEMIND_MF_AMI_SSM_PARAMETER:-/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-amazon-linux-2023/latest/ami-id}"
+OUTPUTS_DIR="${HIVEMIND_SPOKE_OUTPUTS_DIR:-/tmp}"
+ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+
+ENV_JSON="$(PRIMARY_REGION="$PRIMARY_REGION" SPOKE_REGIONS="$SPOKE_REGIONS" AMI_PARAM="$AMI_PARAM" python3 - <<'PY'
+import json, os, subprocess
+ami = os.environ["AMI_PARAM"]
+networks = {os.environ["PRIMARY_REGION"]: {"amiSsmParameter": ami}}
+spokes = []
+for region in [r for r in os.environ["SPOKE_REGIONS"].split(",") if r]:
+    suffix = "".join(p.capitalize() for p in region.split("-"))
+    outputs = json.loads(subprocess.check_output([
+        "aws", "cloudformation", "describe-stacks", "--region", region,
+        "--stack-name", f"HivemindAwsSpoke{suffix}Stack", "--query", "Stacks[0].Outputs", "--output", "json"]))
+    out = {o["OutputKey"]: o["OutputValue"] for o in outputs}
+    subnets = out["SpokePublicSubnetIds"].split(",")
+    groups = [out["SpokeWorkerSecurityGroupId"]]
+    networks[region] = {"subnetIds": subnets, "securityGroupIds": groups, "amiSsmParameter": ami}
+    spokes.append({"region": region, "clusterArn": out["SpokeClusterArn"],
+                   "workerTaskDefinition": out["SpokeAiWorkerTaskDefArn"],
+                   "verifierTaskDefinition": out["SpokeVerifierTaskDefArn"],
+                   "subnets": subnets, "securityGroups": groups})
+print(json.dumps({"networks": networks, "spokes": spokes}, separators=(",", ":")))
+PY
+)"
+
+export HIVEMIND_AWS_ACCOUNT_ID="$ACCOUNT_ID"
+export HIVEMIND_AWS_REGION="$PRIMARY_REGION"
+export HIVEMIND_CONTROL_PLANE_DESIRED_COUNT=0
+export HIVEMIND_SPOKE_REGIONS="$SPOKE_REGIONS"
+export HIVEMIND_MF_STORAGE="${HIVEMIND_MF_STORAGE:-aurora-dsql}"
+HIVEMIND_MF_REGION_NETWORKS_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["networks"], separators=(",", ":")))' "$ENV_JSON")"
+export HIVEMIND_MF_REGION_NETWORKS_JSON
+if [[ "${HIVEMIND_DEPLOY_SPOKES_JSON:-0}" == "1" ]]; then
+  HIVEMIND_AWS_SPOKES_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["spokes"], separators=(",", ":")))' "$ENV_JSON")"
+  export HIVEMIND_AWS_SPOKES_JSON
+else
+  unset HIVEMIND_AWS_SPOKES_JSON
+fi
+
+cd "$(dirname "$0")/../infrastructure/aws-runtime"
+case "$MODE" in
+  diff)
+    cdk diff HivemindAwsRuntimeStack --app 'node --import tsx bin/app.ts'
+    ;;
+  deploy)
+    cdk deploy HivemindAwsRuntimeStack --app 'node --import tsx bin/app.ts' --require-approval never \
+      --outputs-file "${OUTPUTS_DIR}/hivemind-aws-runtime-outputs.json"
+    ;;
+  *)
+    echo "usage: $0 [diff|deploy]" >&2
+    exit 1
+    ;;
+esac

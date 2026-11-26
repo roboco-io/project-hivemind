@@ -32,6 +32,7 @@ export function registerModelFactoryRoutes(app: FastifyInstance, options: ModelF
   };
 
   app.get('/api/model-factory/jobs', { onRequest: operatorOnly }, async () => ({
+    storageBackend: store.storageBackend,
     jobs: await store.list(),
     events: await store.events(),
   }));

@@ -135,3 +135,24 @@ test('SQLite repository persists across reopen, rolls back a throwing transactio
   assert.equal((await fromLegacy.events()).length, 1);
   await fromLegacy.close();
 });
+
+test('buildApp serves the Model Factory API from an injected repository and reports its backend', async () => {
+  const { buildApp } = await import('../apps/control-plane/src/app.js');
+  const repository = new RetryingMemoryRepository(1);
+  const app = buildApp({ operatorToken: 'op-repo-token', workerToken: 'wk-repo-token', modelFactoryRepository: repository });
+  try {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/model-factory/jobs',
+      headers: { authorization: 'Bearer op-repo-token' },
+      payload: jobInput('run-api'),
+    });
+    assert.equal(created.statusCode, 201);
+    assert.equal(repository.jobs.size, 1, 'the job is written to the injected repository, not to SQLite');
+    const listed = await app.inject({ method: 'GET', url: '/api/model-factory/jobs', headers: { authorization: 'Bearer op-repo-token' } });
+    assert.equal(listed.json().storageBackend, 'aurora-dsql');
+    assert.equal(listed.json().jobs[0].id, created.json().id);
+  } finally {
+    await app.close();
+  }
+});

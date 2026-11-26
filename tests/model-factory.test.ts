@@ -431,6 +431,15 @@ test('Model Factory HTTP API enforces operator-only auth and exposes central led
     assert.equal(ledger.globalBudgetCapMicros, 2_000_000);
     assert.equal(ledger.totalReservedMicros, 500_000);
     assert.equal(ledger.remainingBudgetMicros, 1_500_000);
+
+    // The job list names the ledger storage backend; the default is the local SQLite file.
+    const listRes = await app.inject({
+      method: 'GET',
+      url: '/api/model-factory/jobs',
+      headers: { authorization: 'Bearer op-secret-token' },
+    });
+    assert.equal(listRes.json().storageBackend, 'sqlite');
+    assert.equal(listRes.json().jobs.length, 1);
   } finally {
     await app.close();
   }
