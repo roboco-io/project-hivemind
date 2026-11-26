@@ -9,7 +9,7 @@ const draft={requestId:'draft-1',goal:'Explicit scoped work',provider:'claude',m
 const task=()=>({id:'autonomous-1',spec:structuredClone(draft),revision:3,status:'awaiting_approval',createdAt:1800000000000,iteration:0,spentMicros:0,reservedMicros:0,counts:{humanInterventions:40,helpRequests:2,toolCalls:70},runs:[],actions:[],resources:[],interventions:[],lease:{token:'NEVER_LEASE'},checkpoint:{objectKey:'NEVER_CHECKPOINT'},nativeRuntimeId:'NEVER_RUNTIME'});
 async function session(t:{after(fn:()=>unknown):void}) {
   const calls:{path:string;body:any}[]=[];let current:any=task(),unavailable=false,profiles:any={profiles:[]},externalActions:any[]=[{requestId:'effect-1',phase:'broker',status:'ambiguous',verifiedCostMicros:null,ownershipToken:'NEVER_OWNERSHIP'}];
-  const server=createHivemindMcpServer({apiUrl:'http://127.0.0.1:4310',operatorToken:secret,fetchImpl:async(url,options={})=>{
+  const server=createHivemindMcpServer({apiUrl:'http://127.0.0.1:4310',operatorToken:secret,profile:'legacy',fetchImpl:async(url,options={})=>{
     const path=new URL(String(url)).pathname+new URL(String(url)).search;calls.push({path,body:options.body?JSON.parse(String(options.body)):undefined});assert.equal(new Headers(options.headers).get('authorization'),'Bearer '+secret);assert.equal(options.redirect,'error');
     if(unavailable)return Response.json({error:secret},{status:503});
     if(path.includes('/history?')){const query=new URL(String(url)).searchParams;return Response.json({items:current[query.get('kind')!],nextCursor:'next-history'});}

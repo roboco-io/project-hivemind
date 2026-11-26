@@ -30,7 +30,7 @@ test('workflow registration and explicit approval survive central and MCP restar
   async function open(){
     const control=createCloudWorkflowControl(join(dir,'workflows.sqlite'),'fixture-scope',port);
     const app=buildApp({workflows:control});
-    const server=createHivemindMcpServer({apiUrl:'http://127.0.0.1:4310',operatorToken:'local-development-only',
+    const server=createHivemindMcpServer({apiUrl:'http://127.0.0.1:4310',operatorToken:'local-development-only',profile:'legacy',
       fetchImpl:async (url,init)=>{
         const headers:Record<string,string>={};
         new Headers(init?.headers).forEach((value,key)=>{headers[key]=value;});

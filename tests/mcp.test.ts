@@ -47,7 +47,7 @@ function fakeApi() {
   return { fetchImpl, calls, setFailure: (value: typeof failure) => { failure = value; }, setCapabilities: (value: any) => { capabilities = value; }, setTask: (value: any) => { task = value; } };
 }
 async function session(t: Context, api = fakeApi()) {
-  const server = createHivemindMcpServer({ apiUrl: 'http://127.0.0.1:4310', operatorToken, fetchImpl: api.fetchImpl });
+  const server = createHivemindMcpServer({ apiUrl: 'http://127.0.0.1:4310', operatorToken, profile: 'legacy', fetchImpl: api.fetchImpl });
   const client = new Client({ name: 'hivemind-test', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await server.connect(serverTransport); await client.connect(clientTransport);
@@ -171,7 +171,7 @@ test('real SDK stdio handshake and calls keep stdout reserved for JSON-RPC', asy
   });
   http.listen(0, '127.0.0.1'); await once(http, 'listening'); t.after(() => { http.close(); });
   const address = http.address(); assert.ok(address && typeof address !== 'string');
-  const transport = new StdioClientTransport({ command: process.execPath, args: [new URL('../apps/mcp-server/src/main.js', import.meta.url).pathname], env: { HIVEMIND_API_URL: 'http://127.0.0.1:' + address.port, HIVEMIND_OPERATOR_TOKEN: operatorToken }, stderr: 'pipe' });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [new URL('../apps/mcp-server/src/main.js', import.meta.url).pathname], env: { HIVEMIND_MCP_PROFILE: 'legacy', HIVEMIND_API_URL: 'http://127.0.0.1:' + address.port, HIVEMIND_OPERATOR_TOKEN: operatorToken }, stderr: 'pipe' });
   let stderr = ''; transport.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); });
   const client = new Client({ name: 'stdio-test', version: '1.0.0' }); t.after(() => client.close());
   await client.connect(transport); const tools = (await client.listTools()).tools;

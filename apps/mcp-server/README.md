@@ -6,7 +6,23 @@ MCP 클라이언트용 stdio 서버 앱이다. 관제 서비스의 운영자 HTT
 
 ## Subdirectories & Boundaries
 
-- src: [./src/README.md](./src/README.md) - `createHivemindMcpServer`, `loadMcpSettings`와 실행 진입점. 기존 작업·워크플로 10개와 장기 자율 작업 운영자 9개, 총 `hivemind_*` 도구 19개를 등록한다. generic 오류와 비밀 redaction을 유지한다.
+- src: [./src/README.md](./src/README.md) - `createHivemindMcpServer`, `loadMcpSettings`와 실행 진입점. 프로필별로 `hivemind_*` 도구를 등록한다. generic 오류와 비밀 redaction을 유지한다.
+
+## 프로필 (`HIVEMIND_MCP_PROFILE`)
+
+MCP 서버는 환경 변수 `HIVEMIND_MCP_PROFILE`로 노출할 도구 묶음을 고른다. 설정하지 않으면 `default`다.
+
+| 프로필 | 도구 | 용도 |
+|---|---|---|
+| `default` (별칭 `aws`) | 22개: `hivemind_status` 1 + `hivemind_delivery_*` 6 + `hivemind_mf_*` 7 + `hivemind_collab_*` 8 | AWS 단일 경로 전체. 일상 사용의 기본값이다. |
+| `delivery` | 6개 | SW 전달 작업만 노출한다. |
+| `model-factory` | 13개: 전달 6 + Model Factory 7 | 전달과 Model Factory만 노출한다. |
+| `collab` | 8개 | 협업 세션만 노출한다. |
+| `legacy` | 22개 | 폐기된 Cloudflare 경로의 도구다. 원격 리소스가 없어 실제 실행은 되지 않는다. `cloudflare/` 제거 때 함께 없앤다([ADR-0012](../../docs/adr/0012-cloudflare-archive-retention.md)). |
+
+2026-11-27 이전에는 `default`가 지금의 `legacy` 도구 묶음이었다. 그 묶음은 Cloudflare 경로용이라 AWS Control Plane에 연결하면 `hivemind_status`가 `configured: false`만 돌려줬다. 그래서 기본값을 AWS 경로로 바꿨다. 이 문서의 "장기 자율 작업 운영자 계약", "운영자 확인 최종 비용", "Workflow 팀 원장" 절은 `legacy` 프로필의 도구를 설명한다.
+
+기본 프로필의 `hivemind_status`는 Control Plane 연결과 운영자 인증을 확인하는 읽기 전용 도구다. `/api/delivery/tasks`, `/api/model-factory/jobs`, `/api/model-factory/ledger`, `/api/collab/sessions`를 읽어 저장소 종류, 상태별 건수, 남은 중앙 예산을 돌려준다. 작업 지시문이나 모델 출력은 돌려주지 않는다.
 
 ## 장기 자율 작업 운영자 계약
 
@@ -74,7 +90,7 @@ R9 행동별 공개 근거로 `parameterHash`, `parametersSubset`, `providerResu
 
 ## SW 전달 전용 프로필 (`HIVEMIND_MCP_PROFILE=delivery`)
 
-AWS 단일 실행 경로의 일상 SW 개발에서는 `HIVEMIND_MCP_PROFILE=delivery`로 6개 핵심 도구만 노출한다(`src/delivery.ts:registerDeliveryOperatorTools`). 기본 프로필(`default`, 미설정)은 기존 22개 도구를 그대로 유지한다.
+AWS 단일 실행 경로의 일상 SW 개발에서는 `HIVEMIND_MCP_PROFILE=delivery`로 6개 핵심 도구만 노출한다(`src/delivery.ts:registerDeliveryOperatorTools`). 같은 6개 도구는 기본 프로필(`default`, 미설정)에도 들어 있다.
 
 | 도구 | 동작 |
 |---|---|
