@@ -177,6 +177,33 @@ npm run mcp:configure:claude
 
 중앙 서버에 Cloudflare 원격 설정을 제공하면 실행 환경으로 **Cloudflare**를 선택할 수 있다. 설정 방법은 [원격 백엔드 사용법](cloudflare/backend/README.md)에 있다. 실제 작업을 실행하기 전에 서버의 대상 저장소 정책을 설정해야 한다. 기본 실행은 mock/local이며, 실제 모델 호출과 유료 자원 생성은 사람이 명시적으로 요청한 경우에만 수행한다.
 
+## AWS 설치: 부트스트랩
+
+AWS 단일 경로를 쓰려면 먼저 부트스트랩을 한 번 실행한다. 부트스트랩은 클라우드 리소스 생성, 인증 등록, 로컬 MCP 클라이언트 설정, 동작 확인을 정해진 순서로 수행한다.
+
+```bash
+(cd infrastructure/aws-runtime && npm ci)   # 처음 한 번
+npm run bootstrap -- --dry-run              # 아무것도 바꾸지 않고 각 단계가 할 일만 보고
+npm run bootstrap                           # 실제 실행
+```
+
+각 단계는 먼저 현재 상태를 확인하고 빠진 것만 수행한다. 그래서 중간에 실패했거나 인증 값을 나중에 준비했을 때 같은 명령을 다시 실행하면 된다. 주어지지 않은 인증 값은 건너뛰고, 끝에 무엇이 빠졌고 어떤 기능이 동작하지 않는지 보고한다.
+
+부트스트랩이 만들 수 없는 것이 세 가지 있다. 모델 구독 로그인, GitHub App 생성과 설치, Hugging Face 토큰 발급은 사람이 웹에서 해야 한다. 준비한 값은 파일 경로로 넘긴다.
+
+```bash
+npm run bootstrap -- \
+  --model-auth-file ./model-auth.json \
+  --github-app-id 123456 --github-app-key-file ./app.private-key.pem \
+  --github-app-repositories owner/repo \
+  --hf-token-file ./hf-token.txt \
+  --spokes us-east-2
+```
+
+기본 범위는 서울 Hub다. Spoke 리전은 `--spokes`로 고른 것만 배포하며, 다중 리전 스팟 학습에만 필요하다. 이미 배포된 Spoke는 지정하지 않아도 유지된다. 부트스트랩은 리소스를 지우지 않는다.
+
+전체 옵션은 `npm run bootstrap -- --help`로 본다. Claude Code와 Codex에서는 `hivemind-bootstrap` 스킬이 같은 명령을 단계별로 안내한다([스킬 원본](.agents/skills/hivemind-bootstrap/SKILL.md)).
+
 ## 빠른 시작: 모의 실행
 
 Node.js 24 이상과 npm이 필요하다. 프로젝트 루트에서 실행한다.

@@ -15,6 +15,8 @@ set -euo pipefail
 MODE="${1:-diff}"
 PRIMARY_REGION="${HIVEMIND_AWS_REGION:-ap-northeast-2}"
 SPOKE_REGIONS="${HIVEMIND_SPOKE_REGIONS:-us-east-2,us-east-1,us-west-2,ap-northeast-1}"
+# "none" 은 Spoke 없이 Hub 만 배포한다(부트스트랩의 첫 Hub 배포, 또는 Spoke 를 쓰지 않는 구성).
+if [[ "$SPOKE_REGIONS" == "none" ]]; then SPOKE_REGIONS=""; fi
 AMI_PARAM="${HIVEMIND_MF_AMI_SSM_PARAMETER:-/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-amazon-linux-2023/latest/ami-id}"
 OUTPUTS_DIR="${HIVEMIND_SPOKE_OUTPUTS_DIR:-/tmp}"
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
@@ -44,7 +46,7 @@ PY
 export HIVEMIND_AWS_ACCOUNT_ID="$ACCOUNT_ID"
 export HIVEMIND_AWS_REGION="$PRIMARY_REGION"
 export HIVEMIND_CONTROL_PLANE_DESIRED_COUNT=0
-export HIVEMIND_SPOKE_REGIONS="$SPOKE_REGIONS"
+if [[ -n "$SPOKE_REGIONS" ]]; then export HIVEMIND_SPOKE_REGIONS="$SPOKE_REGIONS"; else unset HIVEMIND_SPOKE_REGIONS; fi
 export HIVEMIND_MF_STORAGE="${HIVEMIND_MF_STORAGE:-aurora-dsql}"
 export HIVEMIND_DELIVERY_STORAGE="${HIVEMIND_DELIVERY_STORAGE:-aurora-dsql}"
 # 기본값 1: Control Plane과 TTL Guard가 제한된 DB 역할로 DSQL에 접속한다. 이 계정에는 2026-11-27에

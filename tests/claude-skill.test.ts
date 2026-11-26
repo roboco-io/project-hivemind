@@ -55,3 +55,36 @@ test('shared workflow and its supporting references remain accessible to Claude'
   // The retired Cloudflare tools may be named only as retired, never as a procedure to follow.
   assert.doesNotMatch(canonical, /`hivemind_create_task`로|`hivemind_decide_task`의|`hivemind_create_workflow`로/);
 });
+
+test('bootstrap skill: the Claude entry loads the shared workflow, which keeps its approval and secret-handling rules', async () => {
+  const entry = await readFile(resolve(root, '.claude/skills/hivemind-bootstrap/SKILL.md'), 'utf8');
+  const sharedPath = resolve(root, '.agents/skills/hivemind-bootstrap/SKILL.md');
+  assert.match(entry, /^---\nname: hivemind-bootstrap\ndescription: .+\n---/);
+  const entryDir = dirname(resolve(root, '.claude/skills/hivemind-bootstrap/SKILL.md'));
+  assert.ok(links(entry).map((link) => resolve(entryDir, link)).includes(sharedPath));
+  assert.match(entry, /호출할 때마다[\s\S]*읽/);
+  assert.match(entry, /읽을 수 없으면[\s\S]*중단/);
+  assert.doesNotMatch(entry, /(?:^|\n)(?:allowed-tools|hooks|permission-mode|permissions):/);
+
+  const shared = await readFile(sharedPath, 'utf8');
+  for (const link of links(shared).filter((link) => !/^https?:/.test(link))) await readFile(resolve(dirname(sharedPath), link), 'utf8');
+  for (const rule of [
+    'npm run bootstrap',
+    '--dry-run',
+    '명시적으로 요청한 경우에만',
+    '계정이 다르면 멈춘다',
+    '파일 경로',
+    '명령줄 인자, 대화, 로그에 넣지 않는다',
+    '임의로 찾아 쓰지 않는다',
+    '실패를 성공처럼 요약하지 않는다',
+    '리소스를 지우지 않는다',
+  ]) {
+    assert.ok(shared.includes(rule), `bootstrap skill must keep: ${rule}`);
+  }
+  // Every option the skill documents exists in the CLI help, and the reverse.
+  const cli = await readFile(resolve(root, 'scripts/bootstrap.ts'), 'utf8');
+  // An option may appear in more than one table of the skill, so the names are de-duplicated.
+  const documented = [...new Set([...shared.matchAll(/\| `(--[a-z-]+)/g)].map((m) => m[1]!))].sort();
+  const implemented = [...cli.matchAll(/^  (--[a-z-]+)/gm)].map((m) => m[1]!).filter((o) => o !== '--help').sort();
+  assert.deepEqual(documented, implemented);
+});

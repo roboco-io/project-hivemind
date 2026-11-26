@@ -6,6 +6,14 @@
 
 두 스크립트는 운영자 토큰 값을 읽거나 저장하지 않는다. `operatorTokenFile` 옵션으로 받은 파일의 경로만 환경 변수 `HIVEMIND_OPERATOR_TOKEN_FILE`에 기록한다.
 
+## 부트스트랩
+
+`bootstrap.ts`는 AWS 단일 경로의 설치 명령이다(`npm run bootstrap`). 이 디렉터리의 배포·등록 스크립트를 정해진 순서로 실행한다. 순서는 Hub 첫 배포(DSQL은 관리자 접속 설정), 이미지 푸시, Spoke 배포, DSQL 테이블과 제한된 DB 역할 적용, Hub 최종 배포(제한된 역할 설정), 인증 등록, 로컬 MCP 클라이언트 설정, 동작 확인이다. 제한된 DB 역할을 만들기 전에 제한된 설정으로 배포하면 서비스가 DB에 접속하지 못하므로, 이 순서를 사람이 기억하지 않도록 명령 하나로 묶었다.
+
+단계의 판단과 순서는 `lib/bootstrap.ts`에 있고, AWS·Docker·파일 접근은 `BootstrapSystem` 인터페이스 뒤에 있다. 그래서 `tests/bootstrap.test.ts`가 AWS 없이 순서, 건너뛰기, 재실행, 실패 처리를 검증한다. 로컬 MCP 설정은 아래의 설치 스크립트 2개를 그대로 호출한다. 설치 스크립트는 사람이 손으로 고친 `hivemind` 항목을 덮어쓰지 않고 거절하며, 부트스트랩은 그 메시지를 그대로 보고한다.
+
+`lib/aws-live.ts`는 실 AWS 실증 스크립트(`aws-*.ts`)가 함께 쓰는 Control Plane 기동·중지, SSM 터널, 유휴 상태 확인을 담는다.
+
 ## Interface
 
 - `configureHivemindMcp(options: HivemindMcpConfigOptions): HivemindMcpConfigResult`: Codex용 설정을 쓴다. `.codex/config.toml`에 `# BEGIN HIVEMIND MCP (managed)`와 `# END HIVEMIND MCP (managed)` 주석으로 감싼 `[mcp_servers.hivemind]` 블록을 추가하거나 교체한다. [configure-hivemind-mcp.ts:`configureHivemindMcp`]

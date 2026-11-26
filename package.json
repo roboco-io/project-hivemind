@@ -22,6 +22,7 @@
     "typecheck:scripts": "tsc -p tsconfig.scripts.json",
     "check": "npm run typecheck && npm run typecheck:scripts && npm test",
     "mcp": "node dist/apps/mcp-server/src/main.js",
+    "bootstrap": "node --import ./infrastructure/aws-runtime/node_modules/tsx/dist/loader.mjs scripts/bootstrap.ts",
     "mcp:configure": "node scripts/configure-hivemind-mcp.ts",
     "mcp:configure:claude": "node scripts/configure-hivemind-claude.ts"
   },

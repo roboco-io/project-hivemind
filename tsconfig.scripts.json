@@ -5,5 +5,9 @@
     "noUncheckedIndexedAccess": false,
     "noUnusedParameters": false
   },
-  "include": ["scripts/aws-*.ts", "scripts/lib/**/*.ts"]
+  "include": [
+    "scripts/aws-*.ts",
+    "scripts/bootstrap.ts",
+    "scripts/lib/**/*.ts"
+  ]
 }
