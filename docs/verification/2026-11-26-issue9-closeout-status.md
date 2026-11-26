@@ -11,7 +11,7 @@
 | 2단계 EC2 Spot 검증 워커 평가 | 보류로 결론 (2026-11-25) | 같은 코멘트에 기록되어 있다. 이번에 다시 평가하지 않았다. |
 | `cloudflare/` 아카이브 정리 | 완료 | 아래 3절. |
 | 미커밋 작업 파일 정리 | 해당 없음 | 2026-11-26 작업 시작 시점에 작업 트리가 깨끗했다. |
-| `github-draft-pr` 비밀을 단일 저장소 Fine-Grained PAT로 교체 | 미완료 | 새 토큰을 발급해 등록하는 일은 사용자만 할 수 있다. |
+| `github-draft-pr` 비밀의 자격 범위 축소 | 완료 (2026-11-27) | Fine-Grained PAT 대신 GitHub App 설치 토큰으로 대체했다. 아래 3-1절. |
 
 ## 2. stdio MCP 연결 재확인 (`scripts/aws-ssm-mcp-verify.ts`)
 
@@ -48,9 +48,29 @@
 
 현행 상태와 어긋나던 문장 3개를 고쳤다. `README.md`의 "Cloudflare 경로가 이 프로젝트의 목표인 원격 실행이다"와 "전체 AWS 실행 백엔드는 후속 범위다", `docs/roadmap.md`의 "Cloudflare에서 먼저 검증하고", `cloudflare/README.md`의 "현재 AWS 리소스를 생성하거나 배포하지 않는다"다. `README.md`와 `docs/mvp.md`에는 Cloudflare 구조를 설명하는 과거 서술이 더 남아 있다. 이번에는 현행 상태와 정면으로 어긋나는 문장만 고쳤고, 나머지는 과거 기록으로 표시한 머리말 아래에 그대로 두었다.
 
+## 3-1. Draft PR 자격을 GitHub App 설치 토큰으로 전환 (2026-11-27)
+
+이슈 #9는 `github-draft-pr` 비밀의 classic PAT를 단일 저장소 Fine-Grained PAT로 바꾸라고 요구했다. 사용자 결정에 따라 PAT 대신 GitHub App을 쓰도록 바꿨다. PAT는 API로 발급할 수 없고 사람이 만료를 관리해야 하지만, GitHub App은 Control Plane이 필요할 때마다 짧은 수명의 토큰을 스스로 발급받을 수 있기 때문이다.
+
+**등록.** GitHub App `hivemind-draft-pr`(App ID 5939785)를 `scripts/aws-set-github-app-secret.ts`로 등록했다. 스크립트는 `roboco-io/project-hivemind`와 `roboco-io/silicon-model-factory` 각각에 대해 실제 GitHub에서 설치 토큰을 발급받아 App 설치와 두 권한(`contents: write`, `pull_requests: write`)을 확인한 뒤 비밀을 썼다(설치 ID 186198981). 확인용 토큰은 바로 폐기했다. 두 저장소의 classic PAT는 Secrets Manager에서 지웠고, 비밀에 남은 PAT는 없다.
+
+**실제 Draft PR 생성 실증 (`scripts/aws-github-app-draft-pr-proof.ts`, 작업 `dlv-808626b9-e5c7-4da2-b061-027dfd18eef7`).** 배포된 Control Plane에 프로브 파일 하나를 추가하는 전달 작업을 등록하고 승인했다. Fargate Spot 워커(Codex)가 변경을 만들고, 독립 검증기가 고정된 수용 검사를 통과시킨 뒤, Control Plane이 Draft PR을 게시했다. 승인부터 게시까지 약 178초가 걸렸다.
+
+| 확인 항목 | 값 | 확인 방법 |
+|---|---|---|
+| 작업 최종 상태 | `draft_pr_published` | Control Plane API |
+| Draft PR | [#18](https://github.com/roboco-io/project-hivemind/pull/18), 초안 상태, 변경 파일 1개(+3줄) | `gh pr view` |
+| PR 작성자 | `app/hivemind-draft-pr` (봇 계정) | `gh pr view`의 `author` |
+| 사용한 자격 | `github_app`, 만료 `2026-11-26T17:40:10Z` | Control Plane 로그의 `hivemind.delivery.github_credential_resolved` 이벤트 |
+| 검증 트리 해시와 PR 트리 해시 | 일치 | Control Plane API |
+
+PR 작성자가 PAT 소유자 계정이 아니라 App의 봇 계정이라는 점이, 푸시와 PR 생성이 설치 토큰으로 이뤄졌음을 GitHub 쪽에서 보여 준다. 이 실행은 전달 저장소가 Aurora DSQL인 상태에서 워커 실행, 독립 검증, Draft PR 게시까지의 전 과정이 동작함도 함께 보여 준다. 실증 후 Control Plane은 `desiredCount 0`이고 클러스터의 실행 작업은 0개였다.
+
+확인하지 않은 것은 다음과 같다. `silicon-model-factory` 저장소로의 실제 Draft PR은 만들지 않았다(토큰 발급만 확인). 설치 토큰이 1시간 뒤 실제로 만료되는지와, App이 등록되지 않은 저장소에 쓸 수 없는지는 GitHub의 동작에 맡겼고 따로 시험하지 않았다. PR #18은 프로브이며 병합 대상이 아니다. 이 문서를 쓰는 시점에 열려 있다.
+
 ## 4. 남은 항목 (사용자 조치 필요)
 
 1. **데스크톱 앱에서의 실제 대화 확인.** Codex 앱과 Claude Code 데스크톱 앱 화면에서 MCP 도구를 1회씩 호출해 보는 일이다. CLI 2종은 2-1절에서 확인했고, 데스크톱 앱 2종은 확인하지 않았다. 두 앱은 CLI와 같은 설정 파일을 읽으므로 Control Plane 기동과 4311 포트 터널만 다시 준비하면 된다.
-2. **`hivemind-runtime/github-draft-pr` 비밀 교체.** 단일 저장소 Fine-Grained PAT를 발급해 등록하는 일이다. 새 토큰은 사용자만 발급할 수 있다.
+2. **기존 classic PAT 폐기.** Secrets Manager에서는 지웠지만 토큰 자체는 GitHub에서 아직 유효하다. 발급한 계정의 토큰 설정 화면에서 폐기해야 한다. 내려받은 App private key 파일(`.pem`)도 지워야 한다.
 
 자동 검증 결과는 `npm run check` 1,248건 통과, `infrastructure/aws-runtime` 테스트 9건 통과다.
