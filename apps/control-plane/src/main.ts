@@ -3,6 +3,8 @@ import { buildApp } from './app.js';
 import { configurationGitEnvironment, configurationScope, loadCloudflareConfig, loadCloudWorkflowChecks } from './cloudflare-config.js';
 import { DeliveryOrchestrator } from './delivery-orchestrator.js';
 import { ModelFactoryOrchestrator } from './model-factory-orchestrator.js';
+import { CollabOrchestrator } from './collab-orchestrator.js';
+import { DsqlCollaborationRepository } from '../../../packages/adapters/src/aws-dsql.js';
 import { AwsEc2SpotTrainer } from '../../../packages/adapters/src/aws-ec2-spot-trainer.js';
 import { createTrustedHfReleasePublisher } from '../../../packages/adapters/src/model-factory-hf-publisher.js';
 import { AwsEcsFargateSpotDriver } from '../../../packages/adapters/src/aws-ecs-driver.js';
@@ -28,6 +30,7 @@ import type { RepositoryPolicy } from '../../../packages/contracts/src/index.js'
 import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js';
 import type { DeliveryStore } from '../../../packages/core/src/delivery.js';
 import type { ModelFactoryStore } from '../../../packages/core/src/model-factory.js';
+import type { AgentCollabService } from '../../../packages/core/src/agent-collab.js';
 
 function isRfc1918Ipv4(address: string): boolean {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(address);
@@ -267,7 +270,76 @@ try {
     : modelFactoryOrchestratorFactory
       ? 60_000
       : undefined;
-  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs});
+
+  const dsqlEndpoint = process.env.HIVEMIND_DSQL_ENDPOINT?.trim();
+  const dsqlRegion = process.env.HIVEMIND_DSQL_REGION?.trim() || process.env.HIVEMIND_AWS_REGION?.trim() || 'ap-northeast-2';
+  const collabRepo = dsqlEndpoint
+    ? new DsqlCollaborationRepository({
+        endpoint: dsqlEndpoint,
+        region: dsqlRegion,
+        allowedRegions: [dsqlRegion],
+        credentials: createEcsTaskCredentialsProvider(),
+      })
+    : undefined;
+  if (collabRepo) {
+    console.log(JSON.stringify({ event: 'hivemind.control_plane.aurora_dsql_enabled', dsqlEndpoint, dsqlRegion }));
+  }
+
+  const collabOrchestratorFactory = (service: AgentCollabService) => {
+    const region = process.env.HIVEMIND_AWS_REGION?.trim();
+    const bucket = process.env.HIVEMIND_ARTIFACTS_BUCKET?.trim();
+    const clusterArn = process.env.HIVEMIND_ECS_CLUSTER_ARN?.trim();
+    const workerTaskDef = process.env.HIVEMIND_AI_WORKER_TASK_DEF?.trim();
+    const verifierTaskDef = process.env.HIVEMIND_VERIFIER_TASK_DEF?.trim();
+    const subnets = (process.env.HIVEMIND_WORKER_SUBNETS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    const securityGroups = (process.env.HIVEMIND_WORKER_SECURITY_GROUPS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    const detectedIp = detectPrivateVpcIpv4();
+    const workerControlUrl = process.env.HIVEMIND_CONTROL_API_URL?.trim() || (detectedIp ? `http://${detectedIp}:${port}` : `http://127.0.0.1:${port}`);
+    const ecsDriver =
+      region && bucket && clusterArn && workerTaskDef && verifierTaskDef && subnets.length && securityGroups.length
+        ? new AwsEcsFargateSpotDriver({
+            region,
+            allowedRegions: [region],
+            clusterArn,
+            workerTaskDefinition: workerTaskDef,
+            verifierTaskDefinition: verifierTaskDef,
+            subnets,
+            securityGroups,
+            assignPublicIp: process.env.HIVEMIND_WORKER_ASSIGN_PUBLIC_IP === 'ENABLED' ? 'ENABLED' : 'DISABLED',
+            controlApiUrl: workerControlUrl,
+            allowVpcInternalHttp: process.env.HIVEMIND_ALLOW_VPC_INTERNAL_HTTP === 'true',
+            artifactsBucket: bucket,
+            credentials: createEcsTaskCredentialsProvider(),
+          })
+        : undefined;
+    return new CollabOrchestrator({
+      service,
+      controlApiUrl: `http://127.0.0.1:${port}`,
+      workerToken,
+      redactSecrets: [operatorToken, workerToken],
+      spotFeed: createSpotPlacementFeedPort({
+        feedUrl: process.env.HIVEMIND_SPOT_FEED_URL?.trim() || DEFAULT_SPOT_FEED_URL,
+      }),
+      ...(ecsDriver
+        ? {
+            workerLauncher: {
+              launchCollabWorker: (input, signal) =>
+                ecsDriver.launchCollabWorker(
+                  {
+                    sessionId: input.sessionId,
+                    subtaskId: input.subtaskId,
+                    agentId: input.agentId,
+                    provider: input.provider,
+                  },
+                  signal,
+                ),
+            },
+          }
+        : {}),
+    });
+  };
+
+  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,collabRepo,collabOrchestratorFactory});
   const address = await app.listen({host,port});
   console.log(`HIVEMIND control service: ${address}`);
   for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,() => { void app!.close(); });

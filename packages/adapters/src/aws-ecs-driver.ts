@@ -223,6 +223,61 @@ export class AwsEcsFargateSpotDriver implements RuntimeDriver {
     return { taskArn };
   }
 
+  async launchCollabWorker(
+    input: {
+      sessionId: string;
+      subtaskId: string;
+      agentId: string;
+      provider: 'claude' | 'codex';
+    },
+    signal?: AbortSignal,
+  ): Promise<{ taskArn: string; region: string }> {
+    const containerName = this.config.workerContainerName ?? 'ai-worker';
+    const environment: { name: string; value: string }[] = [
+      { name: 'HIVEMIND_COLLAB_MODE', value: 'true' },
+      { name: 'HIVEMIND_CONTROL_API_URL', value: assertSafeValue(this.config.controlApiUrl, 'controlApiUrl') },
+      { name: 'HIVEMIND_ARTIFACTS_BUCKET', value: assertSafeValue(this.config.artifactsBucket, 'artifactsBucket') },
+      { name: 'HIVEMIND_COLLAB_SESSION_ID', value: assertSafeValue(input.sessionId, 'sessionId') },
+      { name: 'HIVEMIND_COLLAB_SUBTASK_ID', value: assertSafeValue(input.subtaskId, 'subtaskId') },
+      { name: 'HIVEMIND_COLLAB_AGENT_ID', value: assertSafeValue(input.agentId, 'agentId') },
+      { name: 'HIVEMIND_COLLAB_PROVIDER', value: input.provider },
+    ];
+    const capacityProviderStrategy = this.config.allowOnDemandFallback
+      ? [
+          { capacityProvider: 'FARGATE_SPOT', weight: 4, base: 0 },
+          { capacityProvider: 'FARGATE', weight: 1, base: 0 },
+        ]
+      : [{ capacityProvider: 'FARGATE_SPOT', weight: 1, base: 0 }];
+
+    const result = await this.ecsCall(
+      'RunTask',
+      {
+        cluster: this.config.clusterArn,
+        taskDefinition: this.config.workerTaskDefinition,
+        count: 1,
+        capacityProviderStrategy,
+        networkConfiguration: {
+          awsvpcConfiguration: {
+            subnets: this.config.subnets,
+            securityGroups: this.config.securityGroups,
+            assignPublicIp: this.config.assignPublicIp ?? 'DISABLED',
+          },
+        },
+        overrides: { containerOverrides: [{ name: containerName, environment }] },
+        tags: [
+          { key: 'hivemind:sessionId', value: input.sessionId },
+          { key: 'hivemind:subtaskId', value: input.subtaskId },
+          { key: 'hivemind:kind', value: 'collab-worker' },
+        ],
+      },
+      signal,
+    );
+    const tasks = result.tasks as { taskArn?: string }[] | undefined;
+    const taskArn = tasks?.[0]?.taskArn;
+    if (!taskArn) throw new Error('AWS ECS RunTask (collab-worker) returned no taskArn');
+    return { taskArn, region: this.config.region };
+  }
+
   async launch(task: Task): Promise<{ externalRunId: string }> {
     if (!task.runId || !task.baseCommit) throw new Error('ECS launch requires task runId and baseCommit');
     const launched = await this.launchWorkload({

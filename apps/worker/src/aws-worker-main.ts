@@ -97,7 +97,153 @@ async function reportWorkerCompleted(
   }
 }
 
+async function runCollabWorkerMode(): Promise<void> {
+  const region = process.env.HIVEMIND_AWS_REGION ?? 'ap-northeast-2';
+  const controlApiUrl = requiredEnv('HIVEMIND_CONTROL_API_URL');
+  const workerToken = requiredEnv('HIVEMIND_WORKER_TOKEN');
+  const sessionId = requiredEnv('HIVEMIND_COLLAB_SESSION_ID');
+  const subtaskId = requiredEnv('HIVEMIND_COLLAB_SUBTASK_ID');
+  const agentId = requiredEnv('HIVEMIND_COLLAB_AGENT_ID');
+  const modelAuthSecretArn = requiredEnv('HIVEMIND_MODEL_AUTH_SECRET_ARN');
+  const workRoot = process.env.HIVEMIND_WORK_ROOT?.trim() || '/tmp/hivemind';
+
+  const credentials = createEcsTaskCredentialsProvider();
+  const secretsManager = createAwsSecretsManagerPort({ region, allowedRegions: [region], credentials });
+
+  const snapRes = await fetch(new URL(`/api/collab/sessions/${encodeURIComponent(sessionId)}`, controlApiUrl), {
+    method: 'GET',
+    redirect: 'error',
+    headers: { authorization: `Bearer ${workerToken}` },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!snapRes.ok) throw new Error(`Failed to fetch collab snapshot (HTTP ${snapRes.status})`);
+  const snapshot = (await snapRes.json()) as {
+    session: { title: string; goal: string; provider: 'claude' | 'codex' };
+    subtasks: { id: string; title: string; instructions: string; provider: 'claude' | 'codex' }[];
+    messages: { seq: number; sender: string; recipient: string | null; kind: string; body: string }[];
+    workLogs: { agentId: string; kind: string; summary: string; s3Uri: string | null }[];
+  };
+  const subtask = snapshot.subtasks.find((s) => s.id === subtaskId);
+  if (!subtask) throw new Error(`Subtask ${subtaskId} not found in session ${sessionId}`);
+
+  const provider = subtask.provider;
+  const secretString = await secretsManager.getSecretString(modelAuthSecretArn, AbortSignal.timeout(15_000));
+  const auth = await materializeProviderAuth(provider, secretString, join(workRoot, `collab-auth-${agentId}`));
+
+  const postCollab = async (path: string, body: Record<string, unknown>) => {
+    const res = await fetch(new URL(path, controlApiUrl), {
+      method: 'POST',
+      redirect: 'error',
+      headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`Collab API ${path} failed with HTTP ${res.status}`);
+  };
+
+  try {
+    const prompt = [
+      `# HIVEMIND Parallel ECS Fargate Spot Agent (${agentId})`,
+      `Session: ${snapshot.session.title} (${sessionId})`,
+      `Goal: ${snapshot.session.goal}`,
+      `Subtask: ${subtask.title} (${subtask.id})`,
+      '',
+      '## Instructions',
+      subtask.instructions,
+      '',
+      '## Shared Communication Board (Recent Messages)',
+      ...snapshot.messages.slice(-25).map((m) => `[#${m.seq} ${m.sender} -> ${m.recipient ?? '@all'} (${m.kind})]: ${m.body}`),
+      '',
+      '## Shared Work Logs',
+      ...snapshot.workLogs.slice(-25).map((l) => `- ${l.agentId} (${l.kind}): ${l.summary}${l.s3Uri ? ` [${l.s3Uri}]` : ''}`),
+      '',
+      '## Live Collaboration API (Available during your run)',
+      `- Post message: POST ${controlApiUrl}/api/collab/sessions/${sessionId}/messages (Bearer $HIVEMIND_WORKER_TOKEN)`,
+      `- Append work log: POST ${controlApiUrl}/api/collab/sessions/${sessionId}/work-logs (Bearer $HIVEMIND_WORKER_TOKEN)`,
+    ].join('\n');
+
+    const homeDir = join(workRoot, `collab-home-${agentId}`);
+    const lastMessageFile = join(workRoot, `collab-last-${agentId}.txt`);
+    const baseEnv = processEnvironment(homeDir, provider === 'codex' ? true : 'claude');
+    const cliBin = provider === 'codex' ? (process.env.HIVEMIND_CODEX_BIN ?? 'codex') : (process.env.HIVEMIND_CLAUDE_BIN ?? 'claude');
+    const { cmd, extraEnv } = buildWorkerCliCommand({
+      provider,
+      cliBin,
+      workspacePath: workRoot,
+      lastMessageFile,
+      model: auth.model,
+      sandboxMode: process.env.HIVEMIND_CODEX_SANDBOX_MODE ?? 'danger-full-access',
+    });
+    const env: NodeJS.ProcessEnv = {
+      ...baseEnv,
+      ...auth.env,
+      ...extraEnv,
+      HIVEMIND_CONTROL_API_URL: controlApiUrl,
+      HIVEMIND_WORKER_TOKEN: workerToken,
+      HIVEMIND_COLLAB_SESSION_ID: sessionId,
+      HIVEMIND_COLLAB_SUBTASK_ID: subtaskId,
+      HIVEMIND_COLLAB_AGENT_ID: agentId,
+    };
+
+    const res = await runProcess(cmd, {
+      cwd: workRoot,
+      signal: AbortSignal.timeout(Number(process.env.HIVEMIND_AGENT_TIMEOUT_MS ?? '1800000')),
+      timeoutMs: Number(process.env.HIVEMIND_AGENT_TIMEOUT_MS ?? '1800000'),
+      input: prompt,
+      env,
+      maxOutputBytes: 256_000,
+    });
+
+    if (res.status !== 'passed') {
+      const safeErr = redactWorkerOutput(`${res.stderr}\n${res.stdout}`, [...auth.redactSecrets, workerToken]).slice(-2000);
+      await postCollab(`/api/collab/sessions/${encodeURIComponent(sessionId)}/subtasks/${encodeURIComponent(subtaskId)}/finish`, {
+        agentId,
+        status: 'failed',
+        failureReason: safeErr,
+      });
+      await postCollab(`/api/collab/sessions/${encodeURIComponent(sessionId)}/messages`, {
+        sender: agentId,
+        recipient: 'coordinator',
+        kind: 'blocker',
+        body: `Subtask ${subtaskId} failed: ${safeErr.slice(0, 1000)}`,
+      });
+      throw new Error(`Collab worker failed: ${safeErr}`);
+    }
+
+    let summary = res.stdout.trim();
+    if (provider === 'codex') {
+      const last = await readFile(lastMessageFile, 'utf8').catch(() => '');
+      if (last.trim()) summary = last.trim();
+    }
+    const cleanSummary = redactWorkerOutput(summary || `Completed subtask ${subtask.title}`, [...auth.redactSecrets, workerToken]).slice(0, 8000);
+
+    await postCollab(`/api/collab/sessions/${encodeURIComponent(sessionId)}/work-logs`, {
+      subtaskId,
+      agentId,
+      kind: 'progress',
+      summary: cleanSummary.slice(0, 4000),
+    });
+    await postCollab(`/api/collab/sessions/${encodeURIComponent(sessionId)}/messages`, {
+      sender: agentId,
+      recipient: 'coordinator',
+      kind: 'handoff',
+      body: cleanSummary,
+    });
+    await postCollab(`/api/collab/sessions/${encodeURIComponent(sessionId)}/subtasks/${encodeURIComponent(subtaskId)}/finish`, {
+      agentId,
+      status: 'completed',
+      summary: cleanSummary,
+    });
+  } finally {
+    await auth.cleanup().catch(() => undefined);
+  }
+}
+
 async function main(): Promise<void> {
+  if (process.env.HIVEMIND_COLLAB_MODE === 'true') {
+    await runCollabWorkerMode();
+    return;
+  }
   const region = process.env.HIVEMIND_AWS_REGION ?? 'ap-northeast-2';
   const bucket = requiredEnv('HIVEMIND_ARTIFACTS_BUCKET');
   const controlApiUrl = requiredEnv('HIVEMIND_CONTROL_API_URL');

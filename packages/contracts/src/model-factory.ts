@@ -31,8 +31,16 @@ export interface ModelTrainingInputSpec {
   digest: string;
 }
 
+export interface RegionComputeOverride {
+  amiId?: string;
+  subnetIds?: string[];
+  securityGroupIds?: string[];
+}
+
 export interface TrainingComputeSpec {
   region: string;
+  candidateRegions?: string[];
+  regionOverrides?: Record<string, RegionComputeOverride>;
   availabilityZoneId?: string;
   instanceType: string;
   amiId: string;

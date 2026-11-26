@@ -136,6 +136,56 @@ export function validateTrainingComputeSpec(
   if (!REGION_PATTERN.test(region)) {
     throw new DomainError(`Invalid AWS region: ${spec.region}`, 400);
   }
+  let candidateRegions: string[] | undefined;
+  if (spec.candidateRegions !== undefined) {
+    if (!Array.isArray(spec.candidateRegions) || spec.candidateRegions.length === 0 || spec.candidateRegions.length > 10) {
+      throw new DomainError('compute.candidateRegions must contain 1..10 AWS regions', 400);
+    }
+    candidateRegions = [...new Set(spec.candidateRegions.map((r) => {
+      const clean = text(r, 'compute.candidateRegions[]', 32).toLowerCase();
+      if (!REGION_PATTERN.test(clean)) throw new DomainError(`Invalid candidate region: ${r}`, 400);
+      return clean;
+    }))];
+  }
+  let regionOverrides: TrainingComputeSpec['regionOverrides'];
+  if (spec.regionOverrides !== undefined) {
+    if (!spec.regionOverrides || typeof spec.regionOverrides !== 'object' || Array.isArray(spec.regionOverrides)) {
+      throw new DomainError('compute.regionOverrides must be an object', 400);
+    }
+    regionOverrides = {};
+    for (const [r, ov] of Object.entries(spec.regionOverrides)) {
+      const cleanRegion = text(r, 'regionOverrides key', 32).toLowerCase();
+      if (!REGION_PATTERN.test(cleanRegion)) throw new DomainError(`Invalid regionOverrides region: ${r}`, 400);
+      if (!ov || typeof ov !== 'object' || Array.isArray(ov)) throw new DomainError('Invalid region override entry', 400);
+      const entry: { amiId?: string; subnetIds?: string[]; securityGroupIds?: string[] } = {};
+      if (ov.amiId !== undefined) {
+        const cleanAmi = text(ov.amiId, 'regionOverrides.amiId', 32).toLowerCase();
+        if (!AMI_PATTERN.test(cleanAmi)) throw new DomainError(`Invalid regionOverrides amiId: ${ov.amiId}`, 400);
+        entry.amiId = cleanAmi;
+      }
+      if (ov.subnetIds !== undefined) {
+        if (!Array.isArray(ov.subnetIds) || ov.subnetIds.length === 0 || ov.subnetIds.length > 8) {
+          throw new DomainError('regionOverrides.subnetIds must contain 1..8 subnets', 400);
+        }
+        entry.subnetIds = ov.subnetIds.map((s) => {
+          const clean = text(s, 'regionOverrides.subnetId', 32).toLowerCase();
+          if (!SUBNET_PATTERN.test(clean)) throw new DomainError(`Invalid regionOverrides subnetId: ${s}`, 400);
+          return clean;
+        });
+      }
+      if (ov.securityGroupIds !== undefined) {
+        if (!Array.isArray(ov.securityGroupIds) || ov.securityGroupIds.length === 0 || ov.securityGroupIds.length > 5) {
+          throw new DomainError('regionOverrides.securityGroupIds must contain 1..5 security groups', 400);
+        }
+        entry.securityGroupIds = ov.securityGroupIds.map((sg) => {
+          const clean = text(sg, 'regionOverrides.securityGroupId', 32).toLowerCase();
+          if (!SG_PATTERN.test(clean)) throw new DomainError(`Invalid regionOverrides securityGroupId: ${sg}`, 400);
+          return clean;
+        });
+      }
+      regionOverrides[cleanRegion] = entry;
+    }
+  }
   let availabilityZoneId: string | undefined;
   if (spec.availabilityZoneId !== undefined) {
     availabilityZoneId = text(spec.availabilityZoneId, 'compute.availabilityZoneId', 24).toLowerCase();
@@ -206,6 +256,8 @@ export function validateTrainingComputeSpec(
 
   return {
     region,
+    ...(candidateRegions ? { candidateRegions } : {}),
+    ...(regionOverrides ? { regionOverrides } : {}),
     ...(availabilityZoneId ? { availabilityZoneId } : {}),
     instanceType,
     amiId,
@@ -272,6 +324,8 @@ export function computeModelFactoryApprovalFingerprint(spec: {
       baseCommit: spec.baseCommit,
       compute: {
         region: spec.compute.region,
+        ...(spec.compute.candidateRegions ? { candidateRegions: spec.compute.candidateRegions } : {}),
+        ...(spec.compute.regionOverrides ? { regionOverrides: spec.compute.regionOverrides } : {}),
         availabilityZoneId: spec.compute.availabilityZoneId ?? null,
         instanceType: spec.compute.instanceType,
         amiId: spec.compute.amiId,

@@ -4,6 +4,7 @@ import {
   RemovalPolicy,
   Stack,
   type StackProps,
+  aws_dsql as dsql,
   aws_ec2 as ec2,
   aws_ecr as ecr,
   aws_ecs as ecs,
@@ -47,6 +48,7 @@ export class AwsRuntimeStack extends Stack {
   readonly modelAuthSecret: secretsmanager.Secret;
   readonly githubDraftPrSecret: secretsmanager.Secret;
   readonly hfReleaseTokenSecret: secretsmanager.Secret;
+  readonly collabDsqlCluster: dsql.CfnCluster;
   readonly modelFactoryTtlGuardFn: lambda.Function;
 
   constructor(
@@ -187,6 +189,16 @@ export class AwsRuntimeStack extends Stack {
       description: 'Scoped Hugging Face write token for Control Plane trusted model release publisher ONLY (never workers)',
     });
 
+    // Amazon Aurora DSQL serverless distributed PostgreSQL cluster ($0/hr idle, scales to 0 DPUs)
+    // storing multi-agent collaboration sessions, DAG subtasks, shared communication board, and work logs.
+    this.collabDsqlCluster = new dsql.CfnCluster(this, 'CollabDsqlCluster', {
+      deletionProtectionEnabled: false,
+      tags: [
+        { key: 'Name', value: `${prefix}-collab-dsql` },
+        { key: 'hivemind:managed-by', value: 'hivemind-runtime' },
+      ],
+    });
+
     this.cluster = new ecs.Cluster(this, 'RuntimeCluster', {
       clusterName: `${prefix}-cluster`,
       vpc,
@@ -245,6 +257,13 @@ export class AwsRuntimeStack extends Stack {
     this.artifactsBucket.grantReadWrite(this.controlPlaneRole, 'models/*');
     this.githubDraftPrSecret.grantRead(this.controlPlaneRole);
     this.hfReleaseTokenSecret.grantRead(this.controlPlaneRole);
+    // Aurora DSQL IAM authentication for Control Plane ONLY (workers communicate strictly through Control Plane HTTP API).
+    this.controlPlaneRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['dsql:DbConnectAdmin', 'dsql:DbConnect'],
+        resources: [this.collabDsqlCluster.attrResourceArn],
+      }),
+    );
     // Scoped EC2 Spot Model Factory orchestration across allowed regions (no stack redeploy per model).
     // TerminateInstances is strictly conditioned on hivemind:managed-by=hivemind-model-factory.
     this.controlPlaneRole.addToPolicy(
@@ -478,6 +497,8 @@ export class AwsRuntimeStack extends Stack {
         HIVEMIND_WORKER_ASSIGN_PUBLIC_IP: 'ENABLED',
         HIVEMIND_GITHUB_SECRET_ARN: this.githubDraftPrSecret.secretArn,
         HIVEMIND_HF_RELEASE_SECRET_ARN: this.hfReleaseTokenSecret.secretArn,
+        HIVEMIND_DSQL_ENDPOINT: `${this.collabDsqlCluster.attrIdentifier}.dsql.${cfg.region}.on.aws`,
+        HIVEMIND_DSQL_REGION: cfg.region,
         HIVEMIND_MF_INSTANCE_PROFILE_ARN: this.trainingInstanceProfile.attrArn,
         HIVEMIND_MF_ALLOWED_REGIONS: 'ap-northeast-2,us-east-2,us-east-1,us-west-2,ap-northeast-1',
         HIVEMIND_MF_BUDGET_CAP_MICROS: '500000000',
@@ -640,6 +661,10 @@ export class AwsRuntimeStack extends Stack {
     new CfnOutput(this, 'ModelAuthSecretArn', { value: this.modelAuthSecret.secretArn });
     new CfnOutput(this, 'GithubDraftPrSecretArn', { value: this.githubDraftPrSecret.secretArn });
     new CfnOutput(this, 'HfReleaseTokenSecretArn', { value: this.hfReleaseTokenSecret.secretArn });
+    new CfnOutput(this, 'DsqlClusterArn', { value: this.collabDsqlCluster.attrResourceArn });
+    new CfnOutput(this, 'DsqlClusterEndpoint', {
+      value: `${this.collabDsqlCluster.attrIdentifier}.dsql.${cfg.region}.on.aws`,
+    });
     new CfnOutput(this, 'ModelFactoryTrainingInstanceRoleArn', { value: this.trainingInstanceRole.roleArn });
     new CfnOutput(this, 'ModelFactoryTrainingInstanceProfileArn', { value: this.trainingInstanceProfile.attrArn });
     new CfnOutput(this, 'ModelFactoryTtlGuardFunctionName', { value: this.modelFactoryTtlGuardFn.functionName });

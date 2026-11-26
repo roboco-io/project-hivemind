@@ -111,6 +111,7 @@ test('enforces strict 3-way secret separation across Control Plane, AI Worker, V
   // and open SSM Exec channels, never model auth.
   assert.match(cpDoc, /GithubDraftPrSecret/);
   assert.match(cpDoc, /HfReleaseTokenSecret/);
+  assert.match(cpDoc, /dsql:DbConnectAdmin/);
   assert.match(cpDoc, /ecs:RunTask/);
   assert.match(cpDoc, /ecs:TagResource/);
   assert.match(cpDoc, /ec2:TerminateInstances/);
@@ -140,19 +141,24 @@ test('enforces strict 3-way secret separation across Control Plane, AI Worker, V
   assert.match(wkExecDoc, /WorkerTokenSecret/);
   assert.doesNotMatch(wkExecDoc, /OperatorTokenSecret/);
 
-  // AI worker can read model subscription auth & write patches/sessions, never GitHub/HF secrets, operator token, or ECS RunTask.
+  // AI worker can read model subscription auth & write patches/sessions, never GitHub/HF/DSQL secrets, operator token, or ECS RunTask.
   assert.match(workerDoc, /ModelSubscriptionAuthSecret/);
   assert.doesNotMatch(workerDoc, /GithubDraftPrSecret/);
   assert.doesNotMatch(workerDoc, /HfReleaseTokenSecret/);
+  assert.doesNotMatch(workerDoc, /dsql:/);
   assert.doesNotMatch(workerDoc, /OperatorTokenSecret/);
   assert.doesNotMatch(workerDoc, /ecs:RunTask/);
 
-  // Verifier reads bundles/acceptance/patches & writes only attestations/*, never accesses secrets.
+  // Verifier reads bundles/acceptance/patches & writes only attestations/*, never accesses secrets or DSQL.
   assert.doesNotMatch(verifierDoc, /ModelSubscriptionAuthSecret/);
   assert.doesNotMatch(verifierDoc, /GithubDraftPrSecret/);
   assert.doesNotMatch(verifierDoc, /HfReleaseTokenSecret/);
+  assert.doesNotMatch(verifierDoc, /dsql:/);
   assert.doesNotMatch(verifierDoc, /OperatorTokenSecret/);
   assert.match(verifierDoc, /attestations\/\*/);
+
+  // Aurora DSQL serverless collaboration cluster synthesized.
+  template.resourceCountIs('AWS::DSQL::Cluster', 1);
 
   // Autonomous $0-idle multi-region TTL Guard Lambda + 5-minute EventBridge rule synthesized.
   template.hasResourceProperties('AWS::Lambda::Function', {

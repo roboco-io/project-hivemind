@@ -9,12 +9,13 @@ RUN npm run build
 
 FROM node:24-slim
 WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates ripgrep && rm -rf /var/lib/apt/lists/*
+RUN npm install --global @openai/codex@0.171.0 @anthropic-ai/claude-code@2.1.331 && npm cache clean --force
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts
 COPY --from=build /app/dist ./dist
 COPY apps/dashboard/public ./apps/dashboard/public
-RUN mkdir -p /data && chown -R node:node /app /data
+RUN mkdir -p /data /tmp/hivemind && chown -R node:node /app /data /tmp/hivemind
 USER node
 ENV HIVEMIND_HOST=0.0.0.0
 ENV HIVEMIND_PORT=4310

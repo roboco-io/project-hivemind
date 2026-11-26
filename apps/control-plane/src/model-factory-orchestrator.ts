@@ -132,24 +132,55 @@ export class ModelFactoryOrchestrator {
     signal?: AbortSignal,
   ): Promise<ModelFactoryJob> {
     const approved = this.options.store.approveTraining(jobId, approvalFingerprint, reason);
-    let availabilityZoneId = approved.compute.availabilityZoneId;
+    const baseCandidates = approved.compute.candidateRegions?.length
+      ? approved.compute.candidateRegions
+      : [approved.compute.region];
 
-    if (!availabilityZoneId && approved.compute.workloadClass && this.options.spotFeed) {
-      const snapshot = await this.options.spotFeed.getSnapshot(signal).catch(() => null);
-      if (snapshot) {
-        const decision = selectOptimalSpotPlacement(
-          snapshot,
-          {
-            primaryRegion: approved.compute.region,
-            allowedRegions: [approved.compute.region],
-            workloadClass: approved.compute.workloadClass,
-            maxHourlyPriceUsd: approved.compute.maxHourlyPriceUsd,
-          },
-          this.now(),
-        );
-        if (decision.selectedAzId) {
-          availabilityZoneId = decision.selectedAzId;
+    // Rank candidate regions by 6-hourly Spot Placement Score stability & lowest price (5-region GPU Spot auto-routing).
+    const rankedTargets: { region: string; azId?: string }[] = [];
+    const snapshot = this.options.spotFeed ? await this.options.spotFeed.getSnapshot(signal).catch(() => null) : null;
+    if (snapshot && baseCandidates.length > 1) {
+      const remaining = [...baseCandidates];
+      while (remaining.length > 0) {
+        try {
+          const decision = selectOptimalSpotPlacement(
+            snapshot,
+            {
+              primaryRegion: remaining[0]!,
+              allowedRegions: remaining,
+              workloadClass: approved.compute.workloadClass ?? 'g6e.12xlarge',
+              maxHourlyPriceUsd: approved.compute.maxHourlyPriceUsd,
+            },
+            this.now(),
+          );
+          rankedTargets.push({
+            region: decision.selectedRegion,
+            ...(decision.selectedAzId ? { azId: decision.selectedAzId } : {}),
+          });
+          const idx = remaining.indexOf(decision.selectedRegion);
+          remaining.splice(idx >= 0 ? idx : 0, 1);
+        } catch (err) {
+          if (rankedTargets.length === 0) throw err;
+          break;
         }
+      }
+    } else {
+      for (const r of baseCandidates) {
+        let azId = r === approved.compute.region ? approved.compute.availabilityZoneId : undefined;
+        if (!azId && snapshot && approved.compute.workloadClass) {
+          const decision = selectOptimalSpotPlacement(
+            snapshot,
+            {
+              primaryRegion: r,
+              allowedRegions: [r],
+              workloadClass: approved.compute.workloadClass,
+              maxHourlyPriceUsd: approved.compute.maxHourlyPriceUsd,
+            },
+            this.now(),
+          );
+          if (decision.selectedAzId) azId = decision.selectedAzId;
+        }
+        rankedTargets.push({ region: r, ...(azId ? { azId } : {}) });
       }
     }
 
@@ -177,34 +208,60 @@ export class ModelFactoryOrchestrator {
           : {}),
       };
 
-      const launched = await this.options.ec2.launchSpotInstance(
-        {
-          jobId: approved.id,
-          modelId: approved.modelId,
-          region: approved.compute.region,
-          ...(availabilityZoneId ? { availabilityZoneId } : {}),
-          instanceType: approved.compute.instanceType,
-          amiId: approved.compute.amiId,
-          maxHourlyPriceUsd: approved.compute.maxHourlyPriceUsd,
-          expiresAtIso,
-          ...(approved.compute.subnetId ? { subnetId: approved.compute.subnetId } : {}),
-          ...(approved.compute.securityGroupIds ? { securityGroupIds: approved.compute.securityGroupIds } : {}),
-          ...(instanceProfileArn ? { instanceProfileArn } : {}),
-          ...(userDataScript !== undefined ? { userDataScript } : {}),
-          extraTags,
-        },
-        signal,
-      );
+      const attemptErrors: string[] = [];
+      for (const target of rankedTargets) {
+        const override = approved.compute.regionOverrides?.[target.region];
+        const amiId = override?.amiId ?? approved.compute.amiId;
+        const securityGroupIds = override?.securityGroupIds ?? approved.compute.securityGroupIds;
+        const candidateSubnets =
+          override?.subnetIds?.length
+            ? override.subnetIds
+            : approved.compute.subnetId
+              ? [approved.compute.subnetId]
+              : [undefined];
 
-      return this.options.store.recordInstanceLaunched(approved.id, {
-        region: launched.region,
-        availabilityZone: launched.availabilityZone,
-        instanceId: launched.instanceId,
-        instanceType: launched.instanceType,
-        amiId: launched.amiId,
-        expiresAt: expiresAtIso,
-        nextWakeAt,
-      });
+        for (const subnetId of candidateSubnets) {
+          try {
+            const launched = await this.options.ec2.launchSpotInstance(
+              {
+                jobId: approved.id,
+                modelId: approved.modelId,
+                region: target.region,
+                ...(!subnetId && target.azId ? { availabilityZoneId: target.azId } : {}),
+                instanceType: approved.compute.instanceType,
+                amiId,
+                maxHourlyPriceUsd: approved.compute.maxHourlyPriceUsd,
+                expiresAtIso,
+                ...(subnetId ? { subnetId } : {}),
+                ...(securityGroupIds ? { securityGroupIds } : {}),
+                ...(instanceProfileArn ? { instanceProfileArn } : {}),
+                ...(userDataScript !== undefined ? { userDataScript } : {}),
+                extraTags,
+              },
+              signal,
+            );
+
+            return this.options.store.recordInstanceLaunched(approved.id, {
+              region: launched.region,
+              availabilityZone: launched.availabilityZone,
+              instanceId: launched.instanceId,
+              instanceType: launched.instanceType,
+              amiId: launched.amiId,
+              expiresAt: expiresAtIso,
+              nextWakeAt,
+            });
+          } catch (attemptError) {
+            const msg = attemptError instanceof Error ? attemptError.message : String(attemptError);
+            attemptErrors.push(`${target.region}${subnetId ? `/${subnetId}` : ''}: ${msg}`);
+            // Only fail over on capacity/spot availability errors; immediately rethrow IAM/parameter/auth errors.
+            if (!/InsufficientInstanceCapacity|SpotMaxPriceTooLow|Unsupported|MaxSpotInstanceCountExceeded/i.test(msg)) {
+              throw attemptError;
+            }
+          }
+        }
+      }
+
+      throw new Error(`All candidate regions/subnets exhausted: ${attemptErrors.join(' | ')}`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       return this.options.store.fail(approved.id, `EC2 Spot launch failed: ${msg}`);
