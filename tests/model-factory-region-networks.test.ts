@@ -140,7 +140,7 @@ test('registry supplies subnet, SG and SSM-resolved AMI for a non-primary region
     },
   });
   try {
-    const job = store.create(jobInput({ candidateRegions: ['us-east-2', 'us-east-1'] }));
+    const job = await store.create(jobInput({ candidateRegions: ['us-east-2', 'us-east-1'] }));
     const launched = await orchestrator.approveAndLaunchTraining(job.id, job.approvalFingerprint, 'ok');
 
     assert.equal(launched.status, 'training_running', launched.failureReason ?? '');
@@ -160,7 +160,7 @@ test('registry supplies subnet, SG and SSM-resolved AMI for a non-primary region
       { region: 'us-east-1', outcome: 'launched', subnetId: 'subnet-067ecf91041a44411' },
     ]);
   } finally {
-    store.close();
+    await store.close();
   }
 });
 
@@ -182,7 +182,7 @@ test('job regionOverrides win over the registry, and a failed AMI lookup skips t
     },
   });
   try {
-    const job = store.create(
+    const job = await store.create(
       jobInput({
         candidateRegions: ['us-east-2', 'us-east-1', 'us-west-2'],
         regionOverrides: { 'us-west-2': { amiId: 'ami-0ddddddddddddddd4', subnetIds: ['subnet-0db24b6d58afff2b9'] } },
@@ -198,12 +198,12 @@ test('job regionOverrides win over the registry, and a failed AMI lookup skips t
     assert.deepEqual(last.securityGroupIds, ['sg-03219f5a356b9f260']);
 
     // When every region fails, the AMI lookup failure is reported in the job error.
-    const job2 = store.create(jobInput({ candidateRegions: ['us-east-2', 'us-east-1'], s3ArtifactPrefix: 'models/smf-tiny-v1/run-registry-2' }));
+    const job2 = await store.create(jobInput({ candidateRegions: ['us-east-2', 'us-east-1'], s3ArtifactPrefix: 'models/smf-tiny-v1/run-registry-2' }));
     const failed = await orchestrator.approveAndLaunchTraining(job2.id, job2.approvalFingerprint, 'ok');
     assert.equal(failed.status, 'failed');
     assert.match(failed.failureReason ?? '', /us-east-1: AMI lookup failed/);
   } finally {
-    store.close();
+    await store.close();
   }
 });
 

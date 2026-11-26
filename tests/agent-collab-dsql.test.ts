@@ -325,7 +325,7 @@ test('5-Region GPU Spot Auto-Router ranks by Spot Placement Score and fails over
   });
 
   try {
-    const job = store.create({
+    const job = await store.create({
       title: '5-region auto GPU Spot failover test',
       modelId: 'verilog-embed-v1',
       repository: 'roboco-io/silicon-model-factory',
@@ -359,7 +359,7 @@ test('5-Region GPU Spot Auto-Router ranks by Spot Placement Score and fails over
     assert.equal(launched.instance?.region, 'us-west-2');
     assert.equal(launched.instance?.amiId, 'ami-03333333333333333');
   } finally {
-    store.close();
+    await store.close();
   }
 });
 

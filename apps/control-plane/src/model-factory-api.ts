@@ -32,21 +32,21 @@ export function registerModelFactoryRoutes(app: FastifyInstance, options: ModelF
   };
 
   app.get('/api/model-factory/jobs', { onRequest: operatorOnly }, async () => ({
-    jobs: store.list(),
-    events: store.events(),
+    jobs: await store.list(),
+    events: await store.events(),
   }));
 
   app.get('/api/model-factory/ledger', { onRequest: operatorOnly }, async () => store.ledger());
 
   app.get<{ Params: { id: string } }>('/api/model-factory/jobs/:id', { onRequest: operatorOnly }, async (request) => ({
-    job: store.get(request.params.id),
-    events: store.events(request.params.id),
+    job: await store.get(request.params.id),
+    events: await store.events(request.params.id),
   }));
 
   app.post<{ Body: CreateModelFactoryJob }>(
     '/api/model-factory/jobs',
     { onRequest: operatorOnly, bodyLimit: 131072 },
-    async (request, reply) => reply.code(201).send(store.create(request.body)),
+    async (request, reply) => reply.code(201).send(await store.create(request.body)),
   );
 
   app.post<{ Params: { id: string }; Body: { approvalFingerprint: string; reason: string } }>(

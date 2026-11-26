@@ -249,7 +249,7 @@ export class ModelFactoryOrchestrator {
     reason: string,
     signal?: AbortSignal,
   ): Promise<ModelFactoryJob> {
-    const approved = this.options.store.approveTraining(jobId, approvalFingerprint, reason);
+    const approved = await this.options.store.approveTraining(jobId, approvalFingerprint, reason);
     const baseCandidates = approved.compute.candidateRegions?.length
       ? approved.compute.candidateRegions
       : [approved.compute.region];
@@ -395,7 +395,7 @@ export class ModelFactoryOrchestrator {
               amiId: launched.amiId,
               outcome: 'launched',
             });
-            return this.options.store.recordInstanceLaunched(approved.id, {
+            return await this.options.store.recordInstanceLaunched(approved.id, {
               region: launched.region,
               availabilityZone: launched.availabilityZone,
               instanceId: launched.instanceId,
@@ -427,7 +427,7 @@ export class ModelFactoryOrchestrator {
       throw new Error(`All candidate regions/subnets exhausted: ${attemptErrors.join(' | ')}`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      return this.options.store.fail(approved.id, `EC2 Spot launch failed: ${msg}`);
+      return await this.options.store.fail(approved.id, `EC2 Spot launch failed: ${msg}`);
     }
   }
 
@@ -463,7 +463,7 @@ export class ModelFactoryOrchestrator {
   }
 
   async wakeJob(jobId: string, signal?: AbortSignal): Promise<ModelFactoryJob> {
-    let job = this.options.store.get(jobId);
+    let job = await this.options.store.get(jobId);
     const needsTrainingWake = job.status === 'training_running';
     const needsSettlementWake = Boolean(job.instance && job.cost.settledMicros === null);
     if (!job.instance || (!needsTrainingWake && !needsSettlementWake)) {
@@ -486,7 +486,7 @@ export class ModelFactoryOrchestrator {
     const isEnded = effectiveState === 'terminated' || effectiveState === 'shutting-down' || effectiveState === 'stopped';
     const nextWakeAt = isEnded ? null : new Date(Math.min(nowMs + this.wakeIntervalMs, expiresAtMs)).toISOString();
 
-    job = this.options.store.recordWakeUpdate(job.id, {
+    job = await this.options.store.recordWakeUpdate(job.id, {
       state: effectiveState,
       nextWakeAt,
       ...(forcedReason ? { forcedTerminationReason: forcedReason, diagnostic: forcedReason } : {}),
@@ -495,13 +495,13 @@ export class ModelFactoryOrchestrator {
     if (!job.receipt) {
       const receipt = await this.tryLoadS3Receipt(job, signal);
       if (receipt) {
-        job = this.options.store.recordArtifactReceipt(job.id, receipt);
+        job = await this.options.store.recordArtifactReceipt(job.id, receipt);
       }
     }
 
     if (isEnded && job.cost.settledMicros === null) {
       const settlement = this.calculateActualCostMicros(job, nowMs);
-      job = this.options.store.settleCost(job.id, {
+      job = await this.options.store.settleCost(job.id, {
         ...settlement,
         ...(forcedReason ? { diagnostic: 'Settled after TTL Guard forced termination' } : {}),
       });
@@ -511,14 +511,14 @@ export class ModelFactoryOrchestrator {
       const reason =
         forcedReason ??
         `EC2 Spot instance ${job.instance!.instanceId} ended (${effectiveState}) without S3 artifact receipt${described.stateReason ? `: ${described.stateReason}` : ''}`;
-      job = this.options.store.fail(job.id, reason);
+      job = await this.options.store.fail(job.id, reason);
     }
 
     return job;
   }
 
   async wakeDueJobs(signal?: AbortSignal): Promise<{ woken: ModelFactoryJob[]; sweeps: ExpiredSpotSweepResult[] }> {
-    const due = this.options.store.listDueWakeJobs(this.now());
+    const due = await this.options.store.listDueWakeJobs(this.now());
     const woken: ModelFactoryJob[] = [];
     const activeRegions = new Set<string>();
     for (const job of due) {
@@ -537,14 +537,14 @@ export class ModelFactoryOrchestrator {
   }
 
   async cancelJob(jobId: string, reason: string, signal?: AbortSignal): Promise<ModelFactoryJob> {
-    const current = this.options.store.get(jobId);
+    const current = await this.options.store.get(jobId);
     if (current.instance && current.instance.state !== 'terminated') {
       await this.options.ec2.terminateInstance(current.instance.region, current.instance.instanceId, signal);
     }
-    let cancelled = this.options.store.cancel(jobId, reason);
+    let cancelled = await this.options.store.cancel(jobId, reason);
     if (cancelled.instance && cancelled.cost.settledMicros === null) {
       const settlement = this.calculateActualCostMicros(cancelled, this.now());
-      cancelled = this.options.store.settleCost(jobId, {
+      cancelled = await this.options.store.settleCost(jobId, {
         ...settlement,
         diagnostic: 'Settled on operator cancellation',
       });
@@ -557,13 +557,13 @@ export class ModelFactoryOrchestrator {
     decision: Omit<ModelReleaseDecision, 'decidedAt'>,
     signal?: AbortSignal,
   ): Promise<ModelFactoryJob> {
-    const decided = this.options.store.recordReleaseDecision(jobId, decision);
+    const decided = await this.options.store.recordReleaseDecision(jobId, decision);
     if (decided.status !== 'release_approved') {
       return decided;
     }
 
     if (decided.releasePolicy.mode === 's3_artifact_only') {
-      return this.options.store.recordReleasePublication(decided.id, {
+      return await this.options.store.recordReleasePublication(decided.id, {
         mode: 's3_artifact_only',
         manifestDigest: decided.receipt!.manifestDigest,
         publishedAt: new Date(this.now()).toISOString(),
@@ -571,7 +571,7 @@ export class ModelFactoryOrchestrator {
     }
 
     if (!this.options.hfPublisher) {
-      return this.options.store.fail(
+      return await this.options.store.fail(
         decided.id,
         'Trusted Hugging Face release publisher is not configured on Control Plane (never silently skipped)',
       );
@@ -583,6 +583,6 @@ export class ModelFactoryOrchestrator {
       attestation: decided.releaseAttestation!,
       signal,
     });
-    return this.options.store.recordReleasePublication(decided.id, publication);
+    return await this.options.store.recordReleasePublication(decided.id, publication);
   }
 }

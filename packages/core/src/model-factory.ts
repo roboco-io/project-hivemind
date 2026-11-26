@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import {
+  SqliteModelFactoryRepository,
+  type ModelFactoryEventDraft,
+  type ModelFactoryRepository,
+  type ModelFactoryTxState,
+} from './model-factory-repository.js';
 import type {
   CreateModelFactoryJob,
   Ec2InstanceLifecycleState,
@@ -349,37 +352,47 @@ export interface ModelFactoryStoreOptions {
 }
 
 export class ModelFactoryStore {
-  private readonly db: DatabaseSync;
+  private readonly repository: ModelFactoryRepository;
   private readonly now: () => number;
   private readonly globalBudgetCapMicros: number;
+  /** Set only while the synchronous body of a repository transaction runs. */
+  private activeTx: ModelFactoryTxState | null = null;
 
-  constructor(path = ':memory:', options: ModelFactoryStoreOptions = {}) {
-    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
+  /**
+   * @param storage A SQLite file path (local default) or any ModelFactoryRepository, for example the
+   *   Aurora DSQL repository on AWS.
+   */
+  constructor(storage: string | ModelFactoryRepository = ':memory:', options: ModelFactoryStoreOptions = {}) {
     this.now = options.now ?? Date.now;
     this.globalBudgetCapMicros = options.globalBudgetCapMicros ?? DEFAULT_GLOBAL_BUDGET_CAP_MICROS;
     if (!Number.isSafeInteger(this.globalBudgetCapMicros) || this.globalBudgetCapMicros < 1) {
       throw new DomainError('Invalid globalBudgetCapMicros', 400);
     }
-    this.db = new DatabaseSync(path);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS model_factory_jobs (id TEXT PRIMARY KEY, data TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS model_factory_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL);`);
+    this.repository = typeof storage === 'string' ? new SqliteModelFactoryRepository(storage) : storage;
   }
 
-  close(): void {
-    this.db.close();
+  get storageBackend(): ModelFactoryRepository['storageBackend'] {
+    return this.repository.storageBackend;
   }
 
-  private tx<T>(fn: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const result = fn();
-      this.db.exec('COMMIT');
-      return result;
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
-    }
+  close(): Promise<void> {
+    return this.repository.close();
+  }
+
+  private tx<T>(fn: () => T): Promise<T> {
+    return this.repository.transaction((state) => {
+      this.activeTx = state;
+      try {
+        return fn();
+      } finally {
+        this.activeTx = null;
+      }
+    });
+  }
+
+  private txState(): ModelFactoryTxState {
+    if (!this.activeTx) throw new Error('ModelFactoryStore state accessed outside a repository transaction');
+    return this.activeTx;
   }
 
   private timestamp(): string {
@@ -387,27 +400,25 @@ export class ModelFactoryStore {
   }
 
   private load(id: string): ModelFactoryJob {
-    const row = this.db.prepare('SELECT data FROM model_factory_jobs WHERE id=?').get(id);
-    if (!row) throw new DomainError('Model factory job not found', 404);
-    return JSON.parse(row.data as string) as ModelFactoryJob;
+    const job = this.txState().jobs.get(id);
+    if (!job) throw new DomainError('Model factory job not found', 404);
+    return structuredClone(job);
   }
 
   private save(job: ModelFactoryJob): ModelFactoryJob {
     job.updatedAt = this.timestamp();
-    this.db.prepare('INSERT OR REPLACE INTO model_factory_jobs (id, data) VALUES (?, ?)').run(job.id, JSON.stringify(job));
+    const state = this.txState();
+    state.jobs.set(job.id, structuredClone(job));
+    state.dirtyJobIds.add(job.id);
     return structuredClone(job);
   }
 
   private emit(jobId: string, type: string, data: Record<string, unknown>): void {
-    const entry = { jobId, type, at: this.timestamp(), data };
-    this.db.prepare('INSERT INTO model_factory_events (data) VALUES (?)').run(JSON.stringify(entry));
+    this.txState().newEvents.push({ jobId, type, at: this.timestamp(), data } as ModelFactoryEventDraft);
   }
 
   private computeLedgerLocked(): ModelFactoryLedgerSummary {
-    const jobs = this.db
-      .prepare('SELECT data FROM model_factory_jobs ORDER BY rowid DESC')
-      .all()
-      .map((row) => JSON.parse(row.data as string) as ModelFactoryJob);
+    const jobs = [...this.txState().jobs.values()];
 
     let totalReservedMicros = 0;
     let totalSettledMicros = 0;
@@ -447,31 +458,26 @@ export class ModelFactoryStore {
     };
   }
 
-  list(): ModelFactoryJob[] {
-    return this.db
-      .prepare('SELECT data FROM model_factory_jobs ORDER BY rowid DESC')
-      .all()
-      .map((row) => structuredClone(JSON.parse(row.data as string) as ModelFactoryJob));
+  async list(): Promise<ModelFactoryJob[]> {
+    return this.repository.listJobs();
   }
 
-  get(id: string): ModelFactoryJob {
-    return structuredClone(this.load(id));
+  async get(id: string): Promise<ModelFactoryJob> {
+    const job = await this.repository.getJob(id);
+    if (!job) throw new DomainError('Model factory job not found', 404);
+    return job;
   }
 
-  events(jobId?: string): ModelFactoryEvent[] {
-    return this.db
-      .prepare('SELECT sequence, data FROM model_factory_events ORDER BY sequence DESC LIMIT 200')
-      .all()
-      .map((row) => ({ sequence: row.sequence as number, ...(JSON.parse(row.data as string) as Omit<ModelFactoryEvent, 'sequence'>) }))
-      .filter((event) => (jobId ? event.jobId === jobId : true));
+  async events(jobId?: string): Promise<ModelFactoryEvent[]> {
+    return (await this.repository.listEvents(200)).filter((event) => (jobId ? event.jobId === jobId : true));
   }
 
-  ledger(): ModelFactoryLedgerSummary {
+  ledger(): Promise<ModelFactoryLedgerSummary> {
     return this.tx(() => this.computeLedgerLocked());
   }
 
-  listDueWakeJobs(nowMs = this.now()): ModelFactoryJob[] {
-    return this.list().filter((job) => {
+  async listDueWakeJobs(nowMs = this.now()): Promise<ModelFactoryJob[]> {
+    return (await this.list()).filter((job) => {
       const needsTrainingWake = job.status === 'training_running';
       const needsCostSettlement = Boolean(job.instance && job.cost.settledMicros === null && !TERMINAL_STATUSES.has(job.status));
       if (!needsTrainingWake && !needsCostSettlement) return false;
@@ -481,7 +487,7 @@ export class ModelFactoryStore {
     });
   }
 
-  create(input: CreateModelFactoryJob): ModelFactoryJob {
+  async create(input: CreateModelFactoryJob): Promise<ModelFactoryJob> {
     return this.tx(() => {
       const title = text(input.title, 'title', 160);
       const modelId = text(input.modelId, 'modelId', 120);
@@ -551,8 +557,8 @@ export class ModelFactoryStore {
     });
   }
 
-  approveTraining(id: string, approvalFingerprint: string, reason: string): ModelFactoryJob {
-    const result = this.tx((): { ok: true; job: ModelFactoryJob } | { ok: false; error: DomainError } => {
+  async approveTraining(id: string, approvalFingerprint: string, reason: string): Promise<ModelFactoryJob> {
+    const result = await this.tx((): { ok: true; job: ModelFactoryJob } | { ok: false; error: DomainError } => {
       const job = this.load(id);
       if (job.status !== 'awaiting_training_approval') {
         throw new DomainError(`Cannot approve training in state ${job.status}`, 409);
@@ -594,7 +600,7 @@ export class ModelFactoryStore {
     return result.job;
   }
 
-  recordInstanceLaunched(
+  async recordInstanceLaunched(
     id: string,
     input: {
       region: string;
@@ -605,7 +611,7 @@ export class ModelFactoryStore {
       expiresAt: string;
       nextWakeAt: string;
     },
-  ): ModelFactoryJob {
+  ): Promise<ModelFactoryJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (job.status !== 'training_queued') {
@@ -645,7 +651,7 @@ export class ModelFactoryStore {
     });
   }
 
-  recordWakeUpdate(
+  async recordWakeUpdate(
     id: string,
     update: {
       state: Ec2InstanceLifecycleState;
@@ -653,7 +659,7 @@ export class ModelFactoryStore {
       forcedTerminationReason?: string;
       diagnostic?: string;
     },
-  ): ModelFactoryJob {
+  ): Promise<ModelFactoryJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (!job.instance) {
@@ -684,10 +690,10 @@ export class ModelFactoryStore {
     });
   }
 
-  settleCost(
+  async settleCost(
     id: string,
     input: { actualCostMicros: number; instanceSeconds: number; diagnostic?: string },
-  ): ModelFactoryJob {
+  ): Promise<ModelFactoryJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (!Number.isSafeInteger(input.actualCostMicros) || input.actualCostMicros < 0 || input.actualCostMicros > 10_000_000_000) {
@@ -715,7 +721,7 @@ export class ModelFactoryStore {
     });
   }
 
-  recordArtifactReceipt(id: string, receipt: ModelArtifactReceipt): ModelFactoryJob {
+  async recordArtifactReceipt(id: string, receipt: ModelArtifactReceipt): Promise<ModelFactoryJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (job.status !== 'training_running' && job.status !== 'evaluating') {
@@ -762,11 +768,11 @@ export class ModelFactoryStore {
     });
   }
 
-  recordReleaseAttestation(
+  async recordReleaseAttestation(
     id: string,
     attestation: SubmitModelReleaseAttestation,
     source: ModelReleaseAttestationSource = 'operator_self_reported',
-  ): ModelFactoryJob {
+  ): Promise<ModelFactoryJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (job.status !== 'evaluating' || !job.receipt) {
@@ -809,7 +815,7 @@ export class ModelFactoryStore {
     });
   }
 
-  recordReleaseDecision(id: string, input: Omit<ModelReleaseDecision, 'decidedAt'>): ModelFactoryJob {
+  async recordReleaseDecision(id: string, input: Omit<ModelReleaseDecision, 'decidedAt'>): Promise<ModelFactoryJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (job.status !== 'awaiting_release_approval' || !job.releaseAttestation?.releaseCheckPassed) {
@@ -844,7 +850,7 @@ export class ModelFactoryStore {
     });
   }
 
-  recordReleasePublication(id: string, publication: ModelReleasePublication): ModelFactoryJob {
+  async recordReleasePublication(id: string, publication: ModelReleasePublication): Promise<ModelFactoryJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (job.status !== 'release_approved' || !job.receipt || !job.releaseAttestation) {
@@ -883,7 +889,7 @@ export class ModelFactoryStore {
     });
   }
 
-  fail(id: string, reason: string, diagnostic?: string): ModelFactoryJob {
+  async fail(id: string, reason: string, diagnostic?: string): Promise<ModelFactoryJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (TERMINAL_STATUSES.has(job.status)) {
@@ -906,7 +912,7 @@ export class ModelFactoryStore {
     });
   }
 
-  cancel(id: string, reason: string): ModelFactoryJob {
+  async cancel(id: string, reason: string): Promise<ModelFactoryJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (TERMINAL_STATUSES.has(job.status)) {

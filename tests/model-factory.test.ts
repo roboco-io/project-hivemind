@@ -184,7 +184,7 @@ test('B1-B7 end-to-end: dynamic EC2 Spot launch -> long-running wake -> S3 recei
 
   try {
     // 1. Create job with dynamic AMI & instanceType (no CDK stack redeploy needed).
-    const created = store.create(sampleJobInput());
+    const created = await store.create(sampleJobInput());
     assert.equal(created.status, 'awaiting_training_approval');
     assert.equal(created.waitReason, 'awaiting_training_approval');
     assert.equal(created.compute.amiId, 'ami-0123456789abcdef0');
@@ -202,7 +202,7 @@ test('B1-B7 end-to-end: dynamic EC2 Spot launch -> long-running wake -> S3 recei
     assert.equal(launched.cost.reservedMicros, 500_000);
 
     // 3. Central budget cap enforcement: a second job requesting $0.60 exceeds remaining $0.50 -> explicit 409!
-    const overBudget = store.create(
+    const overBudget = await store.create(
       sampleJobInput({
         modelId: 'smf-oversized',
         compute: {
@@ -216,7 +216,7 @@ test('B1-B7 end-to-end: dynamic EC2 Spot launch -> long-running wake -> S3 recei
       () => orchestrator.approveAndLaunchTraining(overBudget.id, overBudget.approvalFingerprint, 'Should reject'),
       /Central cost cap exceeded/,
     );
-    assert.ok(store.get(overBudget.id).diagnostics.some((d) => d.includes('Central cost cap exceeded')));
+    assert.ok((await store.get(overBudget.id)).diagnostics.some((d) => d.includes('Central cost cap exceeded')));
 
     // 4. First wake-up at +10 min: still running -> reschedules nextWakeAt without keeping worker alive.
     clock += 600_000;
@@ -254,10 +254,10 @@ test('B1-B7 end-to-end: dynamic EC2 Spot launch -> long-running wake -> S3 recei
     // Settled cost for 30 min at $0.45/hr = $0.225 = 225,000 micros (releases unused $0.275 back to ledger!).
     assert.equal(doneWake.cost.settledMicros, 225_000);
     assert.equal(doneWake.cost.instanceSeconds, 1800);
-    assert.equal(store.ledger().remainingBudgetMicros, 775_000);
+    assert.equal((await store.ledger()).remainingBudgetMicros, 775_000);
 
     // 6. Release verification attestation (must match manifestDigest!).
-    assert.throws(
+    await assert.rejects(
       () =>
         store.recordReleaseAttestation(created.id, {
           manifestDigest: '0'.repeat(64),
@@ -269,7 +269,7 @@ test('B1-B7 end-to-end: dynamic EC2 Spot launch -> long-running wake -> S3 recei
       /does not match S3 artifact receipt/,
     );
 
-    const attested = store.recordReleaseAttestation(created.id, {
+    const attested = await store.recordReleaseAttestation(created.id, {
       manifestDigest,
       releaseCheckPassed: true,
       metrics: { evalLoss: 1.42, gsm8k: 0.61 },
@@ -292,7 +292,7 @@ test('B1-B7 end-to-end: dynamic EC2 Spot launch -> long-running wake -> S3 recei
     assert.equal(released.publication?.manifestDigest, manifestDigest);
     assert.equal(publishedCalls.length, 1);
   } finally {
-    store.close();
+    await store.close();
   }
 });
 
@@ -305,7 +305,7 @@ test('B1 TTL Guard: wakeJob force-terminates Spot instance past maxLifetimeMs an
   const orchestrator = new ModelFactoryOrchestrator({ store, ec2: ec2.port, s3: s3.port, now });
 
   try {
-    const job = store.create(
+    const job = await store.create(
       sampleJobInput({
         compute: {
           ...sampleJobInput().compute,
@@ -325,7 +325,7 @@ test('B1 TTL Guard: wakeJob force-terminates Spot instance past maxLifetimeMs an
     assert.match(afterWake.instance?.forcedTerminationReason ?? '', /TTL Guard forced termination/);
     assert.ok(afterWake.cost.settledMicros !== null && afterWake.cost.settledMicros > 0);
   } finally {
-    store.close();
+    await store.close();
   }
 });
 
@@ -450,7 +450,7 @@ test('B6 createTrustedHfReleasePublisher rejects mismatched digest and missing a
 
   const store = new ModelFactoryStore(':memory:');
   try {
-    const job = store.create(sampleJobInput());
+    const job = await store.create(sampleJobInput());
     const files: ModelArtifactFile[] = [{ path: 'config.json', sha256: sha256('{}'), sizeBytes: 2 }];
     const digest = computeModelManifestDigest(files);
 
@@ -481,7 +481,7 @@ test('B6 createTrustedHfReleasePublisher rejects mismatched digest and missing a
     );
     assert.equal(fetchCalled, false);
   } finally {
-    store.close();
+    await store.close();
   }
 });
 
@@ -529,7 +529,7 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
 
   try {
     // 1. Rogue instanceProfileArn MUST be rejected fail-closed and refund reservation!
-    const rogueJob = store.create(
+    const rogueJob = await store.create(
       sampleJobInput({
         compute: {
           ...sampleJobInput().compute,
@@ -553,7 +553,7 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
     const inputFiles = [{ path: 'eval.py', sha256: scriptSha, sizeBytes: scriptBytes.byteLength }];
     const inputsDigest = computeTrainingInputsDigest(inputsPrefix, inputFiles);
 
-    const jobA = store.create(
+    const jobA = await store.create(
       sampleJobInput({
         compute: {
           ...sampleJobInput().compute,
@@ -562,7 +562,7 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
         },
       }),
     );
-    const jobB = store.create(
+    const jobB = await store.create(
       sampleJobInput({
         compute: {
           ...sampleJobInput().compute,
@@ -620,13 +620,13 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
     const wakeWhileRunning = await orchestrator.wakeJob(launched.id);
     assert.equal(wakeWhileRunning.status, 'evaluating');
     assert.equal(wakeWhileRunning.cost.settledMicros, null);
-    assert.equal(store.listDueWakeJobs().some((j) => j.id === launched.id), true);
+    assert.equal((await store.listDueWakeJobs()).some((j) => j.id === launched.id), true);
 
     baseEc2.instances.get(launched.instance!.instanceId)!.state = 'terminated';
     const settledAfterShutdown = await orchestrator.wakeJob(launched.id);
     assert.equal(settledAfterShutdown.status, 'evaluating');
     assert.ok(settledAfterShutdown.cost.settledMicros !== null && settledAfterShutdown.cost.settledMicros > 0);
-    assert.equal(store.listDueWakeJobs().some((j) => j.id === launched.id), false);
+    assert.equal((await store.listDueWakeJobs()).some((j) => j.id === launched.id), false);
 
     // 5. Attestation provenance: operator /verify-release ALWAYS stamps operator_self_reported + disclaimer;
     // ONLY worker /verifier-attestation can record independent_verifier!
@@ -650,9 +650,9 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
       // Force training_running via store-compatible path? Let's test via ModelFactoryStore directly + HTTP API for both routes!
       const directStore = new ModelFactoryStore(':memory:');
       try {
-        const j1 = directStore.create(sampleJobInput());
-        directStore.approveTraining(j1.id, j1.approvalFingerprint, 'ok');
-        directStore.recordInstanceLaunched(j1.id, {
+        const j1 = await directStore.create(sampleJobInput());
+        await directStore.approveTraining(j1.id, j1.approvalFingerprint, 'ok');
+        await directStore.recordInstanceLaunched(j1.id, {
           region: 'us-east-2',
           availabilityZone: 'us-east-2c',
           instanceId: 'i-0123456789abcdef0',
@@ -661,7 +661,7 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
           expiresAt: '2026-11-26T02:00:00.000Z',
           nextWakeAt: '2026-11-26T01:05:00.000Z',
         });
-        directStore.recordArtifactReceipt(j1.id, {
+        await directStore.recordArtifactReceipt(j1.id, {
           version: 1,
           jobId: j1.id,
           s3Bucket: 'b',
@@ -670,7 +670,7 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
           files,
           recordedAt: '2026-11-26T01:01:00.000Z',
         });
-        const selfAttested = directStore.recordReleaseAttestation(j1.id, {
+        const selfAttested = await directStore.recordReleaseAttestation(j1.id, {
           manifestDigest,
           releaseCheckPassed: true,
           metrics: { ndcg10: 0.72 },
@@ -680,9 +680,9 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
         assert.equal(selfAttested.releaseAttestation?.attestationSource, 'operator_self_reported');
         assert.equal(selfAttested.releaseAttestation?.verificationDisclaimer, OPERATOR_SELF_REPORTED_DISCLAIMER);
 
-        const j2 = directStore.create(sampleJobInput());
-        directStore.approveTraining(j2.id, j2.approvalFingerprint, 'ok');
-        directStore.recordInstanceLaunched(j2.id, {
+        const j2 = await directStore.create(sampleJobInput());
+        await directStore.approveTraining(j2.id, j2.approvalFingerprint, 'ok');
+        await directStore.recordInstanceLaunched(j2.id, {
           region: 'us-east-2',
           availabilityZone: 'us-east-2c',
           instanceId: 'i-0123456789abcdef1',
@@ -691,7 +691,7 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
           expiresAt: '2026-11-26T02:00:00.000Z',
           nextWakeAt: '2026-11-26T01:05:00.000Z',
         });
-        directStore.recordArtifactReceipt(j2.id, {
+        await directStore.recordArtifactReceipt(j2.id, {
           version: 1,
           jobId: j2.id,
           s3Bucket: 'b',
@@ -700,7 +700,7 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
           files,
           recordedAt: '2026-11-26T01:01:00.000Z',
         });
-        const verifierAttested = directStore.recordReleaseAttestation(
+        const verifierAttested = await directStore.recordReleaseAttestation(
           j2.id,
           {
             manifestDigest,
@@ -714,7 +714,7 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
         assert.equal(verifierAttested.releaseAttestation?.attestationSource, 'independent_verifier');
         assert.equal(verifierAttested.releaseAttestation?.verificationDisclaimer, null);
       } finally {
-        directStore.close();
+        await directStore.close();
       }
 
       // Operator token MUST NOT call worker-only /verifier-attestation.
@@ -735,6 +735,6 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
       await app.close();
     }
   } finally {
-    store.close();
+    await store.close();
   }
 });
