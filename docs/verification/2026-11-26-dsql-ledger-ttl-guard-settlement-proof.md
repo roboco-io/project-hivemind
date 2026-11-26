@@ -1,12 +1,12 @@
-# 2026-11-26 이슈 #16 작업 3 검증 보고서 — Model Factory 원장의 Aurora DSQL 전환과 TTL Guard Lambda 정산
+# 2026-11-26 이슈 #16 작업 3 검증 보고서 — Model Factory 원장·SW 전달 저장소의 Aurora DSQL 전환과 TTL Guard Lambda 정산
 
-이 문서는 이슈 #16의 작업 3 가운데 Model Factory 원장(`ModelFactoryStore`)에 해당하는 부분을 실 AWS에서 확인한 결과를 기록한다. 대상 계정은 `<AWS_ACCOUNT_ID>`, 프로필은 `roboco`다. 아래 값은 모두 2026-11-26에 직접 실행해 얻었다.
+이 문서는 이슈 #16의 작업 3(`ModelFactoryStore`와 `DeliveryStore`의 Aurora DSQL 지원, TTL Guard Lambda의 DSQL 정산)을 실 AWS에서 확인한 결과를 기록한다. 대상 계정은 `<AWS_ACCOUNT_ID>`, 프로필은 `roboco`다. 아래 값은 모두 2026-11-26에 직접 실행해 얻었다.
 
-**범위를 먼저 밝힌다.** 작업 3은 `ModelFactoryStore`와 `DeliveryStore` 두 저장소의 DSQL 지원을 요구한다. 이 문서가 다루는 것은 `ModelFactoryStore`와 TTL Guard Lambda뿐이다. `DeliveryStore`는 아직 SQLite만 지원한다.
+두 저장소는 같은 저장소 포트(`DocumentRepository`, `packages/core/src/document-repository.ts`)를 쓴다. 2절부터 4절은 Model Factory 원장과 TTL Guard를, 5절은 SW 전달 저장소(`DeliveryStore`)를 다룬다. 확인 수준이 서로 다르므로 6절의 한계를 함께 읽어야 한다.
 
 ## 1. 자동 검증 결과
 
-`npm run check`는 1,245건이 모두 통과했다. `infrastructure/aws-runtime`의 `npm run typecheck`는 통과했고 `npm test`는 9건이 모두 통과했다. 이 작업으로 추가한 테스트 파일은 `tests/model-factory-repository.test.ts`, `tests/model-factory-dsql-repository.test.ts`, `tests/model-factory-ttl-guard.test.ts`다.
+`npm run check`는 1,246건이 모두 통과했다. `infrastructure/aws-runtime`의 `npm run typecheck`는 통과했고 `npm test`는 9건이 모두 통과했다. 이 작업으로 추가한 테스트 파일은 `tests/model-factory-repository.test.ts`, `tests/model-factory-dsql-repository.test.ts`, `tests/model-factory-ttl-guard.test.ts`다.
 
 ## 2. 실 AWS에 배포한 구성
 
@@ -51,11 +51,29 @@ Control Plane을 거치지 않고 로컬 IAM 인증으로 서울 DSQL 클러스�
 
 509 micros는 183초에 작업의 스팟 상한가 시간당 `$0.01`을 곱한 추정치다(183 ÷ 3600 × 0.01 × 1,000,000 = 508.3, 올림). 실제 스팟 청구액이 아니다. 실제 청구액은 조회하지 않았다.
 
-## 5. 한계와 미검증 항목
+## 5. SW 전달 저장소(`DeliveryStore`)의 DSQL 전환
 
-- **`DeliveryStore`는 DSQL로 옮기지 않았다.** 작업 3의 세부 항목 1은 두 저장소 모두를 요구한다. `DeliveryStore`의 저장소 포트 분리와 DSQL 구현은 남아 있다.
+### 저장소 단독 검증 (`scripts/aws-dsql-delivery-proof.ts`)
+
+로컬 IAM 인증으로 서울 DSQL 클러스터에 직접 접속해, 별도 테이블 `hm_deliveryproof_*`에서 실행하고 끝에 삭제했다. 전달 작업 1건을 등록하고 승인한 뒤(상태 `queued`), 두 워커가 같은 반복을 시작하는 호출을 실제로 동시에 보냈다. 1건만 성공했고 다른 1건은 `Cannot start iteration in state running`으로 거절됐다. 작업의 반복 횟수는 1, 담당 워커는 `worker-a`, `delivery.iteration_started` 이벤트는 1건이었다. 이어서 취소가 `cancelled`로 기록됐다.
+
+### 배포된 Control Plane 확인 (`scripts/aws-storage-backend-check.ts`)
+
+`HIVEMIND_DELIVERY_STORAGE=aurora-dsql`을 넣어 Hub를 다시 배포한 뒤(바뀐 자원은 Control Plane 작업 정의와 Lambda 번들), Control Plane을 기동해 운영자 API로 각 저장소가 보고하는 저장소 종류를 읽었다.
+
+| 저장소 | API | `storageBackend` | 조회된 건수 |
+|---|---|---|---|
+| Model Factory 원장 | `GET /api/model-factory/jobs` | `aurora-dsql` | 작업 5건 |
+| SW 전달 작업 | `GET /api/delivery/tasks` | `aurora-dsql` | 작업 4건 |
+| 협업 세션 | `GET /api/collab/sessions` | `aurora-dsql` | 세션 3건 |
+
+같은 기동의 로그에는 `delivery_dsql_enabled`의 `importedTasks: 4`와 `model_factory_dsql_enabled`의 `importedJobs: 0`이 남았다. 전달 작업 4건은 이번 기동에서 SQLite로부터 이관됐다. Model Factory 원장은 이전 기동에서 이미 이관되어 DSQL에 작업이 있었으므로 다시 복사하지 않았다. 5건은 이전에 이관된 4건과 4절의 실증 작업 1건이다. 확인 후 Control Plane은 `desiredCount 0`이고, 5개 리전의 관리 대상 실행 인스턴스는 0대였다.
+
+## 6. 한계와 미검증 항목
+
+- **DSQL 위에서의 SW 전달 작업 전 과정은 실행하지 않았다.** 전달 저장소는 저장소 단독 검증과 배포된 Control Plane의 조회까지만 확인했다. 실제 워커가 작업을 수행하고 독립 검증을 거쳐 Draft PR을 만드는 전 과정을 DSQL 저장소 위에서 실행하지는 않았다.
 - **Lambda는 직접 호출했다.** EventBridge 5분 스케줄이 같은 함수를 호출하지만, 이 실증에서 스케줄에 의한 실행이 정산을 수행하는 것까지 기다려 관찰하지는 않았다.
-- **이관은 건수만 확인했다.** SQLite의 작업 4건이 DSQL로 복사됐음을 로그와 API의 건수로 확인했다. 작업별 내용과 이벤트를 원본과 대조하지는 않았다. 이관 로직의 내용 일치는 단위 테스트로만 확인했다.
+- **이관은 건수만 확인했다.** Model Factory 작업 4건과 전달 작업 4건이 DSQL로 복사됐음을 로그와 API의 건수로 확인했다. 작업별 내용과 이벤트를 원본과 대조하지는 않았다. 이관 로직의 내용 일치는 단위 테스트로만 확인했다.
 - **DSQL 접속은 관리자 역할을 쓴다.** Control Plane과 Lambda 모두 `dsql:DbConnectAdmin`으로 `admin` 사용자에 접속한다. 테이블 단위로 권한을 좁힌 DB 역할은 만들지 않았다.
 - **Lambda가 DSQL에 접속하지 못하는 경우는 실 AWS에서 일으키지 않았다.** 이 경우에도 인스턴스가 종료되고 오류가 요약에 남는 동작은 단위 테스트로만 확인했다.
 - **비용은 실제 청구를 확인하지 않았다.** `t4g.nano` 스팟 1대가 약 3분, Control Plane이 두 차례 합쳐 수 분간 실행됐다. DSQL 사용량과 Lambda 호출 비용도 청구서로 대조하지 않았다.

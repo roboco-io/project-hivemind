@@ -130,3 +130,5 @@ Lambda의 정산은 다음과 같이 동작한다. Lambda는 인스턴스를 먼
 
 DSQL 원장이 비어 있는 상태로 Control Plane이 처음 기동하면, SQLite 파일의 작업과 이벤트를 DSQL로 한 번 복사한다. DSQL에 작업이 하나라도 있으면 복사하지 않는다. 복사 후에는 SQLite 파일을 더 이상 갱신하지 않는다.
 
+SW 전달 작업(`/api/delivery/*`)의 저장소도 같은 방식으로 바꾼다. Control Plane 환경 변수 `HIVEMIND_DELIVERY_STORAGE=aurora-dsql`을 설정하면 전달 작업과 이벤트를 DSQL에 저장하고, `GET /api/delivery/tasks` 응답의 `storageBackend`로 확인할 수 있다. 두 환경 변수는 서로 독립이다.
+
