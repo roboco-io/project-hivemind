@@ -100,3 +100,22 @@ AWS_PROFILE=roboco node --import ./infrastructure/aws-runtime/node_modules/tsx/d
 ```
 
 실제 AWS `ControlPlaneService` 대상 `HIVEMIND_MCP_PROFILE=delivery` 종단 검증은 `scripts/aws-ssm-mcp-verify.ts`로 재현할 수 있다([검증 기록](../../docs/verification/2026-11-25-phase3-evidence-and-mcp-ssm.md)).
+
+## 병렬 에이전트 협업 프로필 (`HIVEMIND_MCP_PROFILE=collab`)
+
+`HIVEMIND_MCP_PROFILE=collab`을 지정하면 협업 도구 8개만 노출한다(`src/collab.ts:registerCollabOperatorTools`). 이 도구들은 Control Plane의 `/api/collab/*` HTTP API만 호출하며, 협업 저장소(Aurora DSQL 또는 SQLite)를 직접 열지 않는다.
+
+| 도구 | 동작 |
+|---|---|
+| `hivemind_collab_list` | 협업 세션 목록과 저장소 종류를 조회한다. |
+| `hivemind_collab_get` | 세션의 하위 작업, 게시판 메시지, 작업 로그를 조회한다. |
+| `hivemind_collab_create` | 목표, 모델 제공자, 병렬 워커 상한, 허용 리전으로 세션을 등록한다. 등록만으로는 워커를 기동하지 않는다. |
+| `hivemind_collab_add_subtask` | 하위 작업을 추가한다. `dependsOn`의 작업이 모두 완료되어야 실행 대상이 된다. |
+| `hivemind_collab_fan_out` | 실행 준비가 된 하위 작업마다 ECS Fargate Spot 워커를 기동한다. 과금 자원을 만든다. |
+| `hivemind_collab_post_message` | 세션 게시판에 메시지를 남긴다. |
+| `hivemind_collab_list_messages` | 게시판 메시지를 순번 순서로 조회한다. |
+| `hivemind_collab_run_orchestrator` | Control Plane 안에서 Claude 또는 Codex 오케스트레이터를 실행한다. 실제 모델 호출이 발생한다. |
+
+`hivemind_collab_run_orchestrator`는 로컬 모델 인증 값을 도구 입력으로 받지 않는다. 인증 값이 도구 입력이면 모델의 대화 문맥과 클라이언트 기록에 남기 때문이다. 대신 MCP 서버가 환경 변수 `HIVEMIND_COLLAB_LOCAL_AUTH_FILE`에 적힌 파일을 호출 시점에 읽어 Control Plane에 전달한다. 파일은 심볼릭 링크가 아닌 일반 파일이어야 하고 크기는 60,000바이트 이하여야 한다. 파일 내용은 도구 출력에서 가린다. 이 환경 변수가 없거나 파일을 읽을 수 없으면 도구는 Control Plane을 호출하지 않고 `started: false`와 설정 안내를 반환한다.
+
+`hivemind_collab_fan_out`과 `hivemind_collab_run_orchestrator`는 과금과 실제 모델 호출을 일으키므로 사용자의 명시적 지시가 있을 때만 호출한다.
