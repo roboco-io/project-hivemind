@@ -154,3 +154,5 @@ DSQL 원장이 비어 있는 상태로 Control Plane이 처음 기동하면, SQL
 
 SW 전달 작업(`/api/delivery/*`)의 저장소도 같은 방식으로 바꾼다. Control Plane 환경 변수 `HIVEMIND_DELIVERY_STORAGE=aurora-dsql`을 설정하면 전달 작업과 이벤트를 DSQL에 저장하고, `GET /api/delivery/tasks` 응답의 `storageBackend`로 확인할 수 있다. 두 환경 변수는 서로 독립이다.
 
+DSQL 접속 권한은 두 단계로 줄일 수 있다. 기본 상태에서는 Control Plane과 TTL Guard Lambda가 `admin` 역할로 접속한다. `scripts/aws-dsql-apply-roles.ts`를 운영자가 한 번 실행하면 테이블과 제한된 DB 역할 두 개(`hm_control_plane`, `hm_ttl_guard`)가 만들어지고, 그 뒤 `HIVEMIND_RESTRICTED_DSQL_ROLES=1 scripts/aws-deploy-hub.sh deploy`로 배포하면 두 서비스가 이 역할로만 접속한다. 제한된 역할은 행을 읽고 쓸 수만 있고 테이블이나 역할을 만들거나 지울 수 없다. 순서를 바꿔 배포부터 하면 서비스가 DSQL에 접속하지 못한다. 확인 결과는 [검증 기록](../verification/2026-11-27-dsql-restricted-roles.md)에 있다.
+
