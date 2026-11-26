@@ -14,7 +14,7 @@ const COMMIT_SHA = 'c'.repeat(40);
 const FILE_SHA = 'd'.repeat(64);
 const PATCH_SHA = 'e'.repeat(64);
 
-test('delivery MCP profile exposes exactly 6 focused SW delivery tools and runs full draft -> approve -> human no-diff decision', async (t) => {
+test('delivery MCP profile exposes exactly 7 focused SW delivery tools and runs full draft -> approve -> human no-diff decision', async (t) => {
   const settings = loadMcpSettings({
     HIVEMIND_API_URL: 'http://127.0.0.1:4310',
     HIVEMIND_OPERATOR_TOKEN: OP_TOKEN,
@@ -71,6 +71,7 @@ test('delivery MCP profile exposes exactly 6 focused SW delivery tools and runs 
       'hivemind_delivery_get',
       'hivemind_delivery_human_decision',
       'hivemind_delivery_list',
+      'hivemind_delivery_reconcile',
     ],
   );
 

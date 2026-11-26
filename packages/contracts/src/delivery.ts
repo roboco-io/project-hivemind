@@ -170,6 +170,8 @@ export interface DeliveryTask {
   spotRetriesUsed: number;
   activeRunId: string | null;
   activeWorkerId: string | null;
+  /** ECS task (worker or verifier) currently executing `activeRunId`. Absent on tasks created before this field. */
+  activeEcsTaskArn?: string | null;
   latestCheckpointRef: string | null;
   latestWorkerSummary: string | null;
   spotInterruptions: SpotInterruptionRecord[];

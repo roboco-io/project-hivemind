@@ -462,7 +462,26 @@ export class ModelFactoryOrchestrator {
 
     const nowMs = this.now();
     const expiresAtMs = Date.parse(job.instance.expiresAt);
-    const described = await this.options.ec2.describeInstance(job.instance.region, job.instance.instanceId, signal);
+    // EC2 stops listing a terminated instance after about an hour. An instance that is no longer listed has
+    // ended, so it is settled like a terminated one. Any other describe error is rethrown.
+    let described: Awaited<ReturnType<Ec2SpotTrainerPort['describeInstance']>>;
+    let vanished = false;
+    try {
+      described = await this.options.ec2.describeInstance(job.instance.region, job.instance.instanceId, signal);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/not found|InvalidInstanceID\.NotFound/i.test(message)) throw error;
+      vanished = true;
+      described = {
+        region: job.instance.region,
+        instanceId: job.instance.instanceId,
+        state: 'terminated',
+        availabilityZone: job.instance.availabilityZone ?? null,
+        launchTime: null,
+        stateReason: 'EC2 no longer lists the instance',
+        tags: {},
+      };
+    }
 
     let effectiveState = described.state;
     let forcedReason: string | undefined;
@@ -490,10 +509,17 @@ export class ModelFactoryOrchestrator {
     }
 
     if (isEnded && job.cost.settledMicros === null) {
-      const settlement = calculateActualCostMicros(job, nowMs);
+      // For a vanished instance the real end time is unknown. It cannot have outlived its expiry tag by
+      // more than one guard interval, so the expiry time bounds the estimate.
+      const endedMs = vanished ? Math.min(nowMs, expiresAtMs) : nowMs;
+      const settlement = calculateActualCostMicros(job, endedMs);
       job = await this.options.store.settleCost(job.id, {
         ...settlement,
-        ...(forcedReason ? { diagnostic: 'Settled after TTL Guard forced termination' } : {}),
+        ...(forcedReason
+          ? { diagnostic: 'Settled after TTL Guard forced termination' }
+          : vanished
+            ? { diagnostic: 'Settled for an instance EC2 no longer lists; run time is bounded by the expiry time' }
+            : {}),
       });
     }
 

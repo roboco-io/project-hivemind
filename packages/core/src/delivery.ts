@@ -852,6 +852,38 @@ export class DeliveryStore {
     });
   }
 
+  /** Remembers which ECS task executes the active run, so a vanished worker or verifier can be detected. */
+  async recordActiveEcsTask(id: string, runId: string, ecsTaskArn: string): Promise<DeliveryTask> {
+    return this.tx(() => {
+      const task = this.load(id);
+      if (task.status !== 'running' || task.activeRunId !== runId) return task;
+      task.activeEcsTaskArn = text(ecsTaskArn, 'ecsTaskArn', 512);
+      return this.save(task);
+    });
+  }
+
+  /**
+   * Fails a `running` task whose worker or verifier stopped or disappeared without reporting. It changes
+   * nothing unless the task still runs the given `runId`, so it cannot overwrite a result that arrived in
+   * the meantime or a newer run.
+   */
+  async failOrphanedRun(id: string, runId: string, reason: string): Promise<DeliveryTask> {
+    return this.tx(() => {
+      const task = this.load(id);
+      if (task.status !== 'running' || task.activeRunId !== runId) return task;
+      const cleanReason = text(reason, 'reason', 1000);
+      task.status = 'failed';
+      task.waitReason = null;
+      task.failureReason = cleanReason;
+      task.activeRunId = null;
+      task.activeWorkerId = null;
+      task.activeEcsTaskArn = null;
+      const saved = this.save(task);
+      this.emit(saved.id, 'delivery.orphaned_run_failed', { runId, reason: cleanReason });
+      return saved;
+    });
+  }
+
   async cancel(id: string, reason: string): Promise<DeliveryTask> {
     return this.tx(() => {
       const task = this.load(id);

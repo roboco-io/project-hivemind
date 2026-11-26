@@ -193,6 +193,18 @@ export function registerDeliveryOperatorTools(server: McpServer, options: Delive
   );
 
   server.registerTool(
+    'hivemind_delivery_reconcile',
+    {
+      title: 'HIVEMIND SW 전달 작업 정리',
+      description:
+        'running 상태인 전달 작업의 워커나 검증기가 실제로 살아 있는지 확인하고, 결과를 보고하지 못한 채 중지됐거나 사라진 실행의 작업을 failed로 바꿉니다. 살아 있는 실행과 ECS 작업 기록이 없는 작업은 건드리지 않습니다.',
+      inputSchema: z.strictObject({}),
+      annotations: mutation,
+    },
+    async (_args, extra) => run(() => api('/api/delivery/reconcile', extra.signal, {})),
+  );
+
+  server.registerTool(
     'hivemind_delivery_cancel',
     {
       title: 'HIVEMIND SW 전달 작업 중단',

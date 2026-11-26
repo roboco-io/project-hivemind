@@ -14,9 +14,9 @@ MCP 서버는 환경 변수 `HIVEMIND_MCP_PROFILE`로 노출할 도구 묶음을
 
 | 프로필 | 도구 | 용도 |
 |---|---|---|
-| `default` (별칭 `aws`) | 24개: `hivemind_status` 1 + `hivemind_delivery_*` 6 + `hivemind_mf_*` 7 + `hivemind_collab_*` 10 | AWS 단일 경로 전체. 일상 사용의 기본값이다. |
-| `delivery` | 6개 | SW 전달 작업만 노출한다. |
-| `model-factory` | 13개: 전달 6 + Model Factory 7 | 전달과 Model Factory만 노출한다. |
+| `default` (별칭 `aws`) | 25개: `hivemind_status` 1 + `hivemind_delivery_*` 7 + `hivemind_mf_*` 7 + `hivemind_collab_*` 10 | AWS 단일 경로 전체. 일상 사용의 기본값이다. |
+| `delivery` | 7개 | SW 전달 작업만 노출한다. |
+| `model-factory` | 14개: 전달 7 + Model Factory 7 | 전달과 Model Factory만 노출한다. |
 | `collab` | 10개 | 협업 세션만 노출한다. |
 | `legacy` | 22개 | 폐기된 Cloudflare 경로의 도구다. 원격 리소스가 없어 실제 실행은 되지 않는다. `cloudflare/` 제거 때 함께 없앤다([ADR-0012](../../docs/adr/0012-cloudflare-archive-retention.md)). |
 
@@ -90,7 +90,7 @@ R9 행동별 공개 근거로 `parameterHash`, `parametersSubset`, `providerResu
 
 ## SW 전달 전용 프로필 (`HIVEMIND_MCP_PROFILE=delivery`)
 
-AWS 단일 실행 경로의 일상 SW 개발에서는 `HIVEMIND_MCP_PROFILE=delivery`로 6개 핵심 도구만 노출한다(`src/delivery.ts:registerDeliveryOperatorTools`). 같은 6개 도구는 기본 프로필(`default`, 미설정)에도 들어 있다.
+AWS 단일 실행 경로의 일상 SW 개발에서는 `HIVEMIND_MCP_PROFILE=delivery`로 7개 핵심 도구만 노출한다(`src/delivery.ts:registerDeliveryOperatorTools`). 같은 7개 도구는 기본 프로필(`default`, 미설정)에도 들어 있다.
 
 | 도구 | 동작 |
 |---|---|
@@ -99,7 +99,8 @@ AWS 단일 실행 경로의 일상 SW 개발에서는 `HIVEMIND_MCP_PROFILE=deli
 | `hivemind_delivery_create` | 불변 수용 테스트와 `draft_pr` 정책으로 초안만 등록 |
 | `hivemind_delivery_approve` | 표시된 `approvalFingerprint`에 결속한 실행 승인 |
 | `hivemind_delivery_human_decision` | Draft PR 승인/반려와 `openedDiff`·`durationMinutes` 기록 |
-| `hivemind_delivery_cancel` | 명시적 작업 중단 |
+| `hivemind_delivery_cancel` | 명시적 작업 중단. 실행 중이면 해당 ECS 작업도 중지한다 |
+| `hivemind_delivery_reconcile` | `running` 작업의 워커·검증기가 살아 있는지 확인하고, 결과를 보고하지 못한 채 사라진 실행의 작업을 `failed`로 바꾼다 |
 
 ### AWS SSM 포트 포워딩 연결 절차 (Codex · Claude Code 공통)
 

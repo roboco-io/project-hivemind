@@ -59,6 +59,13 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
     );
   });
 
+  app.post('/api/delivery/reconcile', { onRequest: operatorOnly, bodyLimit: 1024 }, async () => {
+    if (!orchestrator) {
+      throw new DomainError('Delivery orchestrator is unavailable in local mock mode', 503);
+    }
+    return orchestrator.reconcileRunningTasks(AbortSignal.timeout(30_000));
+  });
+
   app.get<{ Params: { id: string } }>('/api/delivery/tasks/:id', { onRequest: operatorOnly }, async (request) => ({
     task: await store.get(request.params.id),
     events: await store.events(request.params.id),
@@ -113,7 +120,12 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
   app.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/api/delivery/tasks/:id/cancel',
     { onRequest: operatorOnly, bodyLimit: 16384 },
-    async (request) => await store.cancel(request.params.id, request.body.reason),
+    async (request) => {
+      // With an orchestrator, cancelling also stops the ECS task that executes the run.
+      if (!orchestrator) return store.cancel(request.params.id, request.body.reason);
+      const cancelled = await orchestrator.cancelTask(request.params.id, request.body.reason);
+      return { ...cancelled.task, stoppedEcsTask: cancelled.stoppedEcsTask, stopError: cancelled.stopError };
+    },
   );
 
   app.get<{ Params: { id: string }; Querystring: { runId?: string } }>(

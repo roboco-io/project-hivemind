@@ -69,7 +69,7 @@ aws --profile roboco --region ap-northeast-2 ecs update-service \
 
 ## 3. MCP 클라이언트 연결 (Claude Code / Codex)
 
-`HIVEMIND_MCP_PROFILE=model-factory`를 지정하면 SW 전달 도구 6개 + 모델 팩토리 도구 7개(총 13개)가 노출된다.
+`HIVEMIND_MCP_PROFILE=model-factory`를 지정하면 SW 전달 도구 7개 + 모델 팩토리 도구 7개(총 14개)가 노출된다. 프로필을 지정하지 않으면 협업 도구와 상태 조회까지 포함한 25개가 노출된다.
 
 ```json
 {

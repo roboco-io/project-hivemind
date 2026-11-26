@@ -5,7 +5,7 @@ description: HIVEMIND의 AWS 단일 경로에서 SW 전달 작업, Model Factory
 
 # HIVEMIND 작업 관제 (AWS 단일 경로)
 
-웹을 열지 않고 프로젝트의 `hivemind` MCP 서버를 사용한다. 기본 프로필은 AWS Control Plane의 도구 24개를 한 서버로 제공한다. 상태 조회 1개, SW 전달 6개, Model Factory 7개, 협업 10개다. 폐기된 Cloudflare 경로의 도구는 기본 프로필에 없다.
+웹을 열지 않고 프로젝트의 `hivemind` MCP 서버를 사용한다. 기본 프로필은 AWS Control Plane의 도구 25개를 한 서버로 제공한다. 상태 조회 1개, SW 전달 7개, Model Factory 7개, 협업 10개다. 폐기된 Cloudflare 경로의 도구는 기본 프로필에 없다.
 
 도구가 보이지 않으면 [MCP 서버 안내](../../../apps/mcp-server/README.md)를 확인한다. MCP 연결을 고치려고 사용자 전역 설정이나 원격 인증을 임의로 바꾸지 않는다.
 
@@ -44,7 +44,8 @@ description: HIVEMIND의 AWS 단일 경로에서 SW 전달 작업, Model Factory
 1. `hivemind_delivery_create`로 초안을 등록한다. 수용 테스트 파일과 명령, 저장소 묶음, `draft_pr` 정책을 전달한다. 대상 저장소와 기준 커밋이 사용자가 요청한 것과 같은지 등록 전에 확인한다. 확인할 수 없으면 멈추고 차이를 알린다.
 2. 사용자가 실행을 지시했으면 `hivemind_delivery_approve`에 작업 ID와 `approvalFingerprint`를 전달한다.
 3. `hivemind_delivery_get`으로 상태, 검증 증명, Draft PR 주소, 변경 요약을 조회한다. `hivemind_delivery_list`는 전체 목록을 준다.
-4. Draft PR이 게시된 뒤 사용자가 판단을 기록하라고 하면 `hivemind_delivery_human_decision`에 승인·반려, diff를 열어 봤는지, 걸린 시간을 기록한다. 이 기록은 병합이 아니다. 병합·푸시를 수행하거나 완료했다고 말하지 않는다.
+4. 작업이 오래 `running`이면 `hivemind_delivery_reconcile`로 워커나 검증기가 실제로 살아 있는지 확인한다. 결과를 보고하지 못하고 사라진 실행의 작업만 `failed`로 바뀐다. ECS 작업 기록이 없는 오래된 작업은 바뀌지 않으므로, 사용자가 원하면 `hivemind_delivery_cancel`로 끝낸다.
+5. Draft PR이 게시된 뒤 사용자가 판단을 기록하라고 하면 `hivemind_delivery_human_decision`에 승인·반려, diff를 열어 봤는지, 걸린 시간을 기록한다. 이 기록은 병합이 아니다. 병합·푸시를 수행하거나 완료했다고 말하지 않는다.
 
 보고할 때는 반환된 상태, 검증 증명의 통과 여부, 검증 트리 해시와 PR 트리 해시의 일치 여부만 근거로 삼는다. 실행 중 상태나 모델의 "성공" 문구를 검증 통과로 해석하지 않는다.
 

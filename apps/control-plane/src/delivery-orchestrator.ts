@@ -21,7 +21,14 @@ export interface DeliveryOrchestratorOptions {
       signal?: AbortSignal,
     ): Promise<{ taskArn: string; region?: string; azId?: string | null }>;
     stop(externalRunId: string): Promise<void>;
+    /** Lifecycle state of an ECS task, or `null` when ECS no longer knows it. */
+    describeTask?(taskArn: string, signal?: AbortSignal): Promise<{ lastStatus: string; stopCode: string | null; stoppedReason: string | null; exitCode: number | null } | null>;
   };
+  /**
+   * How long a task may stay `running` after its ECS task stopped before reconcile fails it. A worker reports
+   * its hand-off just before it exits, and the verifier is launched right after, so a short gap is normal.
+   */
+  orphanGraceMs?: number;
   spotFeed?: SpotPlacementFeedPort;
   defaultRoutingPolicy?: RegionRoutingPolicy;
   github?: GitHubDraftPrPort;
@@ -151,6 +158,7 @@ export class DeliveryOrchestrator {
       },
       signal,
     );
+    await this.options.store.recordActiveEcsTask(started.id, runId, launched.taskArn);
     return { task: started, runId, ecsTaskArn: launched.taskArn, ...(placement ? { placement } : {}) };
   }
 
@@ -181,6 +189,7 @@ export class DeliveryOrchestrator {
       },
       signal,
     );
+    await this.options.store.recordActiveEcsTask(task.id, runId, launched.taskArn);
     return { ecsTaskArn: launched.taskArn };
   }
 
@@ -280,4 +289,76 @@ export class DeliveryOrchestrator {
       await rm(scratch, { recursive: true, force: true });
     }
   }
+
+  /**
+   * Finds `running` tasks whose ECS task (worker or verifier) stopped or is unknown to ECS, and fails them.
+   * Without this a task whose worker was killed before it could report stays `running` forever.
+   * A task without a recorded ECS task (created before the field existed) is left alone.
+   */
+  async reconcileRunningTasks(signal?: AbortSignal): Promise<DeliveryReconcileResult> {
+    const graceMs = this.options.orphanGraceMs ?? 120_000;
+    const running = (await this.options.store.list()).filter((t) => t.status === 'running' && t.activeRunId);
+    const result: DeliveryReconcileResult = { checked: running.length, failed: [], untouched: [] };
+    const describe = this.options.ecs.describeTask?.bind(this.options.ecs);
+    for (const task of running) {
+      if (!task.activeEcsTaskArn) {
+        result.untouched.push({ taskId: task.id, reason: 'no ECS task recorded; cancel the task if its worker is gone' });
+        continue;
+      }
+      if (!describe) {
+        result.untouched.push({ taskId: task.id, reason: 'ECS task status lookup is not configured' });
+        continue;
+      }
+      let status: Awaited<ReturnType<typeof describe>>;
+      try {
+        status = await describe(task.activeEcsTaskArn, signal);
+      } catch (error) {
+        result.untouched.push({
+          taskId: task.id,
+          reason: `ECS task status lookup failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}`,
+        });
+        continue;
+      }
+      if (status && status.lastStatus !== 'STOPPED') {
+        result.untouched.push({ taskId: task.id, reason: `ECS task is ${status.lastStatus}` });
+        continue;
+      }
+      const idleMs = this.now() - Date.parse(task.updatedAt);
+      if (idleMs < graceMs) {
+        result.untouched.push({ taskId: task.id, reason: `ECS task ended ${Math.round(idleMs / 1000)}s ago; within the hand-off grace period` });
+        continue;
+      }
+      const reason = status
+        ? `ECS task stopped without reporting a result (${[status.stopCode, status.exitCode !== null ? `exit ${status.exitCode}` : null, status.stoppedReason].filter(Boolean).join('; ') || 'no stop detail'})`
+        : 'ECS task is no longer known to ECS and never reported a result';
+      const updated = await this.options.store.failOrphanedRun(task.id, task.activeRunId!, reason);
+      if (updated.status === 'failed' && updated.failureReason === reason) {
+        result.failed.push({ taskId: task.id, title: task.title, reason });
+      }
+    }
+    return result;
+  }
+
+  /** Cancels a task and asks ECS to stop the task that executes it, so no worker keeps running. */
+  async cancelTask(taskId: string, reason: string): Promise<{ task: DeliveryTask; stoppedEcsTask: boolean; stopError: string | null }> {
+    const before = await this.options.store.get(taskId);
+    const cancelled = await this.options.store.cancel(taskId, reason);
+    let stoppedEcsTask = false;
+    let stopError: string | null = null;
+    if (before.status === 'running' && before.activeEcsTaskArn) {
+      try {
+        await this.options.ecs.stop(before.activeEcsTaskArn);
+        stoppedEcsTask = true;
+      } catch (error) {
+        stopError = (error instanceof Error ? error.message : String(error)).slice(0, 200);
+      }
+    }
+    return { task: cancelled, stoppedEcsTask, stopError };
+  }
+}
+
+export interface DeliveryReconcileResult {
+  checked: number;
+  failed: { taskId: string; title: string; reason: string }[];
+  untouched: { taskId: string; reason: string }[];
 }
