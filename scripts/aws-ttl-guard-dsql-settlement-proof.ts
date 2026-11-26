@@ -23,8 +23,8 @@ import {
  *   1. Start the Control Plane, check that its Model Factory ledger is `aurora-dsql`, register and approve a
  *      job. The Control Plane launches one t4g.nano Spot instance in us-east-2 with a 3-minute lifetime.
  *   2. Stop the Control Plane (desiredCount 0) and wait until no task runs.
- *   3. After the instance's expiry time, invoke the deployed TTL Guard Lambda directly. (The EventBridge
- *      schedule would run it within 5 minutes; a direct invoke makes the proof deterministic.)
+ *   3. After the instance's expiry time, wait for the EventBridge 5-minute schedule to run the deployed TTL
+ *      Guard Lambda. The script does not call the Lambda. (HIVEMIND_GUARD_TRIGGER=invoke calls it directly.)
  *   4. Read the job straight from DSQL with the operator's IAM identity: the cost must be settled and the
  *      forced termination recorded, with the Control Plane still stopped.
  *   5. Start the Control Plane again and wake the job: it must finish the job (failed, no receipt) without
@@ -36,6 +36,8 @@ import {
 
 const INSTANCE_REGION = 'us-east-2';
 const LIFETIME_MS = 180_000;
+/** `schedule` (default): wait for the EventBridge rule. `invoke`: call the Lambda directly. */
+const TRIGGER = process.env.HIVEMIND_GUARD_TRIGGER === 'invoke' ? 'invoke' : 'schedule';
 
 async function main(): Promise<void> {
   const runtimeOut = loadRuntimeOutputs();
@@ -98,20 +100,65 @@ async function main(): Promise<void> {
     const beforeGuard = await ledger.getDoc(jobId);
     summary.settledBeforeGuard = beforeGuard?.cost.settledMicros ?? null;
 
-    // 3. Wait for expiry, then run the deployed guard Lambda.
+    // 3. Wait for expiry. Then either let the EventBridge schedule run the guard (default), or invoke it.
+    type GuardSummary = { region: string; terminated: { instanceId: string }[]; settlements: { jobId: string; outcome: string; settledMicros: number | null }[]; errors: string[] }[];
     const waitMs = Date.parse(instance.expiresAt) - Date.now() + 5_000;
     if (waitMs > 0) await sleep(waitMs);
-    const outFile = join(scratch, 'guard-output.json');
-    const invoke = awsJson<{ StatusCode?: number; FunctionError?: string }>(PRIMARY_REGION, ['lambda', 'invoke', '--function-name', guardFunction, outFile]);
-    const guardOutput = JSON.parse(readFileSync(outFile, 'utf8')) as {
-      ok?: boolean;
-      summary?: { region: string; terminated: { instanceId: string }[]; settlements: { jobId: string; outcome: string; settledMicros: number | null }[]; errors: string[] }[];
-    };
-    const regionSummary = guardOutput.summary?.find((s) => s.region === INSTANCE_REGION);
-    summary.guardInvoke = { statusCode: invoke.StatusCode ?? null, functionError: invoke.FunctionError ?? null, ok: guardOutput.ok ?? null };
+    let guardSummary: GuardSummary | undefined;
+    if (TRIGGER === 'invoke') {
+      const outFile = join(scratch, 'guard-output.json');
+      const invoke = awsJson<{ StatusCode?: number; FunctionError?: string }>(PRIMARY_REGION, ['lambda', 'invoke', '--function-name', guardFunction, outFile]);
+      const guardOutput = JSON.parse(readFileSync(outFile, 'utf8')) as { ok?: boolean; summary?: GuardSummary };
+      guardSummary = guardOutput.summary;
+      summary.guardInvoke = { statusCode: invoke.StatusCode ?? null, functionError: invoke.FunctionError ?? null, ok: guardOutput.ok ?? null };
+    } else {
+      // The script does NOT call the Lambda. The rule runs every 5 minutes, so the settlement must appear
+      // in the ledger within one interval plus the Lambda run time.
+      const expiredAtMs = Date.parse(instance.expiresAt);
+      const deadline = expiredAtMs + 7 * 60_000;
+      let settledAtMs: number | null = null;
+      while (Date.now() < deadline) {
+        const current = await ledger.getDoc(jobId);
+        if (current?.cost.settledMicros !== null && current?.cost.settledMicros !== undefined) {
+          settledAtMs = Date.now();
+          break;
+        }
+        await sleep(20_000);
+      }
+      summary.scheduleWait = {
+        settled: settledAtMs !== null,
+        secondsAfterExpiry: settledAtMs !== null ? Math.round((settledAtMs - expiredAtMs) / 1000) : null,
+      };
+      // The guard's own log event for this job is the evidence that the scheduled run did the settlement.
+      await sleep(10_000);
+      const logs = awsJson<{ events?: { timestamp?: number; message?: string }[] }>(PRIMARY_REGION, [
+        'logs', 'filter-log-events', '--log-group-name', `/aws/lambda/${guardFunction}`,
+        '--start-time', String(expiredAtMs), '--filter-pattern', `"${jobId}"`,
+      ]);
+      for (const event of logs.events ?? []) {
+        const jsonStart = (event.message ?? '').indexOf('{');
+        if (jsonStart < 0) continue;
+        try {
+          const parsed = JSON.parse((event.message ?? '').slice(jsonStart)) as { event?: string; ledger?: string; summary?: GuardSummary };
+          if (parsed.event === 'hivemind.mf_ttl_guard.sweep' && parsed.summary) {
+            guardSummary = parsed.summary;
+            summary.guardLogEvent = { at: event.timestamp ? new Date(event.timestamp).toISOString() : null, ledger: parsed.ledger ?? null };
+            break;
+          }
+        } catch {
+          // not the JSON sweep line
+        }
+      }
+      // Which principal invoked the function is recorded by EventBridge, not by the function; the rule's state is read instead.
+      summary.scheduleRule = JSON.parse(
+        aws(PRIMARY_REGION, ['events', 'list-rule-names-by-target', '--target-arn', aws(PRIMARY_REGION, ['lambda', 'get-function', '--function-name', guardFunction, '--query', 'Configuration.FunctionArn', '--output', 'text']), '--output', 'json']),
+      ) as unknown;
+    }
+    const regionSummary = guardSummary?.find((s) => s.region === INSTANCE_REGION);
+    summary.guardTrigger = TRIGGER;
     summary.guardTerminated = regionSummary?.terminated.map((t) => t.instanceId) ?? [];
     summary.guardSettlements = regionSummary?.settlements ?? [];
-    summary.guardErrors = guardOutput.summary?.flatMap((s) => s.errors) ?? [];
+    summary.guardErrors = guardSummary?.flatMap((s) => s.errors) ?? [];
 
     // 4. Ledger state read from DSQL while the Control Plane is still stopped.
     const afterGuard = await ledger.getDoc(jobId);
