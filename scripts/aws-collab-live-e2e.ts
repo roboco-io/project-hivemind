@@ -67,8 +67,18 @@ function openTunnel(cluster: string, taskId: string, runtimeId: string, localPor
       '--document-name', 'AWS-StartPortForwardingSession',
       '--parameters', JSON.stringify({ portNumber: ['4310'], localPortNumber: [String(localPort)] }),
     ],
-    { stdio: 'ignore' },
+    // Own process group: `aws ssm start-session` starts session-manager-plugin as a child, and killing only
+    // the `aws` process leaves the plugin (and its tunnel) running.
+    { stdio: 'ignore', detached: true },
   );
+  const killTunnel = () => {
+    if (child.pid === undefined) return;
+    try {
+      process.kill(-child.pid, 'SIGTERM');
+    } catch {
+      // process group already gone
+    }
+  };
   const ready = (async () => {
     const deadline = Date.now() + 90_000;
     while (Date.now() < deadline) {
@@ -80,10 +90,10 @@ function openTunnel(cluster: string, taskId: string, runtimeId: string, localPor
       }
       await sleep(1500);
     }
-    child.kill('SIGTERM');
+    killTunnel();
     throw new Error('Timed out waiting for SSM tunnel to ControlPlaneService');
   })();
-  return { ready, close: () => void (!child.killed && child.kill('SIGTERM')) };
+  return { ready, close: killTunnel };
 }
 
 type ToolResult = { isError?: boolean; structuredContent?: Record<string, unknown> };
@@ -175,10 +185,11 @@ async function main(): Promise<void> {
             title: name,
             instructions:
               `State one short, correct fact about ${topic} in a single sentence. ` +
-              `First post that sentence to the shared message board with: ` +
-              `curl -s -X POST "$HIVEMIND_CONTROL_API_URL/api/collab/sessions/$HIVEMIND_COLLAB_SESSION_ID/messages" ` +
-              `-H "authorization: Bearer $HIVEMIND_WORKER_TOKEN" -H "content-type: application/json" ` +
-              `-d '{"sender":"'"$HIVEMIND_COLLAB_AGENT_ID"'","kind":"chat","body":"<your sentence>"}' ` +
+              `First post that sentence to the shared message board. curl is not installed, so run exactly this command ` +
+              `with your sentence as the last argument: ` +
+              `node -e 'fetch(process.env.HIVEMIND_CONTROL_API_URL+"/api/collab/sessions/"+process.env.HIVEMIND_COLLAB_SESSION_ID+"/messages",` +
+              `{method:"POST",headers:{authorization:"Bearer "+process.env.HIVEMIND_WORKER_TOKEN,"content-type":"application/json"},` +
+              `body:JSON.stringify({sender:process.env.HIVEMIND_COLLAB_AGENT_ID,kind:"chat",body:process.argv[1]})}).then(r=>console.log(r.status))' "<your sentence>" ` +
               `Then reply with the same sentence as your final answer. Do nothing else.`,
           });
         }
@@ -222,8 +233,10 @@ async function main(): Promise<void> {
         messageCount: snapshot.messages.length,
         agentMessageCount: agentMessages.length,
         agentsThatPosted: [...new Set(agentMessages.map((m) => m.sender))].length,
+        // 'chat' messages are posted by the model itself during its run; 'handoff' is posted by the worker wrapper afterwards.
+        agentsThatPostedDuringRun: [...new Set(agentMessages.filter((m) => m.kind === 'chat').map((m) => m.sender))].length,
         workLogCount: snapshot.workLogs.length,
-        sampleAgentMessages: agentMessages.slice(0, 4).map((m) => ({ sender: m.sender, kind: m.kind, body: m.body.slice(0, 200) })),
+        sampleAgentMessages: agentMessages.slice(0, 6).map((m) => ({ sender: m.sender, kind: m.kind, body: m.body.slice(0, 200) })),
       };
     } finally {
       await client.close().catch(() => undefined);

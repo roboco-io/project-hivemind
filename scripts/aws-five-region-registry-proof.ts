@@ -91,8 +91,18 @@ function openTunnel(cluster: string, taskId: string, runtimeId: string, localPor
       '--document-name', 'AWS-StartPortForwardingSession',
       '--parameters', JSON.stringify({ portNumber: ['4310'], localPortNumber: [String(localPort)] }),
     ],
-    { stdio: 'ignore' },
+    // Own process group: `aws ssm start-session` starts session-manager-plugin as a child, and killing only
+    // the `aws` process leaves the plugin (and its tunnel) running.
+    { stdio: 'ignore', detached: true },
   );
+  const killTunnel = () => {
+    if (child.pid === undefined) return;
+    try {
+      process.kill(-child.pid, 'SIGTERM');
+    } catch {
+      // process group already gone
+    }
+  };
   const ready = (async () => {
     const deadline = Date.now() + 90_000;
     while (Date.now() < deadline) {
@@ -104,10 +114,10 @@ function openTunnel(cluster: string, taskId: string, runtimeId: string, localPor
       }
       await sleep(1500);
     }
-    child.kill('SIGTERM');
+    killTunnel();
     throw new Error('Timed out waiting for SSM tunnel to ControlPlaneService');
   })();
-  return { ready, close: () => void (!child.killed && child.kill('SIGTERM')) };
+  return { ready, close: killTunnel };
 }
 
 /** Same ranking loop as ModelFactoryOrchestrator.approveAndLaunchTraining, used only to choose the candidates. */
