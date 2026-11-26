@@ -252,7 +252,12 @@ try {
   const modelFactoryBudgetCapMicros = process.env.HIVEMIND_MF_BUDGET_CAP_MICROS
     ? Number(process.env.HIVEMIND_MF_BUDGET_CAP_MICROS)
     : undefined;
-  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros});
+  const modelFactoryWakePollMs = process.env.HIVEMIND_MF_WAKE_POLL_MS
+    ? Number(process.env.HIVEMIND_MF_WAKE_POLL_MS)
+    : modelFactoryOrchestratorFactory
+      ? 60_000
+      : undefined;
+  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs});
   const address = await app.listen({host,port});
   console.log(`HIVEMIND control service: ${address}`);
   for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,() => { void app!.close(); });

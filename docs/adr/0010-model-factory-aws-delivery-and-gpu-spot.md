@@ -1,6 +1,6 @@
 # ADR-0010: Silicon Model Factory AWS 단일 경로 확장(조사 작업 + GPU 스팟 학습·공개)
 
-- **상태:** 구현 완료 (단위·통합 테스트 1,220건 통과, `us-east-2` 최소 스팟 기동 + TTL Guard 강제 종료 실증 완료)
+- **상태:** 구현·AWS 배포·실증 완료 (단위·통합 테스트 1,221건 + CDK 5건 통과, 서울 ControlPlaneService + Ohio EC2 Spot + 자율 5분 멀티리전 Lambda TTL Guard + KMS S3 영수증 종단 실증 완료)
 - **관련 이슈:** [#12](https://github.com/roboco-io/project-hivemind/issues/12)
 - **관련 ADR:** [ADR-0008](./0008-aws-native-sw-delivery-realignment.md), [ADR-0009](./0009-multi-region-spot-placement-architecture.md)
 

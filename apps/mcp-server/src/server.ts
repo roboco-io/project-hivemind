@@ -8,8 +8,9 @@ import {registerAutonomousOperatorTools} from './autonomous.js';
 import {registerTeamOperatorTools} from './team.js';
 import {registerToolAuditTool} from './autonomous-tool-audit.js';
 import {registerDeliveryOperatorTools} from './delivery.js';
+import {registerModelFactoryOperatorTools} from './model-factory.js';
 
-export type McpProfile = 'default' | 'delivery';
+export type McpProfile = 'default' | 'delivery' | 'model-factory';
 export interface McpSettings { apiUrl: string; operatorToken: string; profile?: McpProfile }
 export interface HivemindMcpOptions extends McpSettings { fetchImpl?: typeof fetch }
 const configurationError = () => new Error('Invalid HIVEMIND MCP configuration.');
@@ -43,7 +44,7 @@ export function loadMcpSettings(env: NodeJS.ProcessEnv = process.env): McpSettin
     }
     const apiUrl = env.HIVEMIND_API_URL ?? 'http://127.0.0.1:4310';
     const rawProfile = env.HIVEMIND_MCP_PROFILE;
-    if (rawProfile !== undefined && rawProfile !== 'default' && rawProfile !== 'delivery') throw configurationError();
+    if (rawProfile !== undefined && rawProfile !== 'default' && rawProfile !== 'delivery' && rawProfile !== 'model-factory') throw configurationError();
     return { ...validateSettings({ apiUrl, operatorToken: operatorToken ?? developmentToken }), ...(rawProfile ? { profile: rawProfile } : {}) };
   } catch { throw configurationError(); }
 }
@@ -86,6 +87,11 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
   const server = new SafeMcpServer({ name: 'hivemind', version: '0.1.0' }, { maxToolInputElements: 512, instructions: options.profile === 'delivery' ? 'AWS 단일 경로의 SW 개발 전달 작업을 등록·승인·조회하고, 독립 검증과 해시 일치 근거만으로 Draft PR 판단을 기록합니다.' : 'Cloudflare 작업의 대상 저장소와 고정 커밋을 먼저 확인하세요. 작업 등록은 실행 승인 전 초안만 만듭니다. 실행 승인·결과 수락·반려·중단은 명시적인 사용자 지시에 따라 별도로 호출하세요. 결과 수락은 검토 이력만 기록하며 적용·병합·푸시를 실행하지 않습니다.' });
   if (options.profile === 'delivery') {
     registerDeliveryOperatorTools(server, { ...settings, fetchImpl, redact });
+    return server;
+  }
+  if (options.profile === 'model-factory') {
+    registerDeliveryOperatorTools(server, { ...settings, fetchImpl, redact });
+    registerModelFactoryOperatorTools(server, { ...settings, fetchImpl, redact });
     return server;
   }
   async function api(path: string, signal: AbortSignal, body?: Record<string, unknown>): Promise<Record<string, unknown>> {

@@ -104,10 +104,14 @@ test('enforces strict 3-way secret separation across Control Plane, AI Worker, V
   const cpExecDoc = byRole.get('ControlPlaneExecutionRole') ?? '';
   const wkExecDoc = byRole.get('WorkerExecutionRole') ?? '';
 
-  // Control plane can read GitHub Draft PR secret, run/tag ECS tasks, and open SSM Exec channels, never model auth.
+  // Control plane can read GitHub Draft PR secret, HF release secret, run/tag ECS tasks,
+  // manage scoped Model Factory EC2 Spot instances, and open SSM Exec channels, never model auth.
   assert.match(cpDoc, /GithubDraftPrSecret/);
+  assert.match(cpDoc, /HfReleaseTokenSecret/);
   assert.match(cpDoc, /ecs:RunTask/);
   assert.match(cpDoc, /ecs:TagResource/);
+  assert.match(cpDoc, /ec2:TerminateInstances/);
+  assert.match(cpDoc, /hivemind-model-factory/);
   assert.match(cpDoc, /ssmmessages:OpenDataChannel/);
   assert.doesNotMatch(cpDoc, /ModelSubscriptionAuthSecret/);
 
@@ -117,17 +121,29 @@ test('enforces strict 3-way secret separation across Control Plane, AI Worker, V
   assert.match(wkExecDoc, /WorkerTokenSecret/);
   assert.doesNotMatch(wkExecDoc, /OperatorTokenSecret/);
 
-  // AI worker can read model subscription auth & write patches/sessions, never GitHub secret, operator token, or ECS RunTask.
+  // AI worker can read model subscription auth & write patches/sessions, never GitHub/HF secrets, operator token, or ECS RunTask.
   assert.match(workerDoc, /ModelSubscriptionAuthSecret/);
   assert.doesNotMatch(workerDoc, /GithubDraftPrSecret/);
+  assert.doesNotMatch(workerDoc, /HfReleaseTokenSecret/);
   assert.doesNotMatch(workerDoc, /OperatorTokenSecret/);
   assert.doesNotMatch(workerDoc, /ecs:RunTask/);
 
   // Verifier reads bundles/acceptance/patches & writes only attestations/*, never accesses secrets.
   assert.doesNotMatch(verifierDoc, /ModelSubscriptionAuthSecret/);
   assert.doesNotMatch(verifierDoc, /GithubDraftPrSecret/);
+  assert.doesNotMatch(verifierDoc, /HfReleaseTokenSecret/);
   assert.doesNotMatch(verifierDoc, /OperatorTokenSecret/);
   assert.match(verifierDoc, /attestations\/\*/);
+
+  // Autonomous $0-idle multi-region TTL Guard Lambda + 5-minute EventBridge rule synthesized.
+  template.hasResourceProperties('AWS::Lambda::Function', {
+    FunctionName: 'hivemind-dev-mf-ttl-guard',
+    Runtime: 'nodejs22.x',
+  });
+  template.hasResourceProperties('AWS::Events::Rule', {
+    Name: 'hivemind-dev-mf-ttl-guard-5m',
+    ScheduleExpression: 'rate(5 minutes)',
+  });
 });
 
 test('rejects unapproved region unless explicitly allowlisted and rejects placeholder account without fixture flag', () => {

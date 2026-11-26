@@ -2,21 +2,26 @@
 
 ## 1. 자동 검증 결과 (로컬·단위·통합)
 
-- **루트 검증 (`npm run check`):** **1,220 / 1,220 통과** (신규 Part A 5건 `tests/delivery-research-mode.test.ts` + 신규 Part B 5건 `tests/model-factory.test.ts` 포함)
-- **AWS CDK 검증 (`infrastructure/aws-runtime`):** **5 / 5 통과** (`HivemindAwsRuntimeStack` + `HivemindAwsSpokeUsEast2Stack`)
+- **루트 검증 (`npm run check`):** **1,221 / 1,221 통과** (신규 Part A 5건 `tests/delivery-research-mode.test.ts` + 신규 Part B 6건 `tests/model-factory.test.ts` — MCP `model-factory` 프로파일 13개 도구 포함)
+- **AWS CDK 검증 (`infrastructure/aws-runtime`):** **5 / 5 통과** (`HivemindAwsRuntimeStack` + `HivemindAwsSpokeUsEast2Stack` — `HfReleaseTokenSecret` 4자 격리, `ec2:TerminateInstances` 태그 조건, 5분 주기 멀티리전 `ModelFactoryTtlGuardFn` Lambda 검증)
 
-## 2. 실 AWS 검증 — `us-east-2` 동적 스팟 기동 + TTL Guard 강제 종료
+## 2. 실 AWS 배포 및 Control Plane 종단 검증 (`ap-northeast-2` Hub + `us-east-2` Spoke)
 
-이슈 #12 완료 기준 B("최소 스팟 인스턴스 기동과 Guard 강제 종료 확인")를 실제 AWS 계정(`<AWS_ACCOUNT_ID>`, `us-east-2` Ohio Spoke VPC)에서 `scripts/aws-ec2-spot-guard-proof.ts`로 검증했다.
+신규 ARM64 이미지 3종(`hivemind-runtime-control-plane`, `hivemind-runtime-worker`, `hivemind-runtime-verifier`)을 서울 ECR에 푸시하고, `HivemindAwsRuntimeStack`을 CDK로 배포(`ControlPlaneTaskDef:7`, `HfReleaseTokenSecret`, `hivemind-runtime-mf-ttl-guard` Lambda + 5분 EventBridge 스케줄)한 뒤 실 AWS에서 2단계로 검증했다.
 
+### 2-A. 단독 어댑터 검증 (`scripts/aws-ec2-spot-guard-proof.ts`)
 - **실행 시각:** `2026-11-26T05:52:23Z` ~ `2026-11-26T05:53:46Z` (총 84초)
-- **리전 / AZ:** `us-east-2` / `us-east-2a` (`subnet-0bedc9f4179d6205f`, 인바운드 0 보안 그룹 `sg-0e3ac45935e27429c`)
-- **동적 AMI (스택 재배포 없음):** `ami-0e0dc3e6fb1778218` (SSM `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64` 런타임 조회)
-- **인스턴스 타입 / ID:** `t4g.nano` Spot / `i-0ec26a0f439d8208a`
-- **수명 태그 (`hivemind:expires-at`):** `2026-11-26T05:53:08.040Z` (기동 후 45초)
-- **실행 확인:** `2026-11-26T05:52:41.263Z`에 `running` 상태 진입 확인
-- **TTL Guard 강제 종료:** 만료 직후 `AwsEc2SpotTrainer.sweepExpiredSpotInstances('us-east-2')`가 `hivemind:managed-by=hivemind-model-factory` 및 `hivemind:expires-at` 태그를 탐지해 `i-0ec26a0f439d8208a` 강제 종료(`sweptMatchedInstance: true`)
-- **최종 상태:** `finalState: "terminated"` 확인 완료 (잔존 실행 자원 없음, 상시 유휴 비용 `$0/hr` 유지)
+- **인스턴스:** `us-east-2a` / `t4g.nano` Spot / `i-0ec26a0f439d8208a` / 동적 AMI `ami-0e0dc3e6fb1778218`
+- **결과:** `running` 진입 후 45초 TTL 만료 시 `sweepExpiredSpotInstances('us-east-2')` 강제 종료 → `finalState: "terminated"` 확인.
+
+### 2-B. 실 배포 서울 ControlPlaneService(SSM 터널) + AWS Lambda TTL Guard + KMS S3 영수증 종단 검증 (`scripts/aws-issue12-live-verify.ts`)
+- **Part A 정책 등록 검증:** 배포된 서울 `ControlPlaneService`에서 `roboco-io/silicon-model-factory` 대상 `executionPolicy`(`allowedWebHosts: ["arxiv.org","github.com","huggingface.co"]`, `allowSubagents: true`, `verificationKind: "document_format"`, `preserveWorkspaceOnRetry: true`) 및 `waitReason: "awaiting_operator_approval"` EFS SQLite 저장 확인(`dlv-5542b255-2d17-47f5-9981-ece3c6c1209b`).
+- **Part B 스팟 용량 거절 안전 복구 검증:** `us-east-2a`의 `InsufficientInstanceCapacity` 발생 시(`mf-a10e431b-a0e1-4357-9b61-67fa3cf9106d`) 예약 금액(`50,000` micros)이 자동 0원 정산 환원되고 AWS 원문 진단 메시지가 운영자 API `diagnostics`에 그대로 기록됨을 실증(교훈 #1).
+- **Part B 종단 완주 (`mf-86616c75-d81f-46f9-bcf5-7ba906ad9633`):**
+  - **Control Plane 자체 IAM 기동:** 서울 `ControlPlaneService`가 EFS SQLite에서 `50,000` micros를 예약하고 `us-east-2c`에 `t4g.nano` Spot(`i-039e54adbc8cce1c7`, 동적 AMI `ami-0e0dc3e6fb1778218`, 인바운드 0 SG `sg-0e3ac45935e27429c`, TTL 60초)을 직접 기동.
+  - **자율 AWS Lambda TTL Guard 강제 종료:** TTL 만료(`2026-11-26T06:25:31.923Z`) 후 배포된 `hivemind-runtime-mf-ttl-guard` Lambda 실행 → 5개 리전(`ap-northeast-2`, `us-east-2`, `us-east-1`, `us-west-2`, `ap-northeast-1`)을 스캔해 `us-east-2`의 `i-039e54adbc8cce1c7`를 태그 조건 IAM으로 강제 종료.
+  - **Control Plane Wake + S3 SHA-256 영수증 + 비용 정산 + 공개 승인:** `/api/model-factory/jobs/:id/wake`가 서울 KMS S3의 `receipt.json`(`manifestDigest: 570033ccddc91eae794c3954088a45e1928c74a668775cc25303d4ebfc44ed3d`)을 검증하고 실제 69초 실행 비용 `192` micros(`$0.000192`)로 정산(잔여 중앙 예산 `499,999,808` micros 환원) → `/verify-release` (`awaiting_release_approval`) → `/approve-release` (`released`) 완주.
+- **유휴 비용 복귀:** 검증 직후 서울 `ControlPlaneService`를 `desiredCount: 0`으로 되돌리고 `us-east-2` 잔존 실행 인스턴스 `0`대 확인 완료(상시 유휴 비용 `$0/hr`, 5분 주기 Lambda TTL Guard는 AWS 무료 티어 범위 `$0/월`로 상시 보호 유지).
 
 ## 3. 아직 실 AWS로 실행하지 않은 항목 (투명 고지)
 

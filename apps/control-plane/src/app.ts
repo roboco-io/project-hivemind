@@ -21,7 +21,7 @@ import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js
 
 import {projectTeamResponse,type CloudWorkflowControl} from '../../../packages/contracts/src/workflow.js';
 
-export interface AppOptions { autonomousCloudProxy?:AutonomousCloudProxy; localExternalService?:AutonomousExternalService; dbPath?: string; operatorToken?: string; workerToken?: string; nativeReporterToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl; deliveryOrchestratorFactory?: (store: DeliveryStore) => DeliveryOrchestrator; modelFactoryOrchestratorFactory?: (store: ModelFactoryStore) => ModelFactoryOrchestrator; modelFactoryBudgetCapMicros?: number }
+export interface AppOptions { autonomousCloudProxy?:AutonomousCloudProxy; localExternalService?:AutonomousExternalService; dbPath?: string; operatorToken?: string; workerToken?: string; nativeReporterToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl; deliveryOrchestratorFactory?: (store: DeliveryStore) => DeliveryOrchestrator; modelFactoryOrchestratorFactory?: (store: ModelFactoryStore) => ModelFactoryOrchestrator; modelFactoryBudgetCapMicros?: number; modelFactoryWakePollMs?: number }
 const string = {type:'string',minLength:1,maxLength:4000};
 const credentials = {workerId:{...string,maxLength:120},leaseToken:{...string,maxLength:120}};
 const body = (properties: Record<string,unknown>, required = Object.keys(properties)) => ({body:{type:'object',additionalProperties:false,required,properties}});
@@ -58,7 +58,24 @@ export function buildApp(options: AppOptions = {}) {
   const toolAuditStore=createToolAuditStore({exec:(query,...binds)=>toolAuditDb.prepare(query).all(...binds) as Record<string,unknown>[],transactionSync:fn=>{toolAuditDb.exec('BEGIN IMMEDIATE');try{const result=fn();toolAuditDb.exec('COMMIT');return result;}catch(error){toolAuditDb.exec('ROLLBACK');throw error;}}},createHash('sha256').update('hivemind-tool-audit-cursor\n'+operatorToken).digest('hex'));
   const deliveryOrchestrator = options.deliveryOrchestratorFactory?.(deliveryStore);
   const modelFactoryOrchestrator = options.modelFactoryOrchestratorFactory?.(modelFactoryStore);
-  app.addHook('onClose',async()=>{deliveryStore.close();modelFactoryStore.close();autonomousStore.close();toolAuditDb.close();});
+  let mfWakeTimer: ReturnType<typeof setInterval> | undefined;
+  if (modelFactoryOrchestrator && options.modelFactoryWakePollMs && options.modelFactoryWakePollMs >= 1000) {
+    let wakeInFlight = false;
+    mfWakeTimer = setInterval(() => {
+      if (wakeInFlight) return;
+      wakeInFlight = true;
+      void modelFactoryOrchestrator
+        .wakeDueJobs(AbortSignal.timeout(45_000))
+        .catch((err) => {
+          console.error(JSON.stringify({ event: 'hivemind.mf_wake_poll.error', message: err instanceof Error ? err.message : String(err) }));
+        })
+        .finally(() => {
+          wakeInFlight = false;
+        });
+    }, options.modelFactoryWakePollMs);
+    mfWakeTimer.unref();
+  }
+  app.addHook('onClose',async()=>{if(mfWakeTimer)clearInterval(mfWakeTimer);deliveryStore.close();modelFactoryStore.close();autonomousStore.close();toolAuditDb.close();});
   registerDeliveryRoutes(app,{store:deliveryStore,operatorToken,workerToken,orchestrator:deliveryOrchestrator});
   registerModelFactoryRoutes(app,{store:modelFactoryStore,operatorToken,orchestrator:modelFactoryOrchestrator});
   app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});

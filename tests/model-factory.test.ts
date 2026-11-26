@@ -9,6 +9,7 @@ import {
   type Ec2SpotTrainerPort,
 } from '../packages/adapters/src/aws-ec2-spot-trainer.js';
 import { createTrustedHfReleasePublisher } from '../packages/adapters/src/model-factory-hf-publisher.js';
+import { createHivemindMcpServer, loadMcpSettings } from '../apps/mcp-server/src/server.js';
 import type { S3ObjectPort } from '../packages/adapters/src/aws-s3-artifacts.js';
 import type {
   CreateModelFactoryJob,
@@ -474,4 +475,21 @@ test('B6 createTrustedHfReleasePublisher rejects mismatched digest and missing a
   } finally {
     store.close();
   }
+});
+
+test('MCP model-factory profile registers all 6 Delivery + 7 Model Factory operator tools', () => {
+  const settings = loadMcpSettings({
+    HIVEMIND_API_URL: 'http://127.0.0.1:4310',
+    HIVEMIND_OPERATOR_TOKEN: 'local-development-only',
+    HIVEMIND_MCP_PROFILE: 'model-factory',
+  });
+  assert.equal(settings.profile, 'model-factory');
+  const server = createHivemindMcpServer(settings);
+  const tools = Object.keys((server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools);
+  assert.ok(tools.includes('hivemind_delivery_create'));
+  assert.ok(tools.includes('hivemind_mf_create'));
+  assert.ok(tools.includes('hivemind_mf_approve_training'));
+  assert.ok(tools.includes('hivemind_mf_approve_release'));
+  assert.ok(tools.includes('hivemind_mf_ledger'));
+  assert.equal(tools.length, 13);
 });

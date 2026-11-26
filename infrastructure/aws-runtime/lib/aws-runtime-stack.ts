@@ -8,8 +8,11 @@ import {
   aws_ecr as ecr,
   aws_ecs as ecs,
   aws_efs as efs,
+  aws_events as events,
+  aws_events_targets as targets,
   aws_iam as iam,
   aws_kms as kms,
+  aws_lambda as lambda,
   aws_logs as logs,
   aws_s3 as s3,
   aws_secretsmanager as secretsmanager,
@@ -41,6 +44,8 @@ export class AwsRuntimeStack extends Stack {
   readonly workerTokenSecret: secretsmanager.Secret;
   readonly modelAuthSecret: secretsmanager.Secret;
   readonly githubDraftPrSecret: secretsmanager.Secret;
+  readonly hfReleaseTokenSecret: secretsmanager.Secret;
+  readonly modelFactoryTtlGuardFn: lambda.Function;
 
   constructor(
     scope: Construct,
@@ -173,6 +178,13 @@ export class AwsRuntimeStack extends Stack {
       description: 'Scoped GitHub token for trusted Draft PR publisher only (branch prefix + PRs)',
     });
 
+    this.hfReleaseTokenSecret = new secretsmanager.Secret(this, 'HfReleaseTokenSecret', {
+      secretName: `${prefix}/hf-release-token`,
+      encryptionKey: artifactKey,
+      removalPolicy: RemovalPolicy.RETAIN,
+      description: 'Scoped Hugging Face write token for Control Plane trusted model release publisher ONLY (never workers)',
+    });
+
     this.cluster = new ecs.Cluster(this, 'RuntimeCluster', {
       clusterName: `${prefix}-cluster`,
       vpc,
@@ -228,7 +240,26 @@ export class AwsRuntimeStack extends Stack {
     this.artifactsBucket.grantReadWrite(this.controlPlaneRole, 'acceptance/*');
     this.artifactsBucket.grantRead(this.controlPlaneRole, 'patches/*');
     this.artifactsBucket.grantRead(this.controlPlaneRole, 'attestations/*');
+    this.artifactsBucket.grantReadWrite(this.controlPlaneRole, 'models/*');
     this.githubDraftPrSecret.grantRead(this.controlPlaneRole);
+    this.hfReleaseTokenSecret.grantRead(this.controlPlaneRole);
+    // Scoped EC2 Spot Model Factory orchestration across allowed regions (no stack redeploy per model).
+    // TerminateInstances is strictly conditioned on hivemind:managed-by=hivemind-model-factory.
+    this.controlPlaneRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['ec2:DescribeInstances', 'ec2:RunInstances', 'ec2:CreateTags'],
+        resources: ['*'],
+      }),
+    );
+    this.controlPlaneRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['ec2:TerminateInstances'],
+        resources: ['*'],
+        conditions: {
+          StringEquals: { 'ec2:ResourceTag/hivemind:managed-by': 'hivemind-model-factory' },
+        },
+      }),
+    );
     this.controlPlaneRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ['ecs:RunTask', 'ecs:StopTask', 'ecs:DescribeTasks'],
@@ -394,6 +425,9 @@ export class AwsRuntimeStack extends Stack {
         HIVEMIND_WORKER_SECURITY_GROUPS: workerSg.securityGroupId,
         HIVEMIND_WORKER_ASSIGN_PUBLIC_IP: 'ENABLED',
         HIVEMIND_GITHUB_SECRET_ARN: this.githubDraftPrSecret.secretArn,
+        HIVEMIND_HF_RELEASE_SECRET_ARN: this.hfReleaseTokenSecret.secretArn,
+        HIVEMIND_MF_ALLOWED_REGIONS: 'ap-northeast-2,us-east-2,us-east-1,us-west-2,ap-northeast-1',
+        HIVEMIND_MF_BUDGET_CAP_MICROS: '500000000',
         HIVEMIND_ALLOW_VPC_INTERNAL_HTTP: 'true',
       },
       secrets: {
@@ -418,6 +452,128 @@ export class AwsRuntimeStack extends Stack {
       capacityProviderStrategies: [{ capacityProvider: 'FARGATE', weight: 1, base: 1 }],
     });
 
+    // Autonomous $0-idle Multi-Region Model Factory TTL Guard (runs every 5 min even when ControlPlaneService desiredCount=0).
+    // Fails closed: terminates any hivemind:managed-by=hivemind-model-factory instance past hivemind:expires-at or missing the tag.
+    const ttlGuardRole = new iam.Role(this, 'ModelFactoryTtlGuardRole', {
+      assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),
+      managedPolicies: [
+        iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AWSLambdaBasicExecutionRole'),
+      ],
+    });
+    ttlGuardRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['ec2:DescribeInstances'],
+        resources: ['*'],
+      }),
+    );
+    ttlGuardRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['ec2:TerminateInstances'],
+        resources: ['*'],
+        conditions: {
+          StringEquals: { 'ec2:ResourceTag/hivemind:managed-by': 'hivemind-model-factory' },
+        },
+      }),
+    );
+
+    const ttlGuardCode = [
+      "const crypto = require('node:crypto');",
+      "const sha256 = (s) => crypto.createHash('sha256').update(s, 'utf8').digest('hex');",
+      "const hmac = (k, s) => crypto.createHmac('sha256', k).update(s, 'utf8').digest();",
+      'function sign(region, body) {',
+      "  const now = new Date().toISOString().replace(/[:-]|\\.\\d{3}/g, '');",
+      "  const amzDate = now.slice(0, 15) + 'Z', dateStamp = now.slice(0, 8);",
+      '  const host = `ec2.${region}.amazonaws.com`;',
+      "  const headers = { 'content-type': 'application/x-www-form-urlencoded; charset=utf-8', host, 'x-amz-date': amzDate };",
+      "  if (process.env.AWS_SESSION_TOKEN) headers['x-amz-security-token'] = process.env.AWS_SESSION_TOKEN;",
+      '  const keys = Object.keys(headers).sort();',
+      "  const canon = ['POST', '/', '', keys.map((k) => `${k}:${headers[k]}\\n`).join(''), keys.join(';'), sha256(body)].join('\\n');",
+      '  const scope = `${dateStamp}/${region}/ec2/aws4_request`;',
+      "  const sts = ['AWS4-HMAC-SHA256', amzDate, scope, sha256(canon)].join('\\n');",
+      "  const kSig = hmac(hmac(hmac(hmac('AWS4' + process.env.AWS_SECRET_ACCESS_KEY, dateStamp), region), 'ec2'), 'aws4_request');",
+      '  headers.authorization = `AWS4-HMAC-SHA256 Credential=${process.env.AWS_ACCESS_KEY_ID}/${scope}, SignedHeaders=${keys.join(\';\')}, Signature=${crypto.createHmac(\'sha256\', kSig).update(sts, \'utf8\').digest(\'hex\')}`;',
+      '  return headers;',
+      '}',
+      'async function ec2Call(region, params) {',
+      "  const body = new URLSearchParams({ Version: '2016-11-15', ...params }).toString();",
+      '  const res = await fetch(`https://ec2.${region}.amazonaws.com/`, { method: \'POST\', headers: sign(region, body), body });',
+      '  const text = await res.text();',
+      '  if (!res.ok) throw new Error(`EC2 ${region} ${params.Action} HTTP ${res.status}: ${text.slice(0, 200)}`);',
+      '  return text;',
+      '}',
+      'function firstTag(xml, name) {',
+      '  const o = `<${name}>`, c = `</${name}>`, s = xml.indexOf(o);',
+      '  if (s === -1) return null;',
+      '  const e = xml.indexOf(c, s + o.length);',
+      '  return e === -1 ? null : xml.slice(s + o.length, e).trim();',
+      '}',
+      'function parseInstances(xml) {',
+      '  const out = [];',
+      "  for (const part of xml.split('<instancesSet>').slice(1)) {",
+      "    const setXml = part.split('</instancesSet>')[0] || '';",
+      '    let idx = 0;',
+      '    while (idx < setXml.length) {',
+      "      const start = setXml.indexOf('<item>', idx); if (start === -1) break;",
+      '      let depth = 0, cur = start, end = -1;',
+      '      while (cur < setXml.length) {',
+      "        const no = setXml.indexOf('<item>', cur), nc = setXml.indexOf('</item>', cur);",
+      '        if (nc === -1) break;',
+      '        if (no !== -1 && no < nc) { depth++; cur = no + 6; } else { depth--; cur = nc + 7; if (depth === 0) { end = nc; break; } }',
+      '      }',
+      '      if (end === -1) break;',
+      '      const item = setXml.slice(start + 6, end);',
+      "      const id = firstTag(item, 'instanceId');",
+      "      const tagXml = firstTag(item, 'tagSet') || '';",
+      '      const tags = {};',
+      "      for (const t of tagXml.split('<item>').slice(1)) { const k = firstTag(t, 'key'), v = firstTag(t, 'value'); if (k) tags[k] = v || ''; }",
+      '      if (id) out.push({ id, tags });',
+      '      idx = end + 7;',
+      '    }',
+      '  }',
+      '  return out;',
+      '}',
+      'exports.handler = async () => {',
+      "  const regions = (process.env.HIVEMIND_GUARD_REGIONS || 'ap-northeast-2,us-east-2').split(',').map((s) => s.trim()).filter(Boolean);",
+      '  const nowMs = Date.now(), summary = [];',
+      '  for (const region of regions) {',
+      "    const xml = await ec2Call(region, { Action: 'DescribeInstances', 'Filter.1.Name': 'tag:hivemind:managed-by', 'Filter.1.Value.1': 'hivemind-model-factory', 'Filter.2.Name': 'instance-state-name', 'Filter.2.Value.1': 'pending', 'Filter.2.Value.2': 'running', 'Filter.2.Value.3': 'stopping', 'Filter.2.Value.4': 'stopped' });",
+      '    const instances = parseInstances(xml);',
+      '    const terminated = [];',
+      '    for (const inst of instances) {',
+      "      const exp = inst.tags['hivemind:expires-at'] || null;",
+      '      const expMs = exp ? Date.parse(exp) : Number.NaN;',
+      '      if (!Number.isFinite(expMs) || expMs <= nowMs) {',
+      "        await ec2Call(region, { Action: 'TerminateInstances', 'InstanceId.1': inst.id });",
+      '        terminated.push({ instanceId: inst.id, expiresAt: exp });',
+      '      }',
+      '    }',
+      '    summary.push({ region, checked: instances.length, terminated });',
+      '  }',
+      "  console.log(JSON.stringify({ event: 'hivemind.mf_ttl_guard.sweep', summary }));",
+      '  return { ok: true, summary };',
+      '};',
+    ].join('\n');
+
+    this.modelFactoryTtlGuardFn = new lambda.Function(this, 'ModelFactoryTtlGuardFn', {
+      functionName: `${prefix}-mf-ttl-guard`,
+      runtime: lambda.Runtime.NODEJS_22_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromInline(ttlGuardCode),
+      timeout: Duration.seconds(30),
+      memorySize: 128,
+      role: ttlGuardRole,
+      environment: {
+        HIVEMIND_GUARD_REGIONS: 'ap-northeast-2,us-east-2,us-east-1,us-west-2,ap-northeast-1',
+      },
+      description: 'Autonomous $0-idle multi-region TTL Guard sweeping expired hivemind-model-factory EC2 Spot instances',
+    });
+
+    new events.Rule(this, 'ModelFactoryTtlGuardSchedule', {
+      ruleName: `${prefix}-mf-ttl-guard-5m`,
+      schedule: events.Schedule.rate(Duration.minutes(5)),
+      targets: [new targets.LambdaFunction(this.modelFactoryTtlGuardFn)],
+    });
+
     new CfnOutput(this, 'ClusterArn', { value: this.cluster.clusterArn });
     new CfnOutput(this, 'ClusterName', { value: this.cluster.clusterName });
     new CfnOutput(this, 'ArtifactsBucketName', { value: this.artifactsBucket.bucketName });
@@ -430,6 +586,8 @@ export class AwsRuntimeStack extends Stack {
     new CfnOutput(this, 'OperatorTokenSecretArn', { value: this.operatorTokenSecret.secretArn });
     new CfnOutput(this, 'ModelAuthSecretArn', { value: this.modelAuthSecret.secretArn });
     new CfnOutput(this, 'GithubDraftPrSecretArn', { value: this.githubDraftPrSecret.secretArn });
+    new CfnOutput(this, 'HfReleaseTokenSecretArn', { value: this.hfReleaseTokenSecret.secretArn });
+    new CfnOutput(this, 'ModelFactoryTtlGuardFunctionName', { value: this.modelFactoryTtlGuardFn.functionName });
     new CfnOutput(this, 'PublicSubnetIds', {
       value: vpc.publicSubnets.map((subnet) => subnet.subnetId).join(','),
     });
