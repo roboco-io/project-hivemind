@@ -19,6 +19,7 @@ export interface LaunchSpotInstanceInput {
   securityGroupIds?: string[];
   instanceProfileArn?: string;
   userDataScript?: string;
+  extraTags?: Record<string, string>;
 }
 
 export interface LaunchedSpotInstance {
@@ -304,6 +305,16 @@ export class AwsEc2SpotTrainer implements Ec2SpotTrainerPort {
       'TagSpecification.1.Tag.5.Key': 'hivemind:expires-at',
       'TagSpecification.1.Tag.5.Value': input.expiresAtIso,
     };
+
+    if (input.extraTags) {
+      let tagIndex = 6;
+      for (const [k, v] of Object.entries(input.extraTags)) {
+        if (!k || !v || /[\r\n\0]/.test(k) || /[\r\n\0]/.test(v)) continue;
+        params[`TagSpecification.1.Tag.${tagIndex}.Key`] = k;
+        params[`TagSpecification.1.Tag.${tagIndex}.Value`] = v;
+        tagIndex += 1;
+      }
+    }
 
     if (input.availabilityZoneId) {
       params['Placement.AvailabilityZoneId'] = input.availabilityZoneId;

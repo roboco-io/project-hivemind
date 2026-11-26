@@ -40,6 +40,8 @@ export class AwsRuntimeStack extends Stack {
   readonly controlPlaneRole: iam.Role;
   readonly aiWorkerRole: iam.Role;
   readonly verifierRole: iam.Role;
+  readonly trainingInstanceRole: iam.Role;
+  readonly trainingInstanceProfile: iam.CfnInstanceProfile;
   readonly operatorTokenSecret: secretsmanager.Secret;
   readonly workerTokenSecret: secretsmanager.Secret;
   readonly modelAuthSecret: secretsmanager.Secret;
@@ -307,6 +309,56 @@ export class AwsRuntimeStack extends Stack {
     this.artifactsBucket.grantRead(this.verifierRole, 'patches/*');
     this.artifactsBucket.grantPut(this.verifierRole, 'attestations/*');
 
+    // 4. Model Factory EC2 Training Instance Role & Instance Profile:
+    // Strictly scoped to reading models/*/inputs/* and writing models/* (excluding inputs/*) + KMS key usage.
+    // Explicitly ZERO Secrets Manager, ZERO EC2 control, ZERO delivery bundles/patches/attestations access.
+    this.trainingInstanceRole = new iam.Role(this, 'ModelFactoryTrainingInstanceRole', {
+      roleName: `${prefix}-mf-training-instance-role`,
+      assumedBy: new iam.ServicePrincipal('ec2.amazonaws.com'),
+    });
+    this.trainingInstanceRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'ReadModelFactoryInputsOnly',
+        actions: ['s3:GetObject'],
+        resources: [this.artifactsBucket.arnForObjects('models/*/inputs/*')],
+      }),
+    );
+    this.trainingInstanceRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'PutModelFactoryOutputsOnly',
+        actions: ['s3:PutObject'],
+        resources: [this.artifactsBucket.arnForObjects('models/*')],
+      }),
+    );
+    this.trainingInstanceRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'DenyMutatingImmutableInputs',
+        effect: iam.Effect.DENY,
+        actions: ['s3:PutObject', 's3:DeleteObject'],
+        resources: [this.artifactsBucket.arnForObjects('models/*/inputs/*')],
+      }),
+    );
+    this.trainingInstanceRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'KmsAccessForArtifactsBucket',
+        actions: ['kms:Decrypt', 'kms:GenerateDataKey', 'kms:DescribeKey'],
+        resources: [artifactKey.keyArn],
+      }),
+    );
+    this.trainingInstanceProfile = new iam.CfnInstanceProfile(this, 'ModelFactoryTrainingInstanceProfile', {
+      instanceProfileName: `${prefix}-mf-training-instance-profile`,
+      roles: [this.trainingInstanceRole.roleName],
+    });
+
+    // Control Plane may pass ONLY ModelFactoryTrainingInstanceRole to ec2.amazonaws.com.
+    this.controlPlaneRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['iam:PassRole'],
+        resources: [this.trainingInstanceRole.roleArn],
+        conditions: { StringEquals: { 'iam:PassedToService': 'ec2.amazonaws.com' } },
+      }),
+    );
+
     const arm64Platform = {
       cpuArchitecture: ecs.CpuArchitecture.ARM64,
       operatingSystemFamily: ecs.OperatingSystemFamily.LINUX,
@@ -426,6 +478,7 @@ export class AwsRuntimeStack extends Stack {
         HIVEMIND_WORKER_ASSIGN_PUBLIC_IP: 'ENABLED',
         HIVEMIND_GITHUB_SECRET_ARN: this.githubDraftPrSecret.secretArn,
         HIVEMIND_HF_RELEASE_SECRET_ARN: this.hfReleaseTokenSecret.secretArn,
+        HIVEMIND_MF_INSTANCE_PROFILE_ARN: this.trainingInstanceProfile.attrArn,
         HIVEMIND_MF_ALLOWED_REGIONS: 'ap-northeast-2,us-east-2,us-east-1,us-west-2,ap-northeast-1',
         HIVEMIND_MF_BUDGET_CAP_MICROS: '500000000',
         HIVEMIND_ALLOW_VPC_INTERNAL_HTTP: 'true',
@@ -587,6 +640,8 @@ export class AwsRuntimeStack extends Stack {
     new CfnOutput(this, 'ModelAuthSecretArn', { value: this.modelAuthSecret.secretArn });
     new CfnOutput(this, 'GithubDraftPrSecretArn', { value: this.githubDraftPrSecret.secretArn });
     new CfnOutput(this, 'HfReleaseTokenSecretArn', { value: this.hfReleaseTokenSecret.secretArn });
+    new CfnOutput(this, 'ModelFactoryTrainingInstanceRoleArn', { value: this.trainingInstanceRole.roleArn });
+    new CfnOutput(this, 'ModelFactoryTrainingInstanceProfileArn', { value: this.trainingInstanceProfile.attrArn });
     new CfnOutput(this, 'ModelFactoryTtlGuardFunctionName', { value: this.modelFactoryTtlGuardFn.functionName });
     new CfnOutput(this, 'PublicSubnetIds', {
       value: vpc.publicSubnets.map((subnet) => subnet.subnetId).join(','),

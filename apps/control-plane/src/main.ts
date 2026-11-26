@@ -196,11 +196,21 @@ function createAwsModelFactoryOrchestratorFactory() {
         })
       : undefined;
 
+  const defaultInstanceProfileArn = process.env.HIVEMIND_MF_INSTANCE_PROFILE_ARN?.trim() || undefined;
+  const allowedInstanceProfileArns = (process.env.HIVEMIND_MF_ALLOWED_INSTANCE_PROFILE_ARNS ?? defaultInstanceProfileArn ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
   return (store: ModelFactoryStore) =>
     new ModelFactoryOrchestrator({
       store,
       ec2,
       s3,
+      artifactsBucket: bucket,
+      artifactsRegion: region,
+      ...(defaultInstanceProfileArn ? { defaultInstanceProfileArn } : {}),
+      ...(allowedInstanceProfileArns.length ? { allowedInstanceProfileArns } : {}),
       spotFeed,
       ...(hfPublisher ? { hfPublisher } : {}),
     });

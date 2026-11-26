@@ -119,6 +119,22 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
           instanceProfileArn: z.string().min(20).max(256).optional(),
           userDataScript: z.string().max(16_384).optional(),
           s3ArtifactPrefix: z.string().min(1).max(512),
+          inputs: z
+            .strictObject({
+              s3Prefix: z.string().min(1).max(512),
+              digest: hex64.optional(),
+              files: z
+                .array(
+                  z.strictObject({
+                    path: z.string().min(1).max(512),
+                    sha256: hex64,
+                    sizeBytes: z.number().int().min(1).max(50_000_000_000),
+                  }),
+                )
+                .min(1)
+                .max(1000),
+            })
+            .optional(),
         }),
         releasePolicy: z.strictObject({
           mode: z.enum(['hf_release', 's3_artifact_only']),

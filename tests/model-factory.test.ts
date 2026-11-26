@@ -16,7 +16,12 @@ import type {
   ModelArtifactFile,
   ModelArtifactReceipt,
 } from '../packages/contracts/src/model-factory.js';
-import { computeModelManifestDigest, ModelFactoryStore } from '../packages/core/src/model-factory.js';
+import {
+  computeModelManifestDigest,
+  computeTrainingInputsDigest,
+  ModelFactoryStore,
+  OPERATOR_SELF_REPORTED_DISCLAIMER,
+} from '../packages/core/src/model-factory.js';
 
 function sha256(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -202,6 +207,7 @@ test('B1-B7 end-to-end: dynamic EC2 Spot launch -> long-running wake -> S3 recei
         modelId: 'smf-oversized',
         compute: {
           ...sampleJobInput().compute,
+          s3ArtifactPrefix: 'models/smf-oversized/run-01',
           maxTotalCostMicros: 600_000,
         },
       }),
@@ -467,6 +473,8 @@ test('B6 createTrustedHfReleasePublisher rejects mismatched digest and missing a
             metrics: {},
             summary: 'mismatch',
             verifiedAt: '2026-11-26T00:00:00.000Z',
+            attestationSource: 'operator_self_reported',
+            verificationDisclaimer: OPERATOR_SELF_REPORTED_DISCLAIMER,
           },
         }),
       /does not match release attestation/,
@@ -492,4 +500,241 @@ test('MCP model-factory profile registers all 6 Delivery + 7 Model Factory opera
   assert.ok(tools.includes('hivemind_mf_approve_release'));
   assert.ok(tools.includes('hivemind_mf_ledger'));
   assert.equal(tools.length, 13);
+});
+
+test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerprint + preflight, bootstrap metadata, and attestationSource provenance', async () => {
+  const store = new ModelFactoryStore(':memory:');
+  const s3 = makeMemoryS3();
+  const capturedLaunches: Parameters<Ec2SpotTrainerPort['launchSpotInstance']>[0][] = [];
+  const baseEc2 = makeFakeEc2Port();
+  const ec2: Ec2SpotTrainerPort = {
+    ...baseEc2.port,
+    async launchSpotInstance(input, signal) {
+      capturedLaunches.push(input);
+      return baseEc2.port.launchSpotInstance(input, signal);
+    },
+  };
+
+  const approvedProfile = 'arn:aws:iam::<AWS_ACCOUNT_ID>:instance-profile/hivemind-runtime-mf-training-instance-profile';
+  const rogueProfile = 'arn:aws:iam::<AWS_ACCOUNT_ID>:instance-profile/admin-rogue-profile';
+  const orchestrator = new ModelFactoryOrchestrator({
+    store,
+    ec2,
+    s3: s3.port,
+    artifactsBucket: 'hivemind-artifacts',
+    artifactsRegion: 'ap-northeast-2',
+    defaultInstanceProfileArn: approvedProfile,
+    allowedInstanceProfileArns: [approvedProfile],
+  });
+
+  try {
+    // 1. Rogue instanceProfileArn MUST be rejected fail-closed and refund reservation!
+    const rogueJob = store.create(
+      sampleJobInput({
+        compute: {
+          ...sampleJobInput().compute,
+          instanceProfileArn: rogueProfile,
+        },
+      }),
+    );
+    const failedRogue = await orchestrator.approveAndLaunchTraining(
+      rogueJob.id,
+      rogueJob.approvalFingerprint,
+      'Try rogue profile',
+    );
+    assert.equal(failedRogue.status, 'failed');
+    assert.match(failedRogue.failureReason ?? '', /not in Control Plane allowlist/);
+    assert.equal(failedRogue.cost.settledMicros, 0);
+
+    // 2. Pinned inputs are included in approvalFingerprint; changing input SHA-256 changes fingerprint!
+    const scriptBytes = Buffer.from('print("eval ok")\n', 'utf8');
+    const scriptSha = createHash('sha256').update(scriptBytes).digest('hex');
+    const inputsPrefix = 'models/smf-tiny-v1/inputs/b1';
+    const inputFiles = [{ path: 'eval.py', sha256: scriptSha, sizeBytes: scriptBytes.byteLength }];
+    const inputsDigest = computeTrainingInputsDigest(inputsPrefix, inputFiles);
+
+    const jobA = store.create(
+      sampleJobInput({
+        compute: {
+          ...sampleJobInput().compute,
+          userDataScript: '#!/bin/bash\necho "$HIVEMIND_JOB_ID"\n',
+          inputs: { s3Prefix: inputsPrefix, files: inputFiles },
+        },
+      }),
+    );
+    const jobB = store.create(
+      sampleJobInput({
+        compute: {
+          ...sampleJobInput().compute,
+          userDataScript: '#!/bin/bash\necho "$HIVEMIND_JOB_ID"\n',
+          inputs: {
+            s3Prefix: inputsPrefix,
+            files: [{ path: 'eval.py', sha256: 'f'.repeat(64), sizeBytes: scriptBytes.byteLength }],
+          },
+        },
+      }),
+    );
+    assert.equal(jobA.compute.inputs?.digest, inputsDigest);
+    assert.notEqual(jobA.approvalFingerprint, jobB.approvalFingerprint);
+
+    // 3. Missing S3 input fails pre-launch cleanly (never launches EC2).
+    const missingFail = await orchestrator.approveAndLaunchTraining(jobB.id, jobB.approvalFingerprint, 'Missing S3 input');
+    assert.equal(missingFail.status, 'failed');
+    assert.equal(capturedLaunches.length, 0);
+
+    // 4. Upload pinned input to S3 -> Control Plane auto-injects approved instanceProfileArn, metadata tags & userData env!
+    await s3.port.putObject(`${inputsPrefix}/eval.py`, scriptBytes, 'text/x-python');
+    const launched = await orchestrator.approveAndLaunchTraining(jobA.id, jobA.approvalFingerprint, 'Launch pinned inputs');
+    assert.equal(launched.status, 'training_running');
+    const capturedLaunch = capturedLaunches[0]!;
+    assert.ok(capturedLaunch);
+    assert.equal(capturedLaunch.instanceProfileArn, approvedProfile);
+    assert.equal(capturedLaunch.extraTags?.['hivemind:artifact-bucket'], 'hivemind-artifacts');
+    assert.equal(capturedLaunch.extraTags?.['hivemind:inputs-digest'], inputsDigest);
+    assert.match(capturedLaunch.userDataScript ?? '', /export HIVEMIND_JOB_ID=/);
+    assert.match(capturedLaunch.userDataScript ?? '', /export HIVEMIND_INPUTS_MANIFEST_B64=/);
+
+    // 4b. Post-receipt cost settlement race: receipt arrives while EC2 is still 'running',
+    // then instance shuts down -> subsequent wakeDueJobs() MUST still settle cost!
+    const outBytes = Buffer.from('{"ok":true}', 'utf8');
+    const outSha = createHash('sha256').update(outBytes).digest('hex');
+    const outFiles: ModelArtifactFile[] = [{ path: 'out.json', sha256: outSha, sizeBytes: outBytes.byteLength }];
+    const outDigest = computeModelManifestDigest(outFiles);
+    await s3.port.putObject(`${launched.compute.s3ArtifactPrefix}/out.json`, outBytes, 'application/json');
+    await s3.port.putObject(
+      `${launched.compute.s3ArtifactPrefix}/receipt.json`,
+      Buffer.from(
+        JSON.stringify({
+          version: 1,
+          jobId: launched.id,
+          s3Bucket: 'hivemind-artifacts',
+          s3Prefix: launched.compute.s3ArtifactPrefix,
+          manifestDigest: outDigest,
+          files: outFiles,
+          recordedAt: new Date().toISOString(),
+        }),
+        'utf8',
+      ),
+      'application/json',
+    );
+    const wakeWhileRunning = await orchestrator.wakeJob(launched.id);
+    assert.equal(wakeWhileRunning.status, 'evaluating');
+    assert.equal(wakeWhileRunning.cost.settledMicros, null);
+    assert.equal(store.listDueWakeJobs().some((j) => j.id === launched.id), true);
+
+    baseEc2.instances.get(launched.instance!.instanceId)!.state = 'terminated';
+    const settledAfterShutdown = await orchestrator.wakeJob(launched.id);
+    assert.equal(settledAfterShutdown.status, 'evaluating');
+    assert.ok(settledAfterShutdown.cost.settledMicros !== null && settledAfterShutdown.cost.settledMicros > 0);
+    assert.equal(store.listDueWakeJobs().some((j) => j.id === launched.id), false);
+
+    // 5. Attestation provenance: operator /verify-release ALWAYS stamps operator_self_reported + disclaimer;
+    // ONLY worker /verifier-attestation can record independent_verifier!
+    const app = buildApp({ operatorToken: 'op-t', workerToken: 'wk-t' });
+    try {
+      const createdRes = await app.inject({
+        method: 'POST',
+        url: '/api/model-factory/jobs',
+        headers: { authorization: 'Bearer op-t' },
+        payload: sampleJobInput(),
+      });
+      const apiJob = createdRes.json();
+      await app.inject({
+        method: 'POST',
+        url: `/api/model-factory/jobs/${apiJob.id}/approve-training`,
+        headers: { authorization: 'Bearer op-t' },
+        payload: { approvalFingerprint: apiJob.approvalFingerprint, reason: 'ok' },
+      });
+      const files: ModelArtifactFile[] = [{ path: 'out.json', sha256: sha256('{}'), sizeBytes: 2 }];
+      const manifestDigest = computeModelManifestDigest(files);
+      // Force training_running via store-compatible path? Let's test via ModelFactoryStore directly + HTTP API for both routes!
+      const directStore = new ModelFactoryStore(':memory:');
+      try {
+        const j1 = directStore.create(sampleJobInput());
+        directStore.approveTraining(j1.id, j1.approvalFingerprint, 'ok');
+        directStore.recordInstanceLaunched(j1.id, {
+          region: 'us-east-2',
+          availabilityZone: 'us-east-2c',
+          instanceId: 'i-0123456789abcdef0',
+          instanceType: 'g5.xlarge',
+          amiId: 'ami-0123456789abcdef0',
+          expiresAt: '2026-11-26T02:00:00.000Z',
+          nextWakeAt: '2026-11-26T01:05:00.000Z',
+        });
+        directStore.recordArtifactReceipt(j1.id, {
+          version: 1,
+          jobId: j1.id,
+          s3Bucket: 'b',
+          s3Prefix: j1.compute.s3ArtifactPrefix,
+          manifestDigest,
+          files,
+          recordedAt: '2026-11-26T01:01:00.000Z',
+        });
+        const selfAttested = directStore.recordReleaseAttestation(j1.id, {
+          manifestDigest,
+          releaseCheckPassed: true,
+          metrics: { ndcg10: 0.72 },
+          summary: 'operator reported',
+          verifiedAt: '2026-11-26T01:02:00.000Z',
+        });
+        assert.equal(selfAttested.releaseAttestation?.attestationSource, 'operator_self_reported');
+        assert.equal(selfAttested.releaseAttestation?.verificationDisclaimer, OPERATOR_SELF_REPORTED_DISCLAIMER);
+
+        const j2 = directStore.create(sampleJobInput());
+        directStore.approveTraining(j2.id, j2.approvalFingerprint, 'ok');
+        directStore.recordInstanceLaunched(j2.id, {
+          region: 'us-east-2',
+          availabilityZone: 'us-east-2c',
+          instanceId: 'i-0123456789abcdef1',
+          instanceType: 'g5.xlarge',
+          amiId: 'ami-0123456789abcdef0',
+          expiresAt: '2026-11-26T02:00:00.000Z',
+          nextWakeAt: '2026-11-26T01:05:00.000Z',
+        });
+        directStore.recordArtifactReceipt(j2.id, {
+          version: 1,
+          jobId: j2.id,
+          s3Bucket: 'b',
+          s3Prefix: j2.compute.s3ArtifactPrefix,
+          manifestDigest,
+          files,
+          recordedAt: '2026-11-26T01:01:00.000Z',
+        });
+        const verifierAttested = directStore.recordReleaseAttestation(
+          j2.id,
+          {
+            manifestDigest,
+            releaseCheckPassed: true,
+            metrics: { ndcg10: 0.72 },
+            summary: 'independent verifier passed',
+            verifiedAt: '2026-11-26T01:02:00.000Z',
+          },
+          'independent_verifier',
+        );
+        assert.equal(verifierAttested.releaseAttestation?.attestationSource, 'independent_verifier');
+        assert.equal(verifierAttested.releaseAttestation?.verificationDisclaimer, null);
+      } finally {
+        directStore.close();
+      }
+
+      // Operator token MUST NOT call worker-only /verifier-attestation.
+      const forbidden = await app.inject({
+        method: 'POST',
+        url: `/api/model-factory/jobs/${apiJob.id}/verifier-attestation`,
+        headers: { authorization: 'Bearer op-t' },
+        payload: {
+          manifestDigest,
+          releaseCheckPassed: true,
+          metrics: {},
+          summary: 'spoof',
+          verifiedAt: '2026-11-26T01:02:00.000Z',
+        },
+      });
+      assert.equal(forbidden.statusCode, 401);
+    } finally {
+      await app.close();
+    }
+  } finally {
+    store.close();
+  }
 });

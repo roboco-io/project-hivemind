@@ -13,9 +13,13 @@ import type {
   ModelFactoryJobStatus,
   ModelFactoryLedgerSummary,
   ModelReleaseAttestation,
+  ModelReleaseAttestationSource,
   ModelReleaseDecision,
   ModelReleasePolicy,
   ModelReleasePublication,
+  ModelTrainingInputFile,
+  ModelTrainingInputSpec,
+  SubmitModelReleaseAttestation,
   TrainingComputeSpec,
 } from '../../contracts/src/model-factory.js';
 import { DomainError, text } from './store.js';
@@ -34,6 +38,8 @@ const IAM_PROFILE_PATTERN = /^arn:aws:iam::\d{12}:instance-profile\/[A-Za-z0-9+=
 
 const TERMINAL_STATUSES = new Set<ModelFactoryJobStatus>(['released', 'failed', 'cancelled', 'rejected']);
 const DEFAULT_GLOBAL_BUDGET_CAP_MICROS = 500_000_000; // $500 hard central default
+export const OPERATOR_SELF_REPORTED_DISCLAIMER =
+  '이 검사 결과는 운영자/호출자가 직접 보고한 값이며, HIVEMIND가 releaseCheckCommand를 독립 격리 환경에서 실행해 검증하지 않았습니다.';
 
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -45,6 +51,57 @@ function normalizeRelativePath(raw: string, label: string): string {
     throw new DomainError(`Invalid ${label}: ${raw}`, 400);
   }
   return cleaned;
+}
+
+export function computeTrainingInputsDigest(s3Prefix: string, files: ModelTrainingInputFile[]): string {
+  const cleanPrefix = normalizeRelativePath(s3Prefix, 'compute.inputs.s3Prefix');
+  if (!Array.isArray(files) || files.length === 0 || files.length > 1000) {
+    throw new DomainError('compute.inputs.files requires 1..1000 files', 400);
+  }
+  const seen = new Set<string>();
+  const normalized = files
+    .map((f) => {
+      const path = normalizeRelativePath(f.path, 'input file path');
+      if (seen.has(path)) throw new DomainError(`Duplicate input file path: ${path}`, 400);
+      seen.add(path);
+      const sha256 = text(f.sha256, 'input sha256', 64).toLowerCase();
+      if (!HEX64.test(sha256)) throw new DomainError(`Invalid input sha256 for ${path}`, 400);
+      if (!Number.isSafeInteger(f.sizeBytes) || f.sizeBytes < 1 || f.sizeBytes > 50_000_000_000) {
+        throw new DomainError(`Invalid input sizeBytes for ${path}`, 400);
+      }
+      return { path, sha256, sizeBytes: f.sizeBytes };
+    })
+    .sort((a, b) => a.path.localeCompare(b.path));
+  return sha256Hex(JSON.stringify({ version: 1, s3Prefix: cleanPrefix, files: normalized }));
+}
+
+export function validateTrainingInputSpec(
+  raw: Omit<ModelTrainingInputSpec, 'digest'> & { digest?: string },
+  modelId: string,
+): ModelTrainingInputSpec {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new DomainError('compute.inputs must be an object', 400);
+  }
+  const s3Prefix = normalizeRelativePath(raw.s3Prefix, 'compute.inputs.s3Prefix');
+  const expectedPrefixRoot = `models/${modelId}/inputs/`;
+  if (!s3Prefix.startsWith(expectedPrefixRoot) && s3Prefix !== `models/${modelId}/inputs`) {
+    throw new DomainError(`compute.inputs.s3Prefix must start with ${expectedPrefixRoot}`, 400);
+  }
+  const computedDigest = computeTrainingInputsDigest(s3Prefix, raw.files);
+  if (raw.digest !== undefined) {
+    const provided = text(raw.digest, 'compute.inputs.digest', 64).toLowerCase();
+    if (provided !== computedDigest) {
+      throw new DomainError('compute.inputs.digest does not match input files SHA-256 manifest', 400);
+    }
+  }
+  const files = [...raw.files]
+    .map((f) => ({
+      path: normalizeRelativePath(f.path, 'input file path'),
+      sha256: f.sha256.toLowerCase(),
+      sizeBytes: f.sizeBytes,
+    }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+  return { s3Prefix, files, digest: computedDigest };
 }
 
 export function computeModelManifestDigest(files: ModelArtifactFile[]): string {
@@ -68,7 +125,10 @@ export function computeModelManifestDigest(files: ModelArtifactFile[]): string {
   return sha256Hex(JSON.stringify({ version: 1, files: normalized }));
 }
 
-export function validateTrainingComputeSpec(spec: TrainingComputeSpec): TrainingComputeSpec {
+export function validateTrainingComputeSpec(
+  spec: CreateModelFactoryJob['compute'],
+  modelId?: string,
+): TrainingComputeSpec {
   if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
     throw new DomainError('Training compute specification is required', 400);
   }
@@ -131,6 +191,16 @@ export function validateTrainingComputeSpec(spec: TrainingComputeSpec): Training
     userDataScript = spec.userDataScript;
   }
   const s3ArtifactPrefix = normalizeRelativePath(spec.s3ArtifactPrefix, 'compute.s3ArtifactPrefix');
+  if (!s3ArtifactPrefix.startsWith('models/') || s3ArtifactPrefix.split('/').includes('inputs')) {
+    throw new DomainError('compute.s3ArtifactPrefix must start with models/ and must not overlap inputs/', 400);
+  }
+  if (modelId && !s3ArtifactPrefix.startsWith(`models/${modelId}/`)) {
+    throw new DomainError(`compute.s3ArtifactPrefix must start with models/${modelId}/`, 400);
+  }
+  const inputs =
+    spec.inputs === undefined
+      ? undefined
+      : validateTrainingInputSpec(spec.inputs, modelId ?? s3ArtifactPrefix.split('/')[1] ?? 'model');
   const workloadClass =
     spec.workloadClass === undefined ? undefined : text(spec.workloadClass, 'compute.workloadClass', 64);
 
@@ -148,6 +218,7 @@ export function validateTrainingComputeSpec(spec: TrainingComputeSpec): Training
     ...(instanceProfileArn ? { instanceProfileArn } : {}),
     ...(userDataScript !== undefined ? { userDataScript } : {}),
     s3ArtifactPrefix,
+    ...(inputs ? { inputs } : {}),
   };
 }
 
@@ -209,6 +280,9 @@ export function computeModelFactoryApprovalFingerprint(spec: {
         maxTotalCostMicros: spec.compute.maxTotalCostMicros,
         s3ArtifactPrefix: spec.compute.s3ArtifactPrefix,
         userDataSha256: spec.compute.userDataScript ? sha256Hex(spec.compute.userDataScript) : null,
+        ...(spec.compute.inputs
+          ? { inputsS3Prefix: spec.compute.inputs.s3Prefix, inputsDigest: spec.compute.inputs.digest }
+          : {}),
       },
       releasePolicy: spec.releasePolicy,
     }),
@@ -344,7 +418,9 @@ export class ModelFactoryStore {
 
   listDueWakeJobs(nowMs = this.now()): ModelFactoryJob[] {
     return this.list().filter((job) => {
-      if (job.status !== 'training_running') return false;
+      const needsTrainingWake = job.status === 'training_running';
+      const needsCostSettlement = Boolean(job.instance && job.cost.settledMicros === null && !TERMINAL_STATUSES.has(job.status));
+      if (!needsTrainingWake && !needsCostSettlement) return false;
       const wakeDue = job.nextWakeAt ? Date.parse(job.nextWakeAt) <= nowMs : true;
       const ttlDue = job.instance?.expiresAt ? Date.parse(job.instance.expiresAt) <= nowMs : false;
       return wakeDue || ttlDue;
@@ -366,7 +442,7 @@ export class ModelFactoryStore {
       if (!HEX40.test(baseCommit)) {
         throw new DomainError('Invalid baseCommit (40-char hex SHA required)', 400);
       }
-      const compute = validateTrainingComputeSpec(input.compute);
+      const compute = validateTrainingComputeSpec(input.compute, modelId);
       const releasePolicy = validateModelReleasePolicy(input.releasePolicy);
       const approvalFingerprint = computeModelFactoryApprovalFingerprint({
         modelId,
@@ -632,7 +708,11 @@ export class ModelFactoryStore {
     });
   }
 
-  recordReleaseAttestation(id: string, attestation: ModelReleaseAttestation): ModelFactoryJob {
+  recordReleaseAttestation(
+    id: string,
+    attestation: SubmitModelReleaseAttestation,
+    source: ModelReleaseAttestationSource = 'operator_self_reported',
+  ): ModelFactoryJob {
     return this.tx(() => {
       const job = this.load(id);
       if (job.status !== 'evaluating' || !job.receipt) {
@@ -642,12 +722,17 @@ export class ModelFactoryStore {
       if (digest !== job.receipt.manifestDigest) {
         throw new DomainError('Release attestation manifestDigest does not match S3 artifact receipt', 409);
       }
+      const normalizedSource: ModelReleaseAttestationSource =
+        source === 'independent_verifier' ? 'independent_verifier' : 'operator_self_reported';
       const normalized: ModelReleaseAttestation = {
         manifestDigest: digest,
         releaseCheckPassed: Boolean(attestation.releaseCheckPassed),
         metrics: attestation.metrics && typeof attestation.metrics === 'object' ? { ...attestation.metrics } : {},
         summary: text(attestation.summary, 'attestation summary', 4000),
         verifiedAt: text(attestation.verifiedAt, 'verifiedAt', 64),
+        attestationSource: normalizedSource,
+        verificationDisclaimer:
+          normalizedSource === 'independent_verifier' ? null : OPERATOR_SELF_REPORTED_DISCLAIMER,
       };
       job.releaseAttestation = normalized;
       if (normalized.releaseCheckPassed) {
@@ -663,6 +748,7 @@ export class ModelFactoryStore {
       this.emit(saved.id, 'model_factory.release_attested', {
         manifestDigest: digest,
         releaseCheckPassed: normalized.releaseCheckPassed,
+        attestationSource: normalized.attestationSource,
         nextStatus: saved.status,
       });
       return saved;

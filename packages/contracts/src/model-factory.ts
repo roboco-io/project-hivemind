@@ -19,6 +19,18 @@ export type ModelFactoryWaitReason =
   | 'spot_capacity_retry'
   | null;
 
+export interface ModelTrainingInputFile {
+  path: string;
+  sha256: string;
+  sizeBytes: number;
+}
+
+export interface ModelTrainingInputSpec {
+  s3Prefix: string;
+  files: ModelTrainingInputFile[];
+  digest: string;
+}
+
 export interface TrainingComputeSpec {
   region: string;
   availabilityZoneId?: string;
@@ -33,6 +45,7 @@ export interface TrainingComputeSpec {
   instanceProfileArn?: string;
   userDataScript?: string;
   s3ArtifactPrefix: string;
+  inputs?: ModelTrainingInputSpec;
 }
 
 export interface ModelArtifactFile {
@@ -59,13 +72,22 @@ export interface ModelReleasePolicy {
   releaseCheckCommand: string[];
 }
 
+export type ModelReleaseAttestationSource = 'independent_verifier' | 'operator_self_reported';
+
 export interface ModelReleaseAttestation {
   manifestDigest: string;
   releaseCheckPassed: boolean;
   metrics: Record<string, number | string | boolean>;
   summary: string;
   verifiedAt: string;
+  attestationSource: ModelReleaseAttestationSource;
+  verificationDisclaimer: string | null;
 }
+
+export type SubmitModelReleaseAttestation = Omit<
+  ModelReleaseAttestation,
+  'attestationSource' | 'verificationDisclaimer'
+>;
 
 export interface ModelReleaseDecision {
   decision: 'approve' | 'reject';
@@ -147,7 +169,9 @@ export interface CreateModelFactoryJob {
   modelId: string;
   repository: string;
   baseCommit: string;
-  compute: TrainingComputeSpec;
+  compute: Omit<TrainingComputeSpec, 'inputs'> & {
+    inputs?: Omit<ModelTrainingInputSpec, 'digest'> & { digest?: string };
+  };
   releasePolicy: ModelReleasePolicy;
 }
 

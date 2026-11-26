@@ -77,7 +77,7 @@ export function buildApp(options: AppOptions = {}) {
   }
   app.addHook('onClose',async()=>{if(mfWakeTimer)clearInterval(mfWakeTimer);deliveryStore.close();modelFactoryStore.close();autonomousStore.close();toolAuditDb.close();});
   registerDeliveryRoutes(app,{store:deliveryStore,operatorToken,workerToken,orchestrator:deliveryOrchestrator});
-  registerModelFactoryRoutes(app,{store:modelFactoryStore,operatorToken,orchestrator:modelFactoryOrchestrator});
+  registerModelFactoryRoutes(app,{store:modelFactoryStore,operatorToken,workerToken,orchestrator:modelFactoryOrchestrator});
   app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});
   app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks/*',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});
   async function autonomousGuard(request:FastifyRequest,reply:FastifyReply){

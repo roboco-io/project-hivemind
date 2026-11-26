@@ -82,10 +82,14 @@ export function createTrustedHfReleasePublisher(config: TrustedHfReleasePublishe
         expiresAt: nowMs + 30 * 60 * 1000,
       };
 
+      const provenanceTag =
+        attestation.attestationSource === 'independent_verifier'
+          ? 'independent_verifier'
+          : 'operator_self_reported';
       const proof = await hfLfsCommit(invocation, token, manifest, {
         repository: job.releasePolicy.hfRepository,
         revision,
-        message: `HIVEMIND verified release ${job.modelId} (manifest ${receipt.manifestDigest.slice(0, 12)})`,
+        message: `HIVEMIND release ${job.modelId} (manifest ${receipt.manifestDigest.slice(0, 12)}, check: ${provenanceTag})`,
         visibility: job.releasePolicy.visibility,
         allowPublicLarge: config.allowPublicLarge ?? job.releasePolicy.visibility === 'public',
         forbiddenValues: config.forbiddenValues,

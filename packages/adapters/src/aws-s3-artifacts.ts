@@ -14,6 +14,7 @@ export interface AwsS3ArtifactsConfig {
 export interface S3ObjectPort {
   putObject(key: string, body: Uint8Array, contentType: string, signal?: AbortSignal): Promise<{ sha256: string; etag?: string }>;
   getObject(key: string, expectedSha256?: string, signal?: AbortSignal): Promise<Uint8Array>;
+  headObject?(key: string, signal?: AbortSignal): Promise<{ contentLength: number; etag?: string }>;
 }
 
 const BUCKET_PATTERN = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
@@ -39,7 +40,7 @@ function encodeS3Path(key: string): string {
 }
 
 function signS3Request(options: {
-  method: 'GET' | 'PUT';
+  method: 'GET' | 'PUT' | 'HEAD';
   region: string;
   bucket: string;
   key: string;
@@ -151,6 +152,37 @@ export function createAwsS3ArtifactsPort(config: AwsS3ArtifactsConfig): S3Object
         }
       }
       return bytes;
+    },
+
+    async headObject(key, signal) {
+      const credentials = await config.credentials();
+      const signed = signS3Request({
+        method: 'HEAD',
+        region: config.region,
+        bucket: config.bucket,
+        key,
+        body: new Uint8Array(0),
+        credentials,
+        nowMs: now(),
+      });
+      const response = await fetchImpl(signed.url, {
+        method: 'HEAD',
+        headers: signed.headers,
+        redirect: 'error',
+        signal: signal ?? AbortSignal.timeout(15_000),
+      });
+      if (!response.ok) {
+        throw new Error(`S3 HEAD ${key} failed with HTTP ${response.status}`);
+      }
+      const rawLength = response.headers.get('content-length');
+      const contentLength = rawLength !== null ? Number(rawLength) : -1;
+      if (!Number.isSafeInteger(contentLength) || contentLength < 0) {
+        throw new Error(`S3 HEAD ${key} returned invalid content-length`);
+      }
+      return {
+        contentLength,
+        etag: response.headers.get('etag') ?? undefined,
+      };
     },
   };
 }

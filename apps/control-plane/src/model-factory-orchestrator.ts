@@ -27,10 +27,58 @@ export interface ModelFactoryOrchestratorOptions {
   store: ModelFactoryStore;
   ec2: Ec2SpotTrainerPort;
   s3: S3ObjectPort;
+  artifactsBucket?: string;
+  artifactsRegion?: string;
+  defaultInstanceProfileArn?: string;
+  allowedInstanceProfileArns?: string[];
   hfPublisher?: TrustedHfReleasePublisherPort;
   spotFeed?: SpotPlacementFeedPort;
   wakeIntervalMs?: number;
   now?: () => number;
+}
+
+const MAX_INLINE_INPUT_VERIFY_BYTES = 5 * 1024 * 1024; // 5 MiB full SHA-256 preflight; larger verified via HEAD size + instance-side SHA-256
+
+function shellSingleQuote(value: string): string {
+  if (/[\r\n\0]/.test(value)) throw new Error('Unsafe control character in bootstrap environment value');
+  return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+export function composeTrainingUserData(
+  job: ModelFactoryJob,
+  envMeta: { artifactsBucket?: string; artifactsRegion?: string },
+): string | undefined {
+  if (job.compute.userDataScript === undefined) return undefined;
+  const lines = [
+    `export HIVEMIND_JOB_ID=${shellSingleQuote(job.id)}`,
+    `export HIVEMIND_MODEL_ID=${shellSingleQuote(job.modelId)}`,
+    `export HIVEMIND_ARTIFACT_PREFIX=${shellSingleQuote(job.compute.s3ArtifactPrefix)}`,
+  ];
+  if (envMeta.artifactsBucket) {
+    lines.push(`export HIVEMIND_ARTIFACTS_BUCKET=${shellSingleQuote(envMeta.artifactsBucket)}`);
+  }
+  if (envMeta.artifactsRegion) {
+    lines.push(`export HIVEMIND_ARTIFACTS_REGION=${shellSingleQuote(envMeta.artifactsRegion)}`);
+  }
+  if (job.compute.inputs) {
+    const manifestB64 = Buffer.from(JSON.stringify(job.compute.inputs), 'utf8').toString('base64');
+    lines.push(`export HIVEMIND_INPUTS_PREFIX=${shellSingleQuote(job.compute.inputs.s3Prefix)}`);
+    lines.push(`export HIVEMIND_INPUTS_DIGEST=${shellSingleQuote(job.compute.inputs.digest)}`);
+    lines.push(`export HIVEMIND_INPUTS_MANIFEST_B64=${shellSingleQuote(manifestB64)}`);
+  }
+  const header = ['# --- HIVEMIND pinned job metadata (injected by Control Plane) ---', ...lines, '# --- end HIVEMIND metadata ---'].join('\n');
+  const script = job.compute.userDataScript;
+  let combined: string;
+  if (script.startsWith('#!')) {
+    const nl = script.indexOf('\n');
+    combined = nl === -1 ? `${script}\n${header}\n` : `${script.slice(0, nl + 1)}${header}\n${script.slice(nl + 1)}`;
+  } else {
+    combined = `#!/bin/bash\n${header}\n${script}`;
+  }
+  if (Buffer.byteLength(combined, 'utf8') > 16_384) {
+    throw new Error('Composed userDataScript with HIVEMIND metadata exceeds EC2 16384-byte limit');
+  }
+  return combined;
 }
 
 export class ModelFactoryOrchestrator {
@@ -40,6 +88,41 @@ export class ModelFactoryOrchestrator {
   constructor(private readonly options: ModelFactoryOrchestratorOptions) {
     this.wakeIntervalMs = options.wakeIntervalMs ?? 300_000; // 5m default long-running wake interval
     this.now = options.now ?? Date.now;
+  }
+
+  private resolveApprovedInstanceProfileArn(requested?: string): string | undefined {
+    const allowed = new Set<string>([
+      ...(this.options.allowedInstanceProfileArns ?? []),
+      ...(this.options.defaultInstanceProfileArn ? [this.options.defaultInstanceProfileArn] : []),
+    ]);
+    if (requested) {
+      if (allowed.size === 0 || !allowed.has(requested)) {
+        throw new Error(
+          `Requested instanceProfileArn is not in Control Plane allowlist: ${requested}`,
+        );
+      }
+      return requested;
+    }
+    return this.options.defaultInstanceProfileArn;
+  }
+
+  private async verifyPinnedInputsInS3(job: ModelFactoryJob, signal?: AbortSignal): Promise<void> {
+    if (!job.compute.inputs) return;
+    const { s3Prefix, files } = job.compute.inputs;
+    for (const file of files) {
+      const key = `${s3Prefix}/${file.path}`;
+      if (file.sizeBytes <= MAX_INLINE_INPUT_VERIFY_BYTES) {
+        const bytes = await this.options.s3.getObject(key, file.sha256, signal);
+        if (bytes.byteLength !== file.sizeBytes) {
+          throw new Error(`Pinned input size mismatch for ${key}: expected ${file.sizeBytes}, got ${bytes.byteLength}`);
+        }
+      } else if (this.options.s3.headObject) {
+        const head = await this.options.s3.headObject(key, signal);
+        if (head.contentLength !== file.sizeBytes) {
+          throw new Error(`Pinned input size mismatch for ${key}: expected ${file.sizeBytes}, got ${head.contentLength}`);
+        }
+      }
+    }
   }
 
   async approveAndLaunchTraining(
@@ -75,6 +158,25 @@ export class ModelFactoryOrchestrator {
     const nextWakeAt = new Date(nowMs + Math.min(this.wakeIntervalMs, approved.compute.maxLifetimeMs)).toISOString();
 
     try {
+      const instanceProfileArn = this.resolveApprovedInstanceProfileArn(approved.compute.instanceProfileArn);
+      await this.verifyPinnedInputsInS3(approved, signal);
+      const userDataScript = composeTrainingUserData(approved, {
+        artifactsBucket: this.options.artifactsBucket,
+        artifactsRegion: this.options.artifactsRegion,
+      });
+
+      const extraTags: Record<string, string> = {
+        'hivemind:artifact-prefix': approved.compute.s3ArtifactPrefix,
+        ...(this.options.artifactsBucket ? { 'hivemind:artifact-bucket': this.options.artifactsBucket } : {}),
+        ...(this.options.artifactsRegion ? { 'hivemind:artifact-region': this.options.artifactsRegion } : {}),
+        ...(approved.compute.inputs
+          ? {
+              'hivemind:inputs-prefix': approved.compute.inputs.s3Prefix,
+              'hivemind:inputs-digest': approved.compute.inputs.digest,
+            }
+          : {}),
+      };
+
       const launched = await this.options.ec2.launchSpotInstance(
         {
           jobId: approved.id,
@@ -87,8 +189,9 @@ export class ModelFactoryOrchestrator {
           expiresAtIso,
           ...(approved.compute.subnetId ? { subnetId: approved.compute.subnetId } : {}),
           ...(approved.compute.securityGroupIds ? { securityGroupIds: approved.compute.securityGroupIds } : {}),
-          ...(approved.compute.instanceProfileArn ? { instanceProfileArn: approved.compute.instanceProfileArn } : {}),
-          ...(approved.compute.userDataScript !== undefined ? { userDataScript: approved.compute.userDataScript } : {}),
+          ...(instanceProfileArn ? { instanceProfileArn } : {}),
+          ...(userDataScript !== undefined ? { userDataScript } : {}),
+          extraTags,
         },
         signal,
       );
@@ -113,6 +216,15 @@ export class ModelFactoryOrchestrator {
     try {
       const raw = await this.options.s3.getObject(receiptKey, undefined, signal);
       const parsed = JSON.parse(Buffer.from(raw).toString('utf8')) as ModelArtifactReceipt;
+      if (this.options.s3.headObject && Array.isArray(parsed.files)) {
+        for (const file of parsed.files) {
+          const objKey = `${job.compute.s3ArtifactPrefix}/${file.path}`;
+          const head = await this.options.s3.headObject(objKey, signal);
+          if (head.contentLength !== file.sizeBytes) {
+            throw new Error(`Artifact size mismatch for ${objKey}: expected ${file.sizeBytes}, got ${head.contentLength}`);
+          }
+        }
+      }
       return parsed;
     } catch {
       return null;
@@ -132,7 +244,9 @@ export class ModelFactoryOrchestrator {
 
   async wakeJob(jobId: string, signal?: AbortSignal): Promise<ModelFactoryJob> {
     let job = this.options.store.get(jobId);
-    if (job.status !== 'training_running' || !job.instance) {
+    const needsTrainingWake = job.status === 'training_running';
+    const needsSettlementWake = Boolean(job.instance && job.cost.settledMicros === null);
+    if (!job.instance || (!needsTrainingWake && !needsSettlementWake)) {
       return job;
     }
 
@@ -158,9 +272,11 @@ export class ModelFactoryOrchestrator {
       ...(forcedReason ? { forcedTerminationReason: forcedReason, diagnostic: forcedReason } : {}),
     });
 
-    const receipt = await this.tryLoadS3Receipt(job, signal);
-    if (receipt) {
-      job = this.options.store.recordArtifactReceipt(job.id, receipt);
+    if (!job.receipt) {
+      const receipt = await this.tryLoadS3Receipt(job, signal);
+      if (receipt) {
+        job = this.options.store.recordArtifactReceipt(job.id, receipt);
+      }
     }
 
     if (isEnded && job.cost.settledMicros === null) {
@@ -171,7 +287,7 @@ export class ModelFactoryOrchestrator {
       });
     }
 
-    if (isEnded && !job.receipt) {
+    if (isEnded && !job.receipt && job.status === 'training_running') {
       const reason =
         forcedReason ??
         `EC2 Spot instance ${job.instance!.instanceId} ended (${effectiveState}) without S3 artifact receipt${described.stateReason ? `: ${described.stateReason}` : ''}`;

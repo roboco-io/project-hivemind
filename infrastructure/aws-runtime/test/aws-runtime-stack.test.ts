@@ -90,6 +90,7 @@ test('enforces strict 3-way secret separation across Control Plane, AI Worker, V
       'ControlPlaneTaskRole',
       'AiWorkerTaskRole',
       'VerifierTaskRole',
+      'ModelFactoryTrainingInstanceRole',
       'ControlPlaneExecutionRole',
       'WorkerExecutionRole',
     ]) {
@@ -103,17 +104,35 @@ test('enforces strict 3-way secret separation across Control Plane, AI Worker, V
   const verifierDoc = byRole.get('VerifierTaskRole') ?? '';
   const cpExecDoc = byRole.get('ControlPlaneExecutionRole') ?? '';
   const wkExecDoc = byRole.get('WorkerExecutionRole') ?? '';
+  const trainDoc = byRole.get('ModelFactoryTrainingInstanceRole') ?? '';
 
   // Control plane can read GitHub Draft PR secret, HF release secret, run/tag ECS tasks,
-  // manage scoped Model Factory EC2 Spot instances, and open SSM Exec channels, never model auth.
+  // manage scoped Model Factory EC2 Spot instances, pass ONLY ModelFactoryTrainingInstanceRole to ec2.amazonaws.com,
+  // and open SSM Exec channels, never model auth.
   assert.match(cpDoc, /GithubDraftPrSecret/);
   assert.match(cpDoc, /HfReleaseTokenSecret/);
   assert.match(cpDoc, /ecs:RunTask/);
   assert.match(cpDoc, /ecs:TagResource/);
   assert.match(cpDoc, /ec2:TerminateInstances/);
   assert.match(cpDoc, /hivemind-model-factory/);
+  assert.match(cpDoc, /ec2\.amazonaws\.com/);
+  assert.match(cpDoc, /ModelFactoryTrainingInstanceRole/);
   assert.match(cpDoc, /ssmmessages:OpenDataChannel/);
   assert.doesNotMatch(cpDoc, /ModelSubscriptionAuthSecret/);
+
+  // Training instance role: reads models/*/inputs/*, writes models/* (with explicit Deny on inputs/*), uses KMS ONLY;
+  // NEVER touches Secrets Manager, EC2 control, or delivery prefixes.
+  assert.match(trainDoc, /models\/\*\/inputs\/\*/);
+  assert.match(trainDoc, /"Effect":"Deny"/);
+  assert.match(trainDoc, /kms:GenerateDataKey/);
+  assert.doesNotMatch(trainDoc, /secretsmanager:/);
+  assert.doesNotMatch(trainDoc, /ec2:/);
+  assert.doesNotMatch(trainDoc, /bundles\/\*/);
+  assert.doesNotMatch(trainDoc, /GithubDraftPrSecret/);
+  assert.doesNotMatch(trainDoc, /HfReleaseTokenSecret/);
+  template.hasResourceProperties('AWS::IAM::InstanceProfile', {
+    InstanceProfileName: 'hivemind-dev-mf-training-instance-profile',
+  });
 
   // Control Plane execution role reads operator + worker tokens; Worker execution role reads ONLY worker token.
   assert.match(cpExecDoc, /OperatorTokenSecret/);

@@ -2,8 +2,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type {
   CreateModelFactoryJob,
   ModelArtifactReceipt,
-  ModelReleaseAttestation,
   ModelReleaseDecision,
+  SubmitModelReleaseAttestation,
 } from '../../../packages/contracts/src/model-factory.js';
 import type { ModelFactoryStore } from '../../../packages/core/src/model-factory.js';
 import { DomainError, equalSecret } from '../../../packages/core/src/store.js';
@@ -12,14 +12,21 @@ import type { ModelFactoryOrchestrator } from './model-factory-orchestrator.js';
 export interface ModelFactoryApiOptions {
   store: ModelFactoryStore;
   operatorToken: string;
+  workerToken?: string;
   orchestrator?: ModelFactoryOrchestrator;
 }
 
 export function registerModelFactoryRoutes(app: FastifyInstance, options: ModelFactoryApiOptions): void {
-  const { store, operatorToken, orchestrator } = options;
+  const { store, operatorToken, workerToken, orchestrator } = options;
 
   const operatorOnly = async (request: FastifyRequest, reply: FastifyReply) => {
     if (!equalSecret(request.headers.authorization ?? '', `Bearer ${operatorToken}`)) {
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
+  };
+
+  const workerOnly = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!workerToken || !equalSecret(request.headers.authorization ?? '', `Bearer ${workerToken}`)) {
       return reply.code(401).send({ error: 'Unauthorized' });
     }
   };
@@ -75,10 +82,18 @@ export function registerModelFactoryRoutes(app: FastifyInstance, options: ModelF
     async (request) => store.recordArtifactReceipt(request.params.id, request.body),
   );
 
-  app.post<{ Params: { id: string }; Body: ModelReleaseAttestation }>(
+  // Operator self-reported attestation: ALWAYS stamped with attestationSource='operator_self_reported' + explicit disclaimer.
+  app.post<{ Params: { id: string }; Body: SubmitModelReleaseAttestation }>(
     '/api/model-factory/jobs/:id/verify-release',
     { onRequest: operatorOnly, bodyLimit: 32768 },
-    async (request) => store.recordReleaseAttestation(request.params.id, request.body),
+    async (request) => store.recordReleaseAttestation(request.params.id, request.body, 'operator_self_reported'),
+  );
+
+  // Independent verifier attestation: authenticated strictly with workerToken (never operatorToken).
+  app.post<{ Params: { id: string }; Body: SubmitModelReleaseAttestation }>(
+    '/api/model-factory/jobs/:id/verifier-attestation',
+    { onRequest: workerOnly, bodyLimit: 32768 },
+    async (request) => store.recordReleaseAttestation(request.params.id, request.body, 'independent_verifier'),
   );
 
   app.post<{ Params: { id: string }; Body: Omit<ModelReleaseDecision, 'decidedAt'> }>(
