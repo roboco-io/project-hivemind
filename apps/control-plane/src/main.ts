@@ -2,7 +2,7 @@ import {createAutonomousCloudProxy} from './autonomous-cloud-proxy.js';
 import { buildApp } from './app.js';
 import { configurationGitEnvironment, configurationScope, loadCloudflareConfig, loadCloudWorkflowChecks } from './cloudflare-config.js';
 import { DeliveryOrchestrator } from './delivery-orchestrator.js';
-import { ModelFactoryOrchestrator } from './model-factory-orchestrator.js';
+import { ModelFactoryOrchestrator, parseRegionNetworkRegistry } from './model-factory-orchestrator.js';
 import { CollabOrchestrator } from './collab-orchestrator.js';
 import { DsqlCollaborationRepository } from '../../../packages/adapters/src/aws-dsql.js';
 import { AwsEc2SpotTrainer } from '../../../packages/adapters/src/aws-ec2-spot-trainer.js';
@@ -12,6 +12,7 @@ import { AwsMultiRegionEcsDriver } from '../../../packages/adapters/src/aws-mult
 import { createEcsTaskCredentialsProvider } from '../../../packages/adapters/src/aws-ecs-metadata-creds.js';
 import { createAwsS3ArtifactsPort } from '../../../packages/adapters/src/aws-s3-artifacts.js';
 import { createAwsSecretsManagerPort } from '../../../packages/adapters/src/aws-secrets-manager.js';
+import { createAwsPublicAmiResolver } from '../../../packages/adapters/src/aws-ssm-public-ami.js';
 import { createSpotPlacementFeedPort, DEFAULT_SPOT_FEED_URL } from '../../../packages/adapters/src/spot-placement-feed.js';
 import type { AwsSpokeRegionConfig } from '../../../packages/contracts/src/multi-region.js';
 import { createCloudPort } from '../../../packages/adapters/src/cloudflare.js';
@@ -199,6 +200,9 @@ function createAwsModelFactoryOrchestratorFactory() {
         })
       : undefined;
 
+  const regionNetworks = parseRegionNetworkRegistry(process.env.HIVEMIND_MF_REGION_NETWORKS_JSON, allowedRegions);
+  const amiResolver = createAwsPublicAmiResolver({ allowedRegions, credentials });
+
   const defaultInstanceProfileArn = process.env.HIVEMIND_MF_INSTANCE_PROFILE_ARN?.trim() || undefined;
   const allowedInstanceProfileArns = (process.env.HIVEMIND_MF_ALLOWED_INSTANCE_PROFILE_ARNS ?? defaultInstanceProfileArn ?? '')
     .split(',')
@@ -212,6 +216,7 @@ function createAwsModelFactoryOrchestratorFactory() {
       s3,
       artifactsBucket: bucket,
       artifactsRegion: region,
+      ...(regionNetworks ? { regionNetworks, amiResolver } : {}),
       ...(defaultInstanceProfileArn ? { defaultInstanceProfileArn } : {}),
       ...(allowedInstanceProfileArns.length ? { allowedInstanceProfileArns } : {}),
       spotFeed,

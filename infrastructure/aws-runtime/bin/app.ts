@@ -54,6 +54,9 @@ if (spokeRegion) {
       allowedRegions: [primaryRegion],
       resourcePrefix,
       controlPlaneDesiredCount,
+      ...(process.env.HIVEMIND_MF_REGION_NETWORKS_JSON?.trim()
+        ? { modelFactoryRegionNetworksJson: process.env.HIVEMIND_MF_REGION_NETWORKS_JSON.trim() }
+        : {}),
     },
   });
 }

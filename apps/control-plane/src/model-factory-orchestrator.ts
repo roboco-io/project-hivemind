@@ -10,6 +10,10 @@ import type {
   ExpiredSpotSweepResult,
 } from '../../../packages/adapters/src/aws-ec2-spot-trainer.js';
 import type { S3ObjectPort } from '../../../packages/adapters/src/aws-s3-artifacts.js';
+import {
+  PUBLIC_AMI_SSM_PARAMETER_PATTERN,
+  type PublicAmiResolverPort,
+} from '../../../packages/adapters/src/aws-ssm-public-ami.js';
 import type { SpotPlacementFeedPort } from '../../../packages/adapters/src/spot-placement-feed.js';
 import type { ModelFactoryStore } from '../../../packages/core/src/model-factory.js';
 import { selectOptimalSpotPlacement } from '../../../packages/core/src/multi-region.js';
@@ -23,6 +27,90 @@ export interface TrustedHfReleasePublisherPort {
   }): Promise<ModelReleasePublication>;
 }
 
+/**
+ * Operator-configured network and AMI defaults for one region.
+ * A job uses these when it names the region in `candidateRegions` but gives no `regionOverrides` entry for it.
+ */
+export interface RegionNetworkDefaults {
+  subnetIds?: string[];
+  securityGroupIds?: string[];
+  amiId?: string;
+  /** AWS-owned public SSM parameter (`/aws/service/...`) that holds the latest AMI ID for this region. */
+  amiSsmParameter?: string;
+}
+
+const REGISTRY_REGION_PATTERN = /^[a-z]{2}(-gov)?-[a-z]+-\d$/;
+const REGISTRY_SUBNET_PATTERN = /^subnet-[0-9a-f]{8,17}$/;
+const REGISTRY_SG_PATTERN = /^sg-[0-9a-f]{8,17}$/;
+const REGISTRY_AMI_PATTERN = /^ami-[0-9a-f]{8,17}$/;
+
+function registryIdList(value: unknown, pattern: RegExp, label: string, max: number): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length === 0 || value.length > max) {
+    throw new Error(`${label} must contain 1..${max} entries`);
+  }
+  return value.map((item) => {
+    if (typeof item !== 'string' || !pattern.test(item)) throw new Error(`Invalid ${label} entry`);
+    return item;
+  });
+}
+
+/**
+ * Parses `HIVEMIND_MF_REGION_NETWORKS_JSON`. Fails closed: an unknown region, an unknown field or a
+ * malformed ID rejects the whole registry, so a typo cannot silently send an instance to a wrong network.
+ */
+export function parseRegionNetworkRegistry(
+  raw: string | undefined,
+  allowedRegions: string[],
+): Record<string, RegionNetworkDefaults> | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error('HIVEMIND_MF_REGION_NETWORKS_JSON is not valid JSON');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('HIVEMIND_MF_REGION_NETWORKS_JSON must be an object keyed by region');
+  }
+  const allowed = new Set(allowedRegions);
+  const registry: Record<string, RegionNetworkDefaults> = {};
+  for (const [region, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!REGISTRY_REGION_PATTERN.test(region) || !allowed.has(region)) {
+      throw new Error(`Region network registry names a region outside the allowlist: ${region}`);
+    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error(`Region network registry entry for ${region} must be an object`);
+    }
+    const entry = value as Record<string, unknown>;
+    for (const key of Object.keys(entry)) {
+      if (!['subnetIds', 'securityGroupIds', 'amiId', 'amiSsmParameter'].includes(key)) {
+        throw new Error(`Region network registry entry for ${region} has unknown field: ${key}`);
+      }
+    }
+    const subnetIds = registryIdList(entry.subnetIds, REGISTRY_SUBNET_PATTERN, `${region}.subnetIds`, 8);
+    const securityGroupIds = registryIdList(entry.securityGroupIds, REGISTRY_SG_PATTERN, `${region}.securityGroupIds`, 5);
+    if (entry.amiId !== undefined && (typeof entry.amiId !== 'string' || !REGISTRY_AMI_PATTERN.test(entry.amiId))) {
+      throw new Error(`Invalid ${region}.amiId`);
+    }
+    if (
+      entry.amiSsmParameter !== undefined &&
+      (typeof entry.amiSsmParameter !== 'string' ||
+        !PUBLIC_AMI_SSM_PARAMETER_PATTERN.test(entry.amiSsmParameter) ||
+        entry.amiSsmParameter.includes('..'))
+    ) {
+      throw new Error(`Invalid ${region}.amiSsmParameter (must be under /aws/service/)`);
+    }
+    registry[region] = {
+      ...(subnetIds ? { subnetIds } : {}),
+      ...(securityGroupIds ? { securityGroupIds } : {}),
+      ...(entry.amiId !== undefined ? { amiId: entry.amiId as string } : {}),
+      ...(entry.amiSsmParameter !== undefined ? { amiSsmParameter: entry.amiSsmParameter as string } : {}),
+    };
+  }
+  return registry;
+}
+
 export interface ModelFactoryOrchestratorOptions {
   store: ModelFactoryStore;
   ec2: Ec2SpotTrainerPort;
@@ -33,6 +121,10 @@ export interface ModelFactoryOrchestratorOptions {
   allowedInstanceProfileArns?: string[];
   hfPublisher?: TrustedHfReleasePublisherPort;
   spotFeed?: SpotPlacementFeedPort;
+  /** Per-region network and AMI defaults; a job's own `regionOverrides` entry always wins. */
+  regionNetworks?: Record<string, RegionNetworkDefaults>;
+  /** Resolves `RegionNetworkDefaults.amiSsmParameter`; without it that field is ignored. */
+  amiResolver?: PublicAmiResolverPort;
   wakeIntervalMs?: number;
   now?: () => number;
 }
@@ -210,15 +302,38 @@ export class ModelFactoryOrchestrator {
 
       const attemptErrors: string[] = [];
       for (const target of rankedTargets) {
+        // Precedence per region: the job's regionOverrides entry, then the job's own top-level values
+        // (they describe the job's primary region only), then the operator registry, then the legacy
+        // fallback to the job's top-level values.
         const override = approved.compute.regionOverrides?.[target.region];
-        const amiId = override?.amiId ?? approved.compute.amiId;
-        const securityGroupIds = override?.securityGroupIds ?? approved.compute.securityGroupIds;
-        const candidateSubnets =
+        const defaults = this.options.regionNetworks?.[target.region];
+        const isPrimaryRegion = target.region === approved.compute.region;
+        let amiId = override?.amiId ?? (isPrimaryRegion ? approved.compute.amiId : undefined) ?? defaults?.amiId;
+        if (!amiId && defaults?.amiSsmParameter && this.options.amiResolver) {
+          try {
+            amiId = await this.options.amiResolver.resolveAmiId(target.region, defaults.amiSsmParameter, signal);
+          } catch (resolveError) {
+            const msg = resolveError instanceof Error ? resolveError.message : String(resolveError);
+            attemptErrors.push(`${target.region}: AMI lookup failed: ${msg}`);
+            continue;
+          }
+        }
+        amiId ??= approved.compute.amiId;
+        const securityGroupIds =
+          override?.securityGroupIds ??
+          (isPrimaryRegion ? approved.compute.securityGroupIds : undefined) ??
+          defaults?.securityGroupIds ??
+          approved.compute.securityGroupIds;
+        const candidateSubnets: (string | undefined)[] =
           override?.subnetIds?.length
             ? override.subnetIds
-            : approved.compute.subnetId
+            : isPrimaryRegion && approved.compute.subnetId
               ? [approved.compute.subnetId]
-              : [undefined];
+              : defaults?.subnetIds?.length
+                ? defaults.subnetIds
+                : approved.compute.subnetId
+                  ? [approved.compute.subnetId]
+                  : [undefined];
 
         for (const subnetId of candidateSubnets) {
           try {

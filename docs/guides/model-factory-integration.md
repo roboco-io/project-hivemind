@@ -94,3 +94,28 @@ aws --profile roboco --region ap-northeast-2 ecs update-service \
    - 게시 직전 HF API로 저장소의 실제 `private` 상태를 확인해 `releasePolicy.visibility`와 일치할 때만 커밋한다.
    - 따라서 비공개로 미리 만든 저장소에 게시할 때는 `releasePolicy.visibility: "private"`를 사용해야 하며(게시 후 필요 시 사람이 HF에서 공개 전환), 이미 공개된 저장소에만 `releasePolicy.visibility: "public"`을 허용한다. 불일치 시 즉시 거절(`Hugging Face visibility rejected`)된다.
 9. `GET /api/model-factory/ledger`: SMF `tools/ledger.mjs` 대사용 중앙 예약·정산·잔여 예산 조회.
+
+### 리전별 기본 네트워크와 AMI (`HIVEMIND_MF_REGION_NETWORKS_JSON`)
+
+작업이 `compute.candidateRegions`에 여러 리전을 적으면 Control Plane은 스팟 배치 점수 순서대로 리전을 시도한다. 서브넷, 보안 그룹과 AMI는 리전마다 다른 자원이므로, Control Plane은 리전마다 아래 순서로 값을 정한다.
+
+1. 작업의 `compute.regionOverrides[<리전>]`에 적힌 값.
+2. 대상 리전이 작업의 `compute.region`과 같으면 작업의 `amiId`, `subnetId`, `securityGroupIds`.
+3. 운영자가 Control Plane 환경 변수 `HIVEMIND_MF_REGION_NETWORKS_JSON`에 등록한 리전별 기본값.
+4. 위 값이 모두 없으면 작업의 최상위 `amiId`, `subnetId`, `securityGroupIds`(레지스트리 도입 전 동작).
+
+레지스트리는 리전 이름을 키로 하는 JSON 객체다. 각 항목에는 `subnetIds`, `securityGroupIds`, `amiId`, `amiSsmParameter`만 쓸 수 있다. `amiSsmParameter`는 AWS가 소유한 공개 SSM 파라미터(`/aws/service/...`)의 이름이며, Control Plane은 인스턴스를 기동하기 직전에 해당 리전에서 이 파라미터를 읽어 최신 AMI ID를 얻는다. 계정 안의 파라미터 이름은 거절한다. 허용 리전 밖의 리전, 모르는 필드, 형식이 틀린 ID가 하나라도 있으면 Control Plane은 레지스트리 전체를 거절하고 기동하지 않는다.
+
+```json
+{
+  "us-east-1": {
+    "subnetIds": ["subnet-067ecf91041a44411"],
+    "securityGroupIds": ["sg-02c88111a9073a681"],
+    "amiSsmParameter": "/aws/service/deeplearning/ami/x86_64/base-oss-nvidia-driver-gpu-amazon-linux-2023/latest/ami-id"
+  }
+}
+```
+
+SSM으로 얻은 AMI ID는 `approvalFingerprint`에 들어 있지 않다. 승인 시점에는 AMI ID가 정해지지 않기 때문이다. 실제로 사용한 AMI ID는 작업의 `instance.amiId`에 기록된다. AMI를 승인 시점에 고정해야 하는 작업은 `regionOverrides[<리전>].amiId`를 직접 적는다. AMI 조회가 실패한 리전에서는 인스턴스를 기동하지 않고 다음 후보 리전으로 넘어가며, 실패 사유는 작업의 `failureReason`에 남는다.
+
+CDK 배포 시에는 셸 환경 변수 `HIVEMIND_MF_REGION_NETWORKS_JSON`에 같은 JSON을 넣으면 `HivemindAwsRuntimeStack`이 Control Plane 컨테이너에 그대로 전달한다.

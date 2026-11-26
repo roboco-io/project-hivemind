@@ -190,3 +190,23 @@ test('rejects unapproved region unless explicitly allowlisted and rejects placeh
     /Explicit AWS runtime deployment configuration required/,
   );
 });
+
+test('passes the Model Factory region network registry to the Control Plane and limits AMI lookup to public SSM parameters', () => {
+  const registry = JSON.stringify({ 'us-east-1': { subnetIds: ['subnet-067ecf91041a44411'] } });
+  const withRegistry = JSON.stringify(synth({ modelFactoryRegionNetworksJson: registry }).toJSON());
+  assert.ok(withRegistry.includes('HIVEMIND_MF_REGION_NETWORKS_JSON'));
+  assert.ok(withRegistry.includes('subnet-067ecf91041a44411'));
+
+  const template = synth();
+  assert.ok(!JSON.stringify(template.toJSON()).includes('HIVEMIND_MF_REGION_NETWORKS_JSON'));
+  template.hasResourceProperties('AWS::IAM::Policy', {
+    PolicyDocument: {
+      Statement: Match.arrayWith([
+        Match.objectLike({
+          Action: 'ssm:GetParameter',
+          Resource: 'arn:aws:ssm:*::parameter/aws/service/*',
+        }),
+      ]),
+    },
+  });
+});

@@ -22,6 +22,11 @@ import type { Construct } from 'constructs';
 import { assertAwsRegion } from '../../../packages/adapters/src/autonomous-aws-region.ts';
 
 export interface AwsRuntimeConfig {
+  /**
+   * JSON registry of per-region Model Factory network and AMI defaults, passed to the Control Plane as
+   * HIVEMIND_MF_REGION_NETWORKS_JSON. Contains resource IDs only, never secrets.
+   */
+  modelFactoryRegionNetworksJson?: string;
   accountId: string;
   region: string;
   allowedRegions?: string[];
@@ -272,6 +277,13 @@ export class AwsRuntimeStack extends Stack {
         resources: ['*'],
       }),
     );
+    // Latest-AMI lookup reads AWS-owned public SSM parameters only (empty account field in the ARN).
+    this.controlPlaneRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['ssm:GetParameter'],
+        resources: ['arn:aws:ssm:*::parameter/aws/service/*'],
+      }),
+    );
     this.controlPlaneRole.addToPolicy(
       new iam.PolicyStatement({
         actions: ['ec2:TerminateInstances'],
@@ -502,6 +514,9 @@ export class AwsRuntimeStack extends Stack {
         HIVEMIND_MF_INSTANCE_PROFILE_ARN: this.trainingInstanceProfile.attrArn,
         HIVEMIND_MF_ALLOWED_REGIONS: 'ap-northeast-2,us-east-2,us-east-1,us-west-2,ap-northeast-1',
         HIVEMIND_MF_BUDGET_CAP_MICROS: '500000000',
+        ...(cfg.modelFactoryRegionNetworksJson
+          ? { HIVEMIND_MF_REGION_NETWORKS_JSON: cfg.modelFactoryRegionNetworksJson }
+          : {}),
         HIVEMIND_ALLOW_VPC_INTERNAL_HTTP: 'true',
       },
       secrets: {
