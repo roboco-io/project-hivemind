@@ -44,6 +44,8 @@ async function main(): Promise<void> {
   }
 
   let existingTokensByRepo: Record<string, string> = {};
+  // A GitHub App entry (scripts/aws-set-github-app-secret.ts) must survive a PAT update.
+  let existingGithubApp: unknown;
   try {
     const existingRaw = execFileSync(
       'aws',
@@ -64,7 +66,8 @@ async function main(): Promise<void> {
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     ).trim();
     if (existingRaw.startsWith('{')) {
-      const parsed = JSON.parse(existingRaw) as { tokensByRepo?: Record<string, string> };
+      const parsed = JSON.parse(existingRaw) as { tokensByRepo?: Record<string, string>; githubApp?: unknown };
+      existingGithubApp = parsed.githubApp;
       if (parsed.tokensByRepo && typeof parsed.tokensByRepo === 'object' && !Array.isArray(parsed.tokensByRepo)) {
         existingTokensByRepo = { ...parsed.tokensByRepo };
       }
@@ -79,6 +82,7 @@ async function main(): Promise<void> {
     [canonicalRepo]: token,
   };
   const payload = JSON.stringify({
+    ...(existingGithubApp !== undefined ? { githubApp: existingGithubApp } : {}),
     tokensByRepo: mergedTokensByRepo,
   });
   const out = execFileSync(

@@ -14,6 +14,28 @@
 | 모델 구독 인증 | `hivemind-runtime/model-subscription-auth` | **AI 워커 전용** (Control Plane·검증기·학습 인스턴스 차단) |
 | EC2 학습 인스턴스 프로파일 | `hivemind-runtime-mf-training-instance-profile` (`ec2.amazonaws.com`) | **학습 인스턴스 전용** (`models/*/inputs/*` 읽기, `models/*` 쓰기, `inputs/*` 쓰기 명시 Deny, 아티팩트 KMS 키만 허용; Secrets/EC2 제어 없음). Control Plane이 승인된 프로파일을 자동 주입하며 미허용 프로파일 ARN은 거절 |
 
+### Draft PR용 GitHub 자격: GitHub App 설치 토큰 (권장)
+
+Control Plane은 검증을 통과한 변경을 브랜치로 푸시하고 Draft PR을 열 때 `hivemind-runtime/github-draft-pr` 비밀의 자격을 쓴다. 이 비밀에 GitHub App 정보(`githubApp`)가 있으면, Control Plane은 Draft PR을 만들 때마다 그 저장소 하나에만 쓸 수 있는 설치 토큰을 새로 발급받는다. 설치 토큰은 1시간 뒤 만료되고, 권한은 `contents: write`와 `pull_requests: write`뿐이다. 사람이 발급해 저장해 두는 PAT는 만료가 길고 classic PAT의 경우 계정이 접근하는 모든 저장소에 쓰기 권한이 열리므로, GitHub App을 쓰면 비밀이 유출됐을 때의 피해 범위가 줄어든다.
+
+GitHub App 생성과 설치는 GitHub 웹 화면에서 사람이 한 번 해야 한다. GitHub는 이 단계를 API로 제공하지 않는다.
+
+1. `roboco-io` 조직의 Settings → Developer settings → GitHub Apps에서 App을 만든다. Webhook은 끈다. Repository permissions는 Contents `Read and write`, Pull requests `Read and write` 두 개만 준다(Metadata `Read-only`는 자동으로 붙는다).
+2. App 설정 화면에서 private key를 생성해 `.pem` 파일을 내려받는다. App ID를 적어 둔다.
+3. App을 조직에 설치하고, "Only select repositories"에서 Draft PR을 만들 저장소만 고른다.
+4. 아래 명령으로 등록한다. 스크립트는 저장소마다 설치 토큰을 실제로 발급해 설치 여부와 권한을 확인한 뒤 비밀을 쓴다. 확인용 토큰은 바로 폐기한다.
+
+```bash
+HIVEMIND_GITHUB_APP_ID=<App ID> \
+HIVEMIND_GITHUB_APP_PRIVATE_KEY_FILE=<내려받은 .pem 경로> \
+HIVEMIND_GITHUB_APP_REPOSITORIES=roboco-io/project-hivemind,roboco-io/silicon-model-factory \
+AWS_PROFILE=roboco npx tsx scripts/aws-set-github-app-secret.ts
+```
+
+등록하면 목록에 든 저장소의 기존 PAT는 비밀에서 지워진다. PAT를 남겨 두면 넓은 권한의 자격이 그대로 남기 때문이다. 남기려면 `HIVEMIND_GITHUB_KEEP_PATS=1`을 준다. 목록에 없는 저장소의 PAT는 그대로 둔다. 등록 뒤에는 `.pem` 파일을 지우고, 기존 PAT는 GitHub에서도 폐기한다.
+
+동작 규칙은 다음과 같다. `githubApp.repositories`에 든 저장소는 항상 설치 토큰을 쓴다. 이 저장소의 토큰 발급이 실패하면 Control Plane은 저장된 PAT로 넘어가지 않고 Draft PR 게시를 실패로 처리한다. 목록에 없는 저장소는 이전처럼 `tokensByRepo`의 PAT를 쓴다. Control Plane은 게시 때마다 로그 이벤트 `hivemind.delivery.github_credential_resolved`에 어떤 종류의 자격(`github_app` 또는 `personal_access_token`)을 썼는지 남긴다. 토큰 값은 남기지 않는다.
+
 ### 저장소별 토큰 갱신 명령
 
 ```bash

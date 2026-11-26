@@ -24,7 +24,7 @@ import { createCloudPort } from '../../../packages/adapters/src/cloudflare.js';
 import { createCloudWorkflowPort } from '../../../packages/adapters/src/cloud-workflow.js';
 import { createGitHubDraftPrPort } from '../../../packages/adapters/src/github-draft-pr.js';
 import { createGitPushCommitMaterializer } from '../../../packages/adapters/src/github-git-push.js';
-import { resolveGithubTokenForRepo } from '../../../packages/adapters/src/github-token-resolver.js';
+import { resolveGithubCredentialForRepo } from '../../../packages/adapters/src/github-token-resolver.js';
 import { createCloudWorkflowControl } from '../../../packages/core/src/cloud-workflow-store.js';
 import { createHash } from 'node:crypto';
 import { createCloudControl } from '../../../packages/core/src/cloudflare-store.js';
@@ -145,7 +145,18 @@ function createAwsDeliveryOrchestratorFactory(port: number, extraRedactSecrets: 
       redactSecrets: extraRedactSecrets,
       githubFactory: async ({ task, bundlePath, expectedBundleSha256, workRoot, signal }) => {
         const rawSecret = await secretsManager.getSecretString(githubSecretArn, signal);
-        const token = resolveGithubTokenForRepo(rawSecret, task.delivery.repository);
+        // A GitHub App entry in the secret yields a one-hour, single-repository token; otherwise a stored PAT.
+        const credential = await resolveGithubCredentialForRepo(rawSecret, task.delivery.repository, { signal });
+        const token = credential.token;
+        console.log(
+          JSON.stringify({
+            event: 'hivemind.delivery.github_credential_resolved',
+            taskId: task.id,
+            repository: task.delivery.repository,
+            source: credential.source,
+            expiresAt: credential.expiresAt,
+          }),
+        );
         const basic = Buffer.from(`x-access-token:${token}`, 'utf8').toString('base64');
         const httpExtraHeader = `Authorization: Basic ${basic}`;
         const materializer = createGitPushCommitMaterializer({
