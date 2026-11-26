@@ -56,5 +56,5 @@
 - **실제 용량 부족으로 인한 폴백은 확인하지 않았다.** 이번 폴백의 원인은 리전에서 제공되지 않는 인스턴스 유형(`Unsupported`)이다. 이 오류는 `InsufficientInstanceCapacity`와 같은 분기에서 처리되지만, 용량 부족 오류 자체를 이번 실행에서 관찰한 것은 아니다. 로그의 `outcome` 값 이름이 `capacity_failover`인 것은 이 분기의 이름이며, 이번 오류가 용량 부족이라는 뜻이 아니다.
 - **GPU 인스턴스로는 실행하지 않았다.** 비용을 줄이려고 소형 x86 인스턴스를 썼다. GPU 유형에서의 배치는 같은 코드 경로를 쓰지만 이번에 실행하지 않았다.
 - **학습 스크립트 실행과 영수증 검증은 이 실증의 범위가 아니다.** 인스턴스는 기동 약 3초 뒤 취소로 종료했다. 인스턴스가 S3 입력을 내려받아 실행하는 경로는 `docs/verification/2026-11-26-issue12-model-factory-spot-proof.md`에 기록된 이전 실증이 다룬다.
-- **협업 워커의 Spoke 팬아웃은 켜지 않았다.** Spoke의 Fargate 워커는 Control Plane의 사설 IP(TCP 4310)에 접속해야 하는데, 2026-11-26 조회 기준 계정에 VPC Peering 연결이 없다. 그래서 배포된 Control Plane에는 `HIVEMIND_AWS_SPOKES_JSON`을 넣지 않았고, 협업 워커는 서울 Hub에서만 기동된다. Peering 배포는 사용자 결정이 필요하다.
+- **협업 워커의 Spoke 팬아웃은 켜지 않았다.** Spoke의 Fargate 워커는 Control Plane의 사설 IP(TCP 4310)에 접속해야 하는데, 2026-11-26 조회 기준 계정에 VPC Peering 연결이 없다. 그래서 배포된 Control Plane에는 `HIVEMIND_AWS_SPOKES_JSON`을 넣지 않았고, 협업 워커는 서울 Hub에서만 기동된다. 사용자는 2026-11-27에 Peering을 배포하지 않기로 결정했다. 따라서 협업 워커의 Spoke 리전 기동은 보류 상태다. 코드와 IAM 권한은 준비되어 있고, Peering을 배포한 뒤 `HIVEMIND_DEPLOY_SPOKES_JSON=1 scripts/aws-deploy-hub.sh deploy`로 켤 수 있다.
 - **비용은 실제 청구를 확인하지 않았다.** 인스턴스는 수 초간 실행됐고 스팟 상한가는 시간당 `$0.5`였다. EC2 Linux의 최소 과금 단위가 60초이므로 인스턴스 비용은 `$0.01` 미만으로 추정한다. 이 값은 추정치이며 청구서로 대조하지 않았다.
