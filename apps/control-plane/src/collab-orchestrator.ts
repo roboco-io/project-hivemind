@@ -27,6 +27,18 @@ export interface CollabWorkerLauncherPort {
   ): Promise<{ taskArn: string; region: string }>;
   /** Regions where this launcher can start workers. When present, fan-out never selects another region. */
   configuredRegions?(): string[];
+  /** Lifecycle state of a worker task, or `null` when the platform no longer knows it. */
+  describeWorker?(taskArn: string, signal?: AbortSignal): Promise<{ lastStatus: string; stopCode: string | null; stoppedReason: string | null; exitCode: number | null } | null>;
+  /** Stops a worker task. */
+  stopWorker?(taskArn: string, signal?: AbortSignal): Promise<void>;
+}
+
+export interface ReconcileResult {
+  checked: number;
+  /** Subtasks marked failed because their worker had stopped or disappeared without reporting. */
+  failed: { subtaskId: string; title: string; reason: string }[];
+  /** Running subtasks left untouched, with the reason. */
+  untouched: { subtaskId: string; reason: string }[];
 }
 
 export interface RunEmbeddedOrchestratorInput {
@@ -352,5 +364,87 @@ export class CollabOrchestrator {
     }
 
     return { dispatched };
+  }
+
+  /**
+   * Finds `running` subtasks whose worker task has stopped or is unknown to ECS, and marks them `failed`.
+   * A worker normally reports its own result; this covers a worker that was killed (Spot reclaim, out of
+   * memory, crash before set-up) and could not. A subtask without a recorded worker task is left alone,
+   * because it was claimed by hand and there is nothing to check it against.
+   */
+  async reconcileRunningSubtasks(sessionId: string, signal?: AbortSignal): Promise<ReconcileResult> {
+    await this.options.service.getSession(sessionId);
+    const running = (await this.options.service.listSubtasks(sessionId)).filter((s) => s.status === 'running');
+    const result: ReconcileResult = { checked: running.length, failed: [], untouched: [] };
+    const describe = this.options.workerLauncher?.describeWorker;
+    for (const subtask of running) {
+      if (!subtask.ecsTaskArn) {
+        result.untouched.push({ subtaskId: subtask.id, reason: 'no worker task recorded' });
+        continue;
+      }
+      if (!describe) {
+        result.untouched.push({ subtaskId: subtask.id, reason: 'worker status lookup is not configured' });
+        continue;
+      }
+      let status: Awaited<ReturnType<typeof describe>>;
+      try {
+        status = await describe(subtask.ecsTaskArn, signal);
+      } catch (error) {
+        // An unreadable status is not evidence that the worker is gone.
+        result.untouched.push({
+          subtaskId: subtask.id,
+          reason: `worker status lookup failed: ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}`,
+        });
+        continue;
+      }
+      if (status && status.lastStatus !== 'STOPPED') {
+        result.untouched.push({ subtaskId: subtask.id, reason: `worker task is ${status.lastStatus}` });
+        continue;
+      }
+      const reason = status
+        ? `Worker task stopped without reporting a result (${[status.stopCode, status.exitCode !== null ? `exit ${status.exitCode}` : null, status.stoppedReason].filter(Boolean).join('; ') || 'no stop detail'})`
+        : 'Worker task is no longer known to ECS and never reported a result';
+      const updated = await this.options.service.failOrphanedSubtask(sessionId, subtask.id, reason);
+      if (updated.status !== 'failed') continue; // the worker reported in the meantime
+      result.failed.push({ subtaskId: subtask.id, title: subtask.title, reason });
+      await this.options.service.postMessage(sessionId, {
+        sender: 'coordinator',
+        recipient: null,
+        kind: 'blocker',
+        body: `Subtask "${subtask.title}" (${subtask.id}) marked failed: ${reason}`,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Ends a session. For `failed` and `cancelled` it first asks the platform to stop every worker of a
+   * running subtask, so no worker keeps running after the session is closed. A stop error is reported but
+   * does not keep the session open.
+   */
+  async endSession(
+    sessionId: string,
+    status: 'completed' | 'failed' | 'cancelled',
+    signal?: AbortSignal,
+  ): Promise<{ session: CollabSession; stoppedWorkers: string[]; stopErrors: string[] }> {
+    const stoppedWorkers: string[] = [];
+    const stopErrors: string[] = [];
+    if (status !== 'completed') {
+      const session = await this.options.service.getSession(sessionId);
+      const stop = this.options.workerLauncher?.stopWorker;
+      if (session.status === 'active' && stop) {
+        for (const subtask of await this.options.service.listSubtasks(sessionId)) {
+          if (subtask.status !== 'running' || !subtask.ecsTaskArn) continue;
+          try {
+            await stop(subtask.ecsTaskArn, signal);
+            stoppedWorkers.push(subtask.id);
+          } catch (error) {
+            stopErrors.push(`${subtask.id}: ${(error instanceof Error ? error.message : String(error)).slice(0, 200)}`);
+          }
+        }
+      }
+    }
+    const session = await this.options.service.completeSession(sessionId, status);
+    return { session, stoppedWorkers, stopErrors };
   }
 }

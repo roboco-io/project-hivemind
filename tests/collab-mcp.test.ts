@@ -79,7 +79,7 @@ async function connect(t: test.TestContext, localAuthFile?: string) {
   return { client, call, launched, orchestratorRuns, requestBodies };
 }
 
-test('collab MCP profile exposes exactly 8 tools and drives session -> subtasks -> fan-out -> board messages', async (t) => {
+test('collab MCP profile exposes exactly 10 tools and drives session -> subtasks -> fan-out -> board messages', async (t) => {
   const settings = loadMcpSettings({
     HIVEMIND_API_URL: 'http://127.0.0.1:4310',
     HIVEMIND_OPERATOR_TOKEN: OP_TOKEN,
@@ -94,12 +94,14 @@ test('collab MCP profile exposes exactly 8 tools and drives session -> subtasks 
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map((tool) => tool.name).sort(), [
     'hivemind_collab_add_subtask',
+    'hivemind_collab_complete',
     'hivemind_collab_create',
     'hivemind_collab_fan_out',
     'hivemind_collab_get',
     'hivemind_collab_list',
     'hivemind_collab_list_messages',
     'hivemind_collab_post_message',
+    'hivemind_collab_reconcile',
     'hivemind_collab_run_orchestrator',
   ]);
   // The local model auth secret is never a tool input.

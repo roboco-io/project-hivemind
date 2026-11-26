@@ -3,6 +3,7 @@ import {
   AwsEcsFargateSpotDriver,
   type AwsEcsCredentials,
   type LaunchEcsWorkloadInput,
+  type EcsTaskStatus,
 } from './aws-ecs-driver.js';
 import { assertAwsRegion } from './autonomous-aws-region.js';
 
@@ -114,6 +115,14 @@ export class AwsMultiRegionEcsDriver {
       { sessionId: input.sessionId, subtaskId: input.subtaskId, agentId: input.agentId, provider: input.provider },
       signal,
     );
+  }
+
+  /** Routes to the region named in the task ARN. Returns `null` when ECS no longer knows the task. */
+  async describeTask(taskArn: string, signal?: AbortSignal): Promise<EcsTaskStatus | null> {
+    const region = /^arn:aws:ecs:([a-z]{2}-[a-z]+-\d+):/.exec(taskArn)?.[1] ?? this.primaryRegion;
+    const driver = this.drivers.get(region);
+    if (!driver) throw new Error(`Cannot describe task in unconfigured AWS region: ${region}`);
+    return driver.describeTask(taskArn, signal);
   }
 
   async stop(externalRunId: string): Promise<void> {

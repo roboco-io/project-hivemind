@@ -5,7 +5,7 @@ description: HIVEMIND의 AWS 단일 경로에서 SW 전달 작업, Model Factory
 
 # HIVEMIND 작업 관제 (AWS 단일 경로)
 
-웹을 열지 않고 프로젝트의 `hivemind` MCP 서버를 사용한다. 기본 프로필은 AWS Control Plane의 도구 22개를 한 서버로 제공한다. 상태 조회 1개, SW 전달 6개, Model Factory 7개, 협업 8개다. 폐기된 Cloudflare 경로의 도구는 기본 프로필에 없다.
+웹을 열지 않고 프로젝트의 `hivemind` MCP 서버를 사용한다. 기본 프로필은 AWS Control Plane의 도구 24개를 한 서버로 제공한다. 상태 조회 1개, SW 전달 6개, Model Factory 7개, 협업 10개다. 폐기된 Cloudflare 경로의 도구는 기본 프로필에 없다.
 
 도구가 보이지 않으면 [MCP 서버 안내](../../../apps/mcp-server/README.md)를 확인한다. MCP 연결을 고치려고 사용자 전역 설정이나 원격 인증을 임의로 바꾸지 않는다.
 
@@ -29,6 +29,7 @@ description: HIVEMIND의 AWS 단일 경로에서 SW 전달 작업, Model Factory
 | `hivemind_collab_run_orchestrator` | Control Plane 안에서 실제 모델 호출 |
 | `hivemind_delivery_human_decision` | Draft PR에 대한 사람의 승인·반려 기록 |
 | `hivemind_delivery_cancel`, `hivemind_mf_cancel` | 실행 중단, 인스턴스 종료 |
+| `hivemind_collab_complete` | 세션 종료. `failed`·`cancelled`는 실행 중인 워커를 중지 |
 
 - "초안만", "등록만", "실행하지 마"는 승인이 아니다. 현재 대화에서 사용자가 해당 실행을 이미 요청했다면 같은 확인을 반복하지 않는다.
 - 호스트의 도구 승인 화면과 HIVEMIND의 실행 승인은 서로 다른 경계다. 초안 생성에 대한 호스트 승인을 실행 의도로 확대하지 않는다.
@@ -68,7 +69,10 @@ EC2 스팟 인스턴스에서 학습·평가를 실행하고, 사람이 승인�
 3. 사용자가 실행을 지시했으면 `hivemind_collab_fan_out`으로 준비된 하위 작업마다 워커를 기동한다.
 4. `hivemind_collab_get`으로 하위 작업 상태를, `hivemind_collab_list_messages`로 게시판을 조회한다. `hivemind_collab_post_message`로 사람의 결정이나 지시를 게시판에 남길 수 있다.
 
-하위 작업이 `running`인 것은 워커가 배정됐다는 뜻이며 진행 중임을 보장하지 않는다. 워커가 비정상 종료하면 `running`으로 남을 수 있다.
+5. 하위 작업이 오래 `running`이면 `hivemind_collab_reconcile`로 워커가 실제로 살아 있는지 확인한다. 워커가 결과를 보고하지 못하고 사라진 하위 작업만 `failed`로 바뀐다.
+6. 사용자가 세션을 끝내라고 하면 `hivemind_collab_complete`를 호출한다. `completed`는 `running` 하위 작업이 남아 있으면 거절된다. 그때는 정리하거나, 사용자가 원하면 `cancelled`로 끝낸다.
+
+하위 작업이 `running`인 것은 워커가 배정됐다는 뜻이며 진행 중임을 보장하지 않는다.
 
 ## 예전 Cloudflare 도구
 

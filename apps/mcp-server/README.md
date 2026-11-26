@@ -14,10 +14,10 @@ MCP 서버는 환경 변수 `HIVEMIND_MCP_PROFILE`로 노출할 도구 묶음을
 
 | 프로필 | 도구 | 용도 |
 |---|---|---|
-| `default` (별칭 `aws`) | 22개: `hivemind_status` 1 + `hivemind_delivery_*` 6 + `hivemind_mf_*` 7 + `hivemind_collab_*` 8 | AWS 단일 경로 전체. 일상 사용의 기본값이다. |
+| `default` (별칭 `aws`) | 24개: `hivemind_status` 1 + `hivemind_delivery_*` 6 + `hivemind_mf_*` 7 + `hivemind_collab_*` 10 | AWS 단일 경로 전체. 일상 사용의 기본값이다. |
 | `delivery` | 6개 | SW 전달 작업만 노출한다. |
 | `model-factory` | 13개: 전달 6 + Model Factory 7 | 전달과 Model Factory만 노출한다. |
-| `collab` | 8개 | 협업 세션만 노출한다. |
+| `collab` | 10개 | 협업 세션만 노출한다. |
 | `legacy` | 22개 | 폐기된 Cloudflare 경로의 도구다. 원격 리소스가 없어 실제 실행은 되지 않는다. `cloudflare/` 제거 때 함께 없앤다([ADR-0012](../../docs/adr/0012-cloudflare-archive-retention.md)). |
 
 2026-11-27 이전에는 `default`가 지금의 `legacy` 도구 묶음이었다. 그 묶음은 Cloudflare 경로용이라 AWS Control Plane에 연결하면 `hivemind_status`가 `configured: false`만 돌려줬다. 그래서 기본값을 AWS 경로로 바꿨다. 이 문서의 "장기 자율 작업 운영자 계약", "운영자 확인 최종 비용", "Workflow 팀 원장" 절은 `legacy` 프로필의 도구를 설명한다.
@@ -123,7 +123,7 @@ AWS_PROFILE=roboco node --import ./infrastructure/aws-runtime/node_modules/tsx/d
 
 ## 병렬 에이전트 협업 프로필 (`HIVEMIND_MCP_PROFILE=collab`)
 
-`HIVEMIND_MCP_PROFILE=collab`을 지정하면 협업 도구 8개만 노출한다(`src/collab.ts:registerCollabOperatorTools`). 이 도구들은 Control Plane의 `/api/collab/*` HTTP API만 호출하며, 협업 저장소(Aurora DSQL 또는 SQLite)를 직접 열지 않는다.
+`HIVEMIND_MCP_PROFILE=collab`을 지정하면 협업 도구 10개만 노출한다(`src/collab.ts:registerCollabOperatorTools`). 이 도구들은 Control Plane의 `/api/collab/*` HTTP API만 호출하며, 협업 저장소(Aurora DSQL 또는 SQLite)를 직접 열지 않는다.
 
 | 도구 | 동작 |
 |---|---|
@@ -135,7 +135,13 @@ AWS_PROFILE=roboco node --import ./infrastructure/aws-runtime/node_modules/tsx/d
 | `hivemind_collab_post_message` | 세션 게시판에 메시지를 남긴다. |
 | `hivemind_collab_list_messages` | 게시판 메시지를 순번 순서로 조회한다. |
 | `hivemind_collab_run_orchestrator` | Control Plane 안에서 Claude 또는 Codex 오케스트레이터를 실행한다. 실제 모델 호출이 발생한다. |
+| `hivemind_collab_reconcile` | `running` 하위 작업의 워커가 살아 있는지 확인하고, 결과를 보고하지 못한 채 중지됐거나 사라진 워커의 하위 작업을 `failed`로 바꾼다. |
+| `hivemind_collab_complete` | 세션을 `completed`, `failed`, `cancelled` 중 하나로 끝낸다. |
 
 `hivemind_collab_run_orchestrator`는 로컬 모델 인증 값을 도구 입력으로 받지 않는다. 인증 값이 도구 입력이면 모델의 대화 문맥과 클라이언트 기록에 남기 때문이다. 대신 MCP 서버가 환경 변수 `HIVEMIND_COLLAB_LOCAL_AUTH_FILE`에 적힌 파일을 호출 시점에 읽어 Control Plane에 전달한다. 파일은 심볼릭 링크가 아닌 일반 파일이어야 하고 크기는 60,000바이트 이하여야 한다. 파일 내용은 도구 출력에서 가린다. 이 환경 변수가 없거나 파일을 읽을 수 없으면 도구는 Control Plane을 호출하지 않고 `started: false`와 설정 안내를 반환한다.
 
 `hivemind_collab_fan_out`과 `hivemind_collab_run_orchestrator`는 과금과 실제 모델 호출을 일으키므로 사용자의 명시적 지시가 있을 때만 호출한다.
+
+세션 종료에는 다음 규칙이 있다. `completed`는 `running` 하위 작업이 하나라도 있으면 거절된다. 워커가 계속 돌며 과금되는데 세션만 끝난 것으로 기록되는 일을 막기 위해서다. `failed`와 `cancelled`는 실행 중인 워커의 ECS 작업을 먼저 중지하고, 끝나지 않은 하위 작업을 모두 `cancelled`로 바꾼다. 이미 끝난 세션을 같은 상태로 다시 끝내면 아무것도 바뀌지 않는다.
+
+워커는 보통 자신의 결과를 직접 보고한다. 스팟 회수, 메모리 부족, 준비 단계 이전의 충돌로 워커가 보고하지 못하고 사라지면 하위 작업이 `running`으로 남는다. `hivemind_collab_reconcile`은 이 경우를 정리한다. ECS가 `STOPPED`라고 답하거나 해당 작업을 더 이상 모르는 경우에만 `failed`로 바꾼다. 상태 조회가 실패한 경우, 워커가 아직 살아 있는 경우, 사람이 직접 배정해 워커 기록이 없는 경우는 건드리지 않는다.

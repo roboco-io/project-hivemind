@@ -53,7 +53,23 @@ export function registerCollabRoutes(app: FastifyInstance, options: CollabApiOpt
   app.post<{ Params: { id: string }; Body: { status: 'completed' | 'failed' | 'cancelled' } }>(
     '/api/collab/sessions/:id/complete',
     { onRequest: operatorOnly, bodyLimit: 8192 },
-    async (request) => service.completeSession(request.params.id, request.body.status),
+    async (request) => {
+      // With an orchestrator, ending as failed/cancelled also stops the workers of running subtasks.
+      if (!orchestrator) return service.completeSession(request.params.id, request.body.status);
+      const ended = await orchestrator.endSession(request.params.id, request.body.status, AbortSignal.timeout(30_000));
+      return { ...ended.session, stoppedWorkers: ended.stoppedWorkers, stopErrors: ended.stopErrors };
+    },
+  );
+
+  app.post<{ Params: { id: string } }>(
+    '/api/collab/sessions/:id/reconcile',
+    { onRequest: operatorOnly, bodyLimit: 1024 },
+    async (request) => {
+      if (!orchestrator) {
+        throw new DomainError('Collab orchestrator is not configured', 503);
+      }
+      return orchestrator.reconcileRunningSubtasks(request.params.id, AbortSignal.timeout(30_000));
+    },
   );
 
   app.post<{

@@ -112,6 +112,14 @@ function isPrivateVpcHttpUrl(rawUrl: string): boolean {
   return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
 }
 
+export interface EcsTaskStatus {
+  /** ECS lastStatus, for example PROVISIONING, PENDING, RUNNING, DEPROVISIONING, STOPPED. */
+  lastStatus: string;
+  stopCode: string | null;
+  stoppedReason: string | null;
+  exitCode: number | null;
+}
+
 export class AwsEcsFargateSpotDriver implements RuntimeDriver {
   readonly runtime = 'ecs' as const;
   private readonly fetchImpl: typeof fetch;
@@ -290,6 +298,27 @@ export class AwsEcsFargateSpotDriver implements RuntimeDriver {
       acceptanceDigest: '0'.repeat(64),
     });
     return { externalRunId: launched.taskArn };
+  }
+
+  /**
+   * Reads one task's lifecycle state. Returns `null` when ECS no longer knows the task (ECS forgets a
+   * stopped task after about an hour), which a caller must treat as "the worker is gone".
+   */
+  async describeTask(taskArn: string, signal?: AbortSignal): Promise<EcsTaskStatus | null> {
+    const result = await this.ecsCall(
+      'DescribeTasks',
+      { cluster: this.config.clusterArn, tasks: [assertSafeValue(taskArn, 'taskArn')] },
+      signal,
+    );
+    const task = (result.tasks as Record<string, unknown>[] | undefined)?.[0];
+    if (!task) return null;
+    const container = (task.containers as Record<string, unknown>[] | undefined)?.[0];
+    return {
+      lastStatus: typeof task.lastStatus === 'string' ? task.lastStatus : 'UNKNOWN',
+      stopCode: typeof task.stopCode === 'string' ? task.stopCode : null,
+      stoppedReason: typeof task.stoppedReason === 'string' ? task.stoppedReason.slice(0, 300) : null,
+      exitCode: typeof container?.exitCode === 'number' ? container.exitCode : null,
+    };
   }
 
   async stop(externalRunId: string): Promise<void> {

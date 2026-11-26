@@ -332,12 +332,62 @@ export class AgentCollabService {
     return session;
   }
 
+  /**
+   * Ends a session.
+   * - `completed` is refused while a subtask is still `running`: a worker would keep running and billing
+   *   under a session that claims to be done. Reconcile or cancel first.
+   * - `failed` and `cancelled` mark every unfinished subtask `cancelled`, so nothing is left `running`.
+   *   Stopping the worker processes is the orchestrator's job; this only records the state.
+   * Ending an already ended session with the same status changes nothing.
+   */
   async completeSession(sessionId: string, status: 'completed' | 'failed' | 'cancelled'): Promise<CollabSession> {
+    if (status !== 'completed' && status !== 'failed' && status !== 'cancelled') {
+      throw new DomainError('Invalid session end status', 400);
+    }
     const session = await this.getSession(sessionId);
+    if (session.status !== 'active') {
+      if (session.status === status) return session;
+      throw new DomainError(`Session already ended as ${session.status}`, 409);
+    }
+    const subtasks = await this.repo.listSubtasks(sessionId);
+    if (status === 'completed') {
+      const running = subtasks.filter((s) => s.status === 'running').length;
+      if (running > 0) {
+        throw new DomainError(`Session has ${running} running subtask(s); reconcile or cancel them first`, 409);
+      }
+    } else {
+      const at = this.timestamp();
+      for (const subtask of subtasks) {
+        if (subtask.status === 'pending' || subtask.status === 'queued' || subtask.status === 'running') {
+          subtask.status = 'cancelled';
+          subtask.failureReason = `Session ${status}`;
+          subtask.updatedAt = at;
+          await this.repo.saveSubtask(subtask);
+        }
+      }
+    }
     session.status = status;
     session.updatedAt = this.timestamp();
     await this.repo.saveSession(session);
     return session;
+  }
+
+  /**
+   * Marks a `running` subtask `failed` on behalf of a worker that can no longer report (its ECS task stopped
+   * or disappeared). Unlike `finishSubtask` it does not need the worker's agent id. It changes nothing when
+   * the subtask is no longer `running`, so a late call cannot overwrite a result the worker did report.
+   */
+  async failOrphanedSubtask(sessionId: string, subtaskId: string, reason: string): Promise<CollabSubtask> {
+    const subtask = await this.repo.getSubtask(subtaskId);
+    if (!subtask || subtask.sessionId !== sessionId) {
+      throw new DomainError('Subtask not found', 404);
+    }
+    if (subtask.status !== 'running') return subtask;
+    subtask.status = 'failed';
+    subtask.failureReason = scrubText(text(reason, 'reason', 2000), this.redactSecrets);
+    subtask.updatedAt = this.timestamp();
+    await this.repo.saveSubtask(subtask);
+    return subtask;
   }
 
   async createSubtask(sessionId: string, input: CreateCollabSubtask): Promise<CollabSubtask> {

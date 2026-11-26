@@ -448,6 +448,8 @@ try {
                   signal,
                 ),
               configuredRegions: () => ecsDriver.configuredRegions(),
+              describeWorker: (taskArn, signal) => ecsDriver.describeTask(taskArn, signal),
+              stopWorker: (taskArn) => ecsDriver.stop(taskArn),
             },
           }
         : {}),

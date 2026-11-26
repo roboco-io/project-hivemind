@@ -224,6 +224,30 @@ export function registerCollabOperatorTools(server: McpServer, options: CollabMc
   );
 
   server.registerTool(
+    'hivemind_collab_reconcile',
+    {
+      title: 'HIVEMIND 협업 하위 작업 정리',
+      description:
+        'running 상태인 하위 작업의 워커가 실제로 살아 있는지 확인하고, 워커가 결과를 보고하지 못한 채 중지됐거나 사라진 하위 작업을 failed로 바꿉니다. 살아 있는 워커와 워커 기록이 없는 하위 작업은 건드리지 않습니다.',
+      inputSchema: z.strictObject({ sessionId }),
+      annotations: mutation,
+    },
+    async ({ sessionId: id }, extra) => run(() => api(sessionPath(id, '/reconcile'), extra.signal, {}, 45_000)),
+  );
+
+  server.registerTool(
+    'hivemind_collab_complete',
+    {
+      title: 'HIVEMIND 협업 세션 종료',
+      description:
+        '세션을 completed, failed, cancelled 중 하나로 끝냅니다. completed는 running 하위 작업이 남아 있으면 거절됩니다. failed와 cancelled는 실행 중인 워커를 중지하고 끝나지 않은 하위 작업을 cancelled로 바꿉니다. 사용자의 명시적 지시가 있을 때만 호출하세요.',
+      inputSchema: z.strictObject({ sessionId, status: z.enum(['completed', 'failed', 'cancelled']) }),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ sessionId: id, status }, extra) => run(() => api(sessionPath(id, '/complete'), extra.signal, { status }, 45_000)),
+  );
+
+  server.registerTool(
     'hivemind_collab_run_orchestrator',
     {
       title: 'HIVEMIND 내장 오케스트레이터 실행',
