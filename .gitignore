@@ -23,4 +23,5 @@ __pycache__/
 !packages/adapters/src/aws-secrets-manager.ts
 !tests/aws-secrets-manager.test.ts
 !scripts/aws-set-github-secret.ts
+!scripts/aws-set-github-app-secret.ts
 !scripts/aws-set-hf-secret.ts
