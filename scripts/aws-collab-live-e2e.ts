@@ -1,9 +1,9 @@
-import { execFileSync, spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createHivemindMcpServer } from '../apps/mcp-server/src/server.js';
 import type { CollabSessionSnapshot } from '../packages/contracts/src/agent-collab.js';
+import { aws, awsJson, ControlPlane, FIVE_REGIONS, PRIMARY_REGION, sleep } from './lib/aws-live.js';
 
 /**
  * Live AWS proof for Issue #16 task 2: an operator drives a parallel agent cluster through the MCP `collab`
@@ -20,81 +20,6 @@ import type { CollabSessionSnapshot } from '../packages/contracts/src/agent-coll
  * The script starts ControlPlaneService (desiredCount 1) and ALWAYS returns it to desiredCount 0. It stops any
  * worker task of this run that is still running at the end. It never prints the operator token or the auth file.
  */
-
-const PRIMARY_REGION = 'ap-northeast-2';
-const FIVE_REGIONS = ['ap-northeast-2', 'us-east-2', 'us-east-1', 'us-west-2', 'ap-northeast-1'];
-const profile = process.env.AWS_PROFILE ?? 'roboco';
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-function aws(region: string, args: string[]): string {
-  return execFileSync('aws', ['--profile', profile, '--region', region, ...args], {
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }).trim();
-}
-
-function awsJson<T>(region: string, args: string[]): T {
-  return JSON.parse(aws(region, [...args, '--output', 'json'])) as T;
-}
-
-async function waitForControlPlaneTask(cluster: string, service: string): Promise<{ taskId: string; runtimeId: string }> {
-  const deadline = Date.now() + 300_000;
-  while (Date.now() < deadline) {
-    const taskArn = awsJson<{ taskArns?: string[] }>(PRIMARY_REGION, [
-      'ecs', 'list-tasks', '--cluster', cluster, '--service-name', service, '--desired-status', 'RUNNING',
-    ]).taskArns?.[0];
-    if (taskArn) {
-      const task = awsJson<{
-        tasks?: { lastStatus?: string; containers?: { name?: string; runtimeId?: string; managedAgents?: { name?: string; lastStatus?: string }[] }[] }[];
-      }>(PRIMARY_REGION, ['ecs', 'describe-tasks', '--cluster', cluster, '--tasks', taskArn]).tasks?.[0];
-      const container = task?.containers?.find((c) => c.name === 'control-plane');
-      const agentRunning = container?.managedAgents?.some((a) => a.name === 'ExecuteCommandAgent' && a.lastStatus === 'RUNNING');
-      if (task?.lastStatus === 'RUNNING' && container?.runtimeId && agentRunning) {
-        return { taskId: taskArn.split('/').pop()!, runtimeId: container.runtimeId };
-      }
-    }
-    await sleep(8_000);
-  }
-  throw new Error('Timed out waiting for a RUNNING ControlPlaneService task');
-}
-
-function openTunnel(cluster: string, taskId: string, runtimeId: string, localPort: number) {
-  const child = spawn(
-    'aws',
-    [
-      '--profile', profile, '--region', PRIMARY_REGION, 'ssm', 'start-session',
-      '--target', `ecs:${cluster}_${taskId}_${runtimeId}`,
-      '--document-name', 'AWS-StartPortForwardingSession',
-      '--parameters', JSON.stringify({ portNumber: ['4310'], localPortNumber: [String(localPort)] }),
-    ],
-    // Own process group: `aws ssm start-session` starts session-manager-plugin as a child, and killing only
-    // the `aws` process leaves the plugin (and its tunnel) running.
-    { stdio: 'ignore', detached: true },
-  );
-  const killTunnel = () => {
-    if (child.pid === undefined) return;
-    try {
-      process.kill(-child.pid, 'SIGTERM');
-    } catch {
-      // process group already gone
-    }
-  };
-  const ready = (async () => {
-    const deadline = Date.now() + 90_000;
-    while (Date.now() < deadline) {
-      try {
-        const res = await fetch(`http://127.0.0.1:${localPort}/health`, { signal: AbortSignal.timeout(2000) });
-        if (res.ok) return;
-      } catch {
-        // tunnel or server still starting
-      }
-      await sleep(1500);
-    }
-    killTunnel();
-    throw new Error('Timed out waiting for SSM tunnel to ControlPlaneService');
-  })();
-  return { ready, close: killTunnel };
-}
 
 type ToolResult = { isError?: boolean; structuredContent?: Record<string, unknown> };
 
@@ -116,15 +41,12 @@ async function main(): Promise<void> {
   if (!operatorToken) throw new Error('Operator token missing');
 
   const startedAtMs = Date.now();
-  aws(PRIMARY_REGION, ['ecs', 'update-service', '--cluster', cluster, '--service', service, '--desired-count', '1', '--query', 'service.desiredCount', '--output', 'text']);
-  let tunnel: ReturnType<typeof openTunnel> | null = null;
+  const controlPlane = new ControlPlane(cluster, service, localPort);
   let summary: Record<string, unknown> = {};
   const workerTaskArns: string[] = [];
 
   try {
-    const { taskId, runtimeId } = await waitForControlPlaneTask(cluster, service);
-    tunnel = openTunnel(cluster, taskId, runtimeId, localPort);
-    await tunnel.ready;
+    await controlPlane.start();
 
     // The operator side talks ONLY through the MCP collab profile.
     const server = createHivemindMcpServer({
@@ -243,7 +165,7 @@ async function main(): Promise<void> {
       await server.close().catch(() => undefined);
     }
   } finally {
-    tunnel?.close();
+    controlPlane.closeTunnel();
     for (const arn of workerTaskArns) {
       try {
         aws(PRIMARY_REGION, ['ecs', 'stop-task', '--cluster', cluster, '--task', arn, '--reason', 'collab live e2e cleanup', '--query', 'task.lastStatus', '--output', 'text']);

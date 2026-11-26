@@ -1,7 +1,8 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { openSsmTunnel } from './lib/aws-live.js';
 
 function awsJson(profile: string, region: string, args: string[]): unknown {
   return JSON.parse(
@@ -27,64 +28,13 @@ async function main(): Promise<void> {
     }
   ).SecretString.trim();
 
-  const listed = awsJson(profile, region, [
-    'ecs',
-    'list-tasks',
-    '--cluster',
-    cluster,
-    '--service-name',
-    service,
-    '--desired-status',
-    'RUNNING',
-  ]) as { taskArns?: string[] };
-  const taskArn = listed.taskArns?.[0];
-  if (!taskArn) throw new Error('No RUNNING ControlPlaneService task');
-
-  const desc = awsJson(profile, region, ['ecs', 'describe-tasks', '--cluster', cluster, '--tasks', taskArn]) as {
-    tasks?: { containers?: { name?: string; runtimeId?: string }[] }[];
-  };
-  const runtimeId = desc.tasks?.[0]?.containers?.find((c) => c.name === 'control-plane')?.runtimeId;
-  const ecsTaskId = taskArn.split('/').pop();
-  if (!ecsTaskId || !runtimeId) throw new Error('Missing runtimeId for SSM Exec');
-
   const localPort = Number(process.env.HIVEMIND_LOCAL_PORT ?? '14315');
-  const target = `ecs:${cluster}_${ecsTaskId}_${runtimeId}`;
-  const tunnel = spawn(
-    'aws',
-    [
-      '--profile',
-      profile,
-      '--region',
-      region,
-      'ssm',
-      'start-session',
-      '--target',
-      target,
-      '--document-name',
-      'AWS-StartPortForwardingSession',
-      '--parameters',
-      JSON.stringify({ portNumber: ['4310'], localPortNumber: [String(localPort)] }),
-    ],
-    { stdio: 'ignore' },
-  );
+  // The tunnel helper closes the whole process group, so no session-manager-plugin process is left behind.
+  const tunnel = openSsmTunnel(profile, region, cluster, service, localPort);
 
   const client = new Client({ name: 'hivemind-aws-ssm-verifier', version: '0.1.0' });
   try {
-    const deadline = Date.now() + 30_000;
-    let healthy = false;
-    while (Date.now() < deadline) {
-      try {
-        const res = await fetch(`http://127.0.0.1:${localPort}/health`, { signal: AbortSignal.timeout(2000) });
-        if (res.ok) {
-          healthy = true;
-          break;
-        }
-      } catch {
-        // wait for tunnel
-      }
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-    if (!healthy) throw new Error('SSM tunnel failed to reach /health');
+    await tunnel.ready;
 
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -149,7 +99,7 @@ async function main(): Promise<void> {
     );
   } finally {
     await client.close().catch(() => undefined);
-    if (!tunnel.killed) tunnel.kill('SIGTERM');
+    tunnel.close();
   }
 }
 

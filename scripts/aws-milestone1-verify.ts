@@ -120,13 +120,15 @@ async function main(): Promise<void> {
 
     // 5. Wait for the Fargate Spot container to finish and inspect its status & capacity provider.
     const startedAt = Date.now();
-    let finalTask: {
+    // A named type: `typeof finalTask` inside the loop narrows to `null` and made the task type `never`.
+    type EcsTaskView = {
       lastStatus?: string;
       capacityProviderName?: string;
       stopCode?: string;
       stoppedReason?: string;
       containers?: { name?: string; exitCode?: number; reason?: string }[];
-    } | null = null;
+    };
+    let finalTask: EcsTaskView | null = null;
 
     while (Date.now() - startedAt < 300_000) {
       const desc = awsJson(profile, region, [
@@ -136,7 +138,7 @@ async function main(): Promise<void> {
         clusterArn,
         '--tasks',
         launched.taskArn,
-      ]) as { tasks?: (typeof finalTask)[] };
+      ]) as { tasks?: EcsTaskView[] };
       finalTask = desc.tasks?.[0] ?? null;
       if (finalTask?.lastStatus === 'STOPPED') break;
       await new Promise((resolve) => setTimeout(resolve, 5000));

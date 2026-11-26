@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +6,7 @@ import type { DeliveryTask } from '../packages/contracts/src/delivery.js';
 import type { AwsEcsCredentials } from '../packages/adapters/src/aws-ecs-driver.js';
 import { createAwsS3ArtifactsPort } from '../packages/adapters/src/aws-s3-artifacts.js';
 import { captureAcceptanceTestSpec, createPinnedGitBundle } from '../packages/adapters/src/git-bundle.js';
+import { openSsmTunnel } from './lib/aws-live.js';
 
 function awsJson(profile: string, region: string, args: string[]): unknown {
   const out = execFileSync('aws', ['--profile', profile, '--region', region, ...args, '--output', 'json'], {
@@ -33,82 +34,6 @@ function getOperatorToken(profile: string, region: string, secretArn: string): s
   };
   if (!out.SecretString) throw new Error('Missing operator token SecretString');
   return out.SecretString.trim();
-}
-
-function openSsmTunnel(
-  profile: string,
-  region: string,
-  cluster: string,
-  service: string,
-  localPort: number,
-): { close: () => void; ready: Promise<void> } {
-  const listed = awsJson(profile, region, [
-    'ecs',
-    'list-tasks',
-    '--cluster',
-    cluster,
-    '--service-name',
-    service,
-    '--desired-status',
-    'RUNNING',
-  ]) as { taskArns?: string[] };
-  const taskArn = listed.taskArns?.[0];
-  if (!taskArn) throw new Error(`No RUNNING ControlPlaneService task in ${cluster}`);
-  const described = awsJson(profile, region, ['ecs', 'describe-tasks', '--cluster', cluster, '--tasks', taskArn]) as {
-    tasks?: { containers?: { name?: string; runtimeId?: string }[] }[];
-  };
-  const runtimeId = described.tasks?.[0]?.containers?.find((c) => c.name === 'control-plane')?.runtimeId;
-  const taskId = taskArn.split('/').pop();
-  if (!taskId || !runtimeId) throw new Error('Control plane task missing runtimeId for SSM Exec');
-
-  const target = `ecs:${cluster}_${taskId}_${runtimeId}`;
-  const child = spawn(
-    'aws',
-    [
-      '--profile',
-      profile,
-      '--region',
-      region,
-      'ssm',
-      'start-session',
-      '--target',
-      target,
-      '--document-name',
-      'AWS-StartPortForwardingSession',
-      '--parameters',
-      JSON.stringify({ portNumber: ['4310'], localPortNumber: [String(localPort)] }),
-    ],
-    // Own process group, so closing also ends the session-manager-plugin child and frees the local port.
-    { stdio: 'ignore', detached: true },
-  );
-  const killTunnel = () => {
-    if (child.pid === undefined) return;
-    try {
-      process.kill(-child.pid, 'SIGTERM');
-    } catch {
-      // already gone
-    }
-  };
-
-  const ready = (async () => {
-    const deadline = Date.now() + 30_000;
-    while (Date.now() < deadline) {
-      try {
-        const res = await fetch(`http://127.0.0.1:${localPort}/health`, { signal: AbortSignal.timeout(2000) });
-        if (res.ok) return;
-      } catch {
-        // Tunnel still opening.
-      }
-      await new Promise((r) => setTimeout(r, 1000));
-    }
-    killTunnel();
-    throw new Error('Timed out waiting for SSM tunnel to ControlPlaneService');
-  })();
-
-  return {
-    ready,
-    close: killTunnel,
-  };
 }
 
 async function apiJson<T>(url: string, token: string, body?: unknown): Promise<T> {
