@@ -247,3 +247,10 @@ test('grants the Control Plane spoke ECS orchestration and PassRole only for nam
   assert.throws(() => synth({ spokeRegions: ['ap-northeast-2'] }), /Invalid spoke region/);
   assert.throws(() => synth({ spokeRegions: ['not-a-region'] }), /Invalid spoke region/);
 });
+
+test('sets HIVEMIND_MF_STORAGE only when the Model Factory ledger is configured for Aurora DSQL', () => {
+  assert.ok(!JSON.stringify(synth().toJSON()).includes('HIVEMIND_MF_STORAGE'));
+  assert.ok(!JSON.stringify(synth({ modelFactoryStorage: 'sqlite' }).toJSON()).includes('HIVEMIND_MF_STORAGE'));
+  const dsql = JSON.stringify(synth({ modelFactoryStorage: 'aurora-dsql' }).toJSON());
+  assert.ok(dsql.includes('"Name":"HIVEMIND_MF_STORAGE","Value":"aurora-dsql"'));
+});

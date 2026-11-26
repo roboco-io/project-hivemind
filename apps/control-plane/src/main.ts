@@ -5,6 +5,8 @@ import { DeliveryOrchestrator } from './delivery-orchestrator.js';
 import { ModelFactoryOrchestrator, parseRegionNetworkRegistry } from './model-factory-orchestrator.js';
 import { CollabOrchestrator } from './collab-orchestrator.js';
 import { DsqlCollaborationRepository } from '../../../packages/adapters/src/aws-dsql.js';
+import { DsqlModelFactoryRepository, importModelFactoryHistoryIfEmpty } from '../../../packages/adapters/src/aws-dsql-model-factory.js';
+import { SqliteModelFactoryRepository } from '../../../packages/core/src/model-factory-repository.js';
 import { AwsEc2SpotTrainer } from '../../../packages/adapters/src/aws-ec2-spot-trainer.js';
 import { createTrustedHfReleasePublisher } from '../../../packages/adapters/src/model-factory-hf-publisher.js';
 import { AwsEcsFargateSpotDriver } from '../../../packages/adapters/src/aws-ecs-driver.js';
@@ -328,6 +330,30 @@ try {
     console.log(JSON.stringify({ event: 'hivemind.control_plane.aurora_dsql_enabled', dsqlEndpoint, dsqlRegion }));
   }
 
+  // The Model Factory ledger moves to Aurora DSQL only when HIVEMIND_MF_STORAGE=aurora-dsql is set. On the
+  // first start with an empty DSQL ledger, the jobs and events of the local SQLite file are copied once.
+  let modelFactoryRepository: DsqlModelFactoryRepository | undefined;
+  const modelFactoryStorage = process.env.HIVEMIND_MF_STORAGE?.trim();
+  if (modelFactoryStorage !== undefined && modelFactoryStorage !== 'sqlite' && modelFactoryStorage !== 'aurora-dsql') {
+    throw new Error('HIVEMIND_MF_STORAGE must be sqlite or aurora-dsql');
+  }
+  if (modelFactoryStorage === 'aurora-dsql') {
+    if (!dsqlEndpoint) throw new Error('HIVEMIND_MF_STORAGE=aurora-dsql requires HIVEMIND_DSQL_ENDPOINT');
+    modelFactoryRepository = new DsqlModelFactoryRepository({
+      endpoint: dsqlEndpoint,
+      region: dsqlRegion,
+      allowedRegions: [dsqlRegion],
+      credentials: createEcsTaskCredentialsProvider(),
+    });
+    const localHistory = new SqliteModelFactoryRepository(dbPath);
+    try {
+      const importedJobs = await importModelFactoryHistoryIfEmpty(localHistory, modelFactoryRepository);
+      console.log(JSON.stringify({ event: 'hivemind.control_plane.model_factory_dsql_enabled', dsqlRegion, importedJobs }));
+    } finally {
+      await localHistory.close();
+    }
+  }
+
   const collabOrchestratorFactory = (service: AgentCollabService) => {
     const region = process.env.HIVEMIND_AWS_REGION?.trim();
     const bucket = process.env.HIVEMIND_ARTIFACTS_BUCKET?.trim();
@@ -391,7 +417,7 @@ try {
     });
   };
 
-  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,collabRepo,collabOrchestratorFactory});
+  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(modelFactoryRepository ? { modelFactoryRepository } : {}),collabRepo,collabOrchestratorFactory});
   const address = await app.listen({host,port});
   console.log(`HIVEMIND control service: ${address}`);
   for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,() => { void app!.close(); });

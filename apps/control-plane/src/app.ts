@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { HiveStore, DomainError, equalSecret, text } from '../../../packages/core/src/store.js';
 import { DeliveryStore } from '../../../packages/core/src/delivery.js';
 import { ModelFactoryStore } from '../../../packages/core/src/model-factory.js';
+import type { ModelFactoryRepository } from '../../../packages/core/src/model-factory-repository.js';
 import {
   AgentCollabService,
   SqliteCollaborationRepository,
@@ -28,7 +29,7 @@ import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js
 
 import {projectTeamResponse,type CloudWorkflowControl} from '../../../packages/contracts/src/workflow.js';
 
-export interface AppOptions { autonomousCloudProxy?:AutonomousCloudProxy; localExternalService?:AutonomousExternalService; dbPath?: string; operatorToken?: string; workerToken?: string; nativeReporterToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl; deliveryOrchestratorFactory?: (store: DeliveryStore) => DeliveryOrchestrator; modelFactoryOrchestratorFactory?: (store: ModelFactoryStore) => ModelFactoryOrchestrator; modelFactoryBudgetCapMicros?: number; modelFactoryWakePollMs?: number; collabRepo?: CollaborationStoragePort; collabOrchestratorFactory?: (service: AgentCollabService) => CollabOrchestrator }
+export interface AppOptions { /** Storage for ModelFactoryStore. Default: SQLite at dbPath. */ modelFactoryRepository?: ModelFactoryRepository; autonomousCloudProxy?:AutonomousCloudProxy; localExternalService?:AutonomousExternalService; dbPath?: string; operatorToken?: string; workerToken?: string; nativeReporterToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl; deliveryOrchestratorFactory?: (store: DeliveryStore) => DeliveryOrchestrator; modelFactoryOrchestratorFactory?: (store: ModelFactoryStore) => ModelFactoryOrchestrator; modelFactoryBudgetCapMicros?: number; modelFactoryWakePollMs?: number; collabRepo?: CollaborationStoragePort; collabOrchestratorFactory?: (service: AgentCollabService) => CollabOrchestrator }
 const string = {type:'string',minLength:1,maxLength:4000};
 const credentials = {workerId:{...string,maxLength:120},leaseToken:{...string,maxLength:120}};
 const body = (properties: Record<string,unknown>, required = Object.keys(properties)) => ({body:{type:'object',additionalProperties:false,required,properties}});
@@ -57,7 +58,7 @@ export function buildApp(options: AppOptions = {}) {
   const app = Fastify({bodyLimit:2000000,logger:false,ajv:{customOptions:{coerceTypes:false,removeAdditional:false}}});
   const store = new HiveStore(options.dbPath ?? ':memory:',options.now,options.repository);
   const deliveryStore = new DeliveryStore(options.dbPath ?? ':memory:',options.now);
-  const modelFactoryStore = new ModelFactoryStore(options.dbPath ?? ':memory:',{now:options.now,globalBudgetCapMicros:options.modelFactoryBudgetCapMicros});
+  const modelFactoryStore = new ModelFactoryStore(options.modelFactoryRepository ?? options.dbPath ?? ':memory:',{now:options.now,globalBudgetCapMicros:options.modelFactoryBudgetCapMicros});
   const autonomousStore=createAutonomousStore(options.dbPath ?? ':memory:');
   const autonomousService=createAutonomousApiService(autonomousStore,options.now);
   // Worker-reported tool calls live in their own file so they never touch the task store's locks.
@@ -85,7 +86,7 @@ export function buildApp(options: AppOptions = {}) {
     }, options.modelFactoryWakePollMs);
     mfWakeTimer.unref();
   }
-  app.addHook('onClose',async()=>{if(mfWakeTimer)clearInterval(mfWakeTimer);await collabService.close();deliveryStore.close();modelFactoryStore.close();autonomousStore.close();toolAuditDb.close();});
+  app.addHook('onClose',async()=>{if(mfWakeTimer)clearInterval(mfWakeTimer);await collabService.close();deliveryStore.close();await modelFactoryStore.close();autonomousStore.close();toolAuditDb.close();});
   registerDeliveryRoutes(app,{store:deliveryStore,operatorToken,workerToken,orchestrator:deliveryOrchestrator});
   registerModelFactoryRoutes(app,{store:modelFactoryStore,operatorToken,workerToken,orchestrator:modelFactoryOrchestrator});
   registerCollabRoutes(app,{service:collabService,operatorToken,workerToken,orchestrator:collabOrchestrator});
