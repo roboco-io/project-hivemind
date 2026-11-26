@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import {
+  SqliteDeliveryRepository,
+  type DeliveryEventDraft,
+  type DeliveryRepository,
+  type DeliveryTxState,
+} from './delivery-repository.js';
 import type {
   AcceptanceTestFile,
   AcceptanceTestSpec,
@@ -314,30 +317,40 @@ function validateProvider(value: unknown): DeliveryProvider {
 }
 
 export class DeliveryStore {
-  private db: DatabaseSync;
+  private readonly repository: DeliveryRepository;
+  /** Set only while the synchronous body of a repository transaction runs. */
+  private activeTx: DeliveryTxState | null = null;
 
-  constructor(path = ':memory:', private now: () => number = Date.now) {
-    if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
-    this.db = new DatabaseSync(path);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS delivery_tasks (id TEXT PRIMARY KEY, data TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS delivery_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, data TEXT NOT NULL);`);
+  /**
+   * @param storage A SQLite file path (local default) or any DeliveryRepository, for example the Aurora
+   *   DSQL repository on AWS.
+   */
+  constructor(storage: string | DeliveryRepository = ':memory:', private now: () => number = Date.now) {
+    this.repository = typeof storage === 'string' ? new SqliteDeliveryRepository(storage) : storage;
   }
 
-  close(): void {
-    this.db.close();
+  get storageBackend(): DeliveryRepository['storageBackend'] {
+    return this.repository.storageBackend;
   }
 
-  private tx<T>(fn: () => T): T {
-    this.db.exec('BEGIN IMMEDIATE');
-    try {
-      const result = fn();
-      this.db.exec('COMMIT');
-      return result;
-    } catch (error) {
-      this.db.exec('ROLLBACK');
-      throw error;
-    }
+  close(): Promise<void> {
+    return this.repository.close();
+  }
+
+  private tx<T>(fn: () => T): Promise<T> {
+    return this.repository.transaction((state) => {
+      this.activeTx = state;
+      try {
+        return fn();
+      } finally {
+        this.activeTx = null;
+      }
+    });
+  }
+
+  private txState(): DeliveryTxState {
+    if (!this.activeTx) throw new Error('DeliveryStore state accessed outside a repository transaction');
+    return this.activeTx;
   }
 
   private timestamp(): string {
@@ -345,42 +358,38 @@ export class DeliveryStore {
   }
 
   private load(id: string): DeliveryTask {
-    const row = this.db.prepare('SELECT data FROM delivery_tasks WHERE id=?').get(id);
-    if (!row) throw new DomainError('Delivery task not found', 404);
-    return JSON.parse(row.data as string) as DeliveryTask;
+    const task = this.txState().docs.get(id);
+    if (!task) throw new DomainError('Delivery task not found', 404);
+    return structuredClone(task);
   }
 
   private save(task: DeliveryTask): DeliveryTask {
     task.updatedAt = this.timestamp();
-    this.db.prepare('INSERT OR REPLACE INTO delivery_tasks (id, data) VALUES (?, ?)').run(task.id, JSON.stringify(task));
+    const state = this.txState();
+    state.docs.set(task.id, structuredClone(task));
+    state.dirtyIds.add(task.id);
     return structuredClone(task);
   }
 
   private emit(taskId: string, type: string, data: Record<string, unknown>): void {
-    const entry = { taskId, type, at: this.timestamp(), data };
-    this.db.prepare('INSERT INTO delivery_events (data) VALUES (?)').run(JSON.stringify(entry));
+    this.txState().newEvents.push({ taskId, type, at: this.timestamp(), data } as DeliveryEventDraft);
   }
 
-  list(): DeliveryTask[] {
-    return this.db
-      .prepare('SELECT data FROM delivery_tasks ORDER BY rowid DESC')
-      .all()
-      .map((row) => structuredClone(JSON.parse(row.data as string) as DeliveryTask));
+  async list(): Promise<DeliveryTask[]> {
+    return this.repository.listDocs();
   }
 
-  get(id: string): DeliveryTask {
-    return structuredClone(this.load(id));
+  async get(id: string): Promise<DeliveryTask> {
+    const task = await this.repository.getDoc(id);
+    if (!task) throw new DomainError('Delivery task not found', 404);
+    return task;
   }
 
-  events(taskId?: string): DeliveryEvent[] {
-    return this.db
-      .prepare('SELECT sequence, data FROM delivery_events ORDER BY sequence DESC LIMIT 200')
-      .all()
-      .map((row) => ({ sequence: row.sequence as number, ...(JSON.parse(row.data as string) as Omit<DeliveryEvent, 'sequence'>) }))
-      .filter((event) => (taskId ? event.taskId === taskId : true));
+  async events(taskId?: string): Promise<DeliveryEvent[]> {
+    return (await this.repository.listEvents(200)).filter((event) => (taskId ? event.taskId === taskId : true));
   }
 
-  create(input: CreateDeliveryTask): DeliveryTask {
+  async create(input: CreateDeliveryTask): Promise<DeliveryTask> {
     return this.tx(() => {
       const title = text(input.title, 'title', 160);
       const instructions = text(input.instructions, 'instructions', 12_000);
@@ -458,7 +467,7 @@ export class DeliveryStore {
     });
   }
 
-  approve(id: string, approvalFingerprint: string, reason: string): DeliveryTask {
+  async approve(id: string, approvalFingerprint: string, reason: string): Promise<DeliveryTask> {
     return this.tx(() => {
       const task = this.load(id);
       if (task.status !== 'awaiting_approval') {
@@ -479,7 +488,7 @@ export class DeliveryStore {
     });
   }
 
-  startIteration(id: string, workerId: string, runId: string): DeliveryTask {
+  async startIteration(id: string, workerId: string, runId: string): Promise<DeliveryTask> {
     return this.tx(() => {
       const task = this.load(id);
       if (task.status !== 'queued') {
@@ -506,7 +515,7 @@ export class DeliveryStore {
     });
   }
 
-  recordPlacementDecision(id: string, decision: RegionPlacementDecision): DeliveryTask {
+  async recordPlacementDecision(id: string, decision: RegionPlacementDecision): Promise<DeliveryTask> {
     return this.tx(() => {
       const task = this.load(id);
       if (task.routing && !task.routing.allowedRegions.includes(decision.selectedRegion)) {
@@ -528,7 +537,7 @@ export class DeliveryStore {
     });
   }
 
-  recordPreflight(id: string, report: Omit<DeliveryPreflightReport, 'checkedAt'>): DeliveryTask {
+  async recordPreflight(id: string, report: Omit<DeliveryPreflightReport, 'checkedAt'>): Promise<DeliveryTask> {
     return this.tx(() => {
       const task = this.load(id);
       if (task.status !== 'running' || task.activeRunId !== report.runId) {
@@ -565,7 +574,7 @@ export class DeliveryStore {
     });
   }
 
-  recordWorkerSummary(id: string, runId: string, summary: string, checkpointRef?: string): DeliveryTask {
+  async recordWorkerSummary(id: string, runId: string, summary: string, checkpointRef?: string): Promise<DeliveryTask> {
     return this.tx(() => {
       const task = this.load(id);
       if (task.status !== 'running' || task.activeRunId !== runId) {
@@ -588,7 +597,7 @@ export class DeliveryStore {
     });
   }
 
-  recordSpotInterruption(id: string, runId: string, checkpointRef: string, reason: string): DeliveryTask {
+  async recordSpotInterruption(id: string, runId: string, checkpointRef: string, reason: string): Promise<DeliveryTask> {
     return this.tx(() => {
       const task = this.load(id);
       if (task.status !== 'running' || task.activeRunId !== runId) {
@@ -629,7 +638,7 @@ export class DeliveryStore {
     });
   }
 
-  recordVerification(id: string, attestation: VerificationAttestation): DeliveryTask {
+  async recordVerification(id: string, attestation: VerificationAttestation): Promise<DeliveryTask> {
     return this.tx(() => {
       const task = this.load(id);
       if (task.status !== 'running' || task.activeRunId !== attestation.runId) {
@@ -692,7 +701,7 @@ export class DeliveryStore {
     });
   }
 
-  recordDraftPrPublication(id: string, publication: DraftPrPublication): DeliveryTask {
+  async recordDraftPrPublication(id: string, publication: DraftPrPublication): Promise<DeliveryTask> {
     return this.tx(() => {
       const task = this.load(id);
       if (task.status !== 'verified' || !task.latestAttestation) {
@@ -801,10 +810,10 @@ export class DeliveryStore {
     });
   }
 
-  recordHumanDecision(
+  async recordHumanDecision(
     id: string,
     input: Omit<HumanDeliveryDecision, 'decidedAt'>,
-  ): DeliveryTask {
+  ): Promise<DeliveryTask> {
     return this.tx(() => {
       const task = this.load(id);
       if (task.status !== 'draft_pr_published' || !task.publication) {
@@ -843,7 +852,7 @@ export class DeliveryStore {
     });
   }
 
-  cancel(id: string, reason: string): DeliveryTask {
+  async cancel(id: string, reason: string): Promise<DeliveryTask> {
     return this.tx(() => {
       const task = this.load(id);
       if (TERMINAL_STATUSES.has(task.status)) {

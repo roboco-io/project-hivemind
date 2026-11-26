@@ -253,6 +253,10 @@ test('sets HIVEMIND_MF_STORAGE only when the Model Factory ledger is configured 
   assert.ok(!JSON.stringify(synth({ modelFactoryStorage: 'sqlite' }).toJSON()).includes('HIVEMIND_MF_STORAGE'));
   const dsql = JSON.stringify(synth({ modelFactoryStorage: 'aurora-dsql' }).toJSON());
   assert.ok(dsql.includes('"Name":"HIVEMIND_MF_STORAGE","Value":"aurora-dsql"'));
+  assert.ok(!dsql.includes('HIVEMIND_DELIVERY_STORAGE'), 'the two stores switch independently');
+  const delivery = JSON.stringify(synth({ deliveryStorage: 'aurora-dsql' }).toJSON());
+  assert.ok(delivery.includes('"Name":"HIVEMIND_DELIVERY_STORAGE","Value":"aurora-dsql"'));
+  assert.ok(!delivery.includes('HIVEMIND_MF_STORAGE'));
 });
 
 test('TTL Guard Lambda is a bundled asset and gets DSQL ledger access only with the Aurora DSQL ledger', async () => {

@@ -5,7 +5,8 @@
 # 배포된 Spoke 스택의 출력에서 다음 설정을 만든다.
 #   HIVEMIND_SPOKE_REGIONS            Control Plane 역할에 ECS·PassRole 권한을 줄 Spoke 리전
 #   HIVEMIND_MF_REGION_NETWORKS_JSON  Model Factory의 리전별 기본 서브넷·보안 그룹·AMI 조회 파라미터
-# HIVEMIND_MF_STORAGE(기본 aurora-dsql)는 Model Factory 원장의 저장소를 정한다.
+# HIVEMIND_MF_STORAGE(기본 aurora-dsql)는 Model Factory 원장의 저장소를,
+# HIVEMIND_DELIVERY_STORAGE(기본 aurora-dsql)는 SW 전달 작업의 저장소를 정한다.
 # HIVEMIND_AWS_SPOKES_JSON은 넣지 않는다. Spoke의 Fargate 워커가 Control Plane에 접속하려면 VPC Peering이
 # 필요한데 아직 없기 때문이다. Peering을 배포한 뒤 HIVEMIND_DEPLOY_SPOKES_JSON=1 로 켠다.
 # 이 스크립트는 비밀 값을 읽지 않는다.
@@ -45,6 +46,7 @@ export HIVEMIND_AWS_REGION="$PRIMARY_REGION"
 export HIVEMIND_CONTROL_PLANE_DESIRED_COUNT=0
 export HIVEMIND_SPOKE_REGIONS="$SPOKE_REGIONS"
 export HIVEMIND_MF_STORAGE="${HIVEMIND_MF_STORAGE:-aurora-dsql}"
+export HIVEMIND_DELIVERY_STORAGE="${HIVEMIND_DELIVERY_STORAGE:-aurora-dsql}"
 HIVEMIND_MF_REGION_NETWORKS_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["networks"], separators=(",", ":")))' "$ENV_JSON")"
 export HIVEMIND_MF_REGION_NETWORKS_JSON
 if [[ "${HIVEMIND_DEPLOY_SPOKES_JSON:-0}" == "1" ]]; then

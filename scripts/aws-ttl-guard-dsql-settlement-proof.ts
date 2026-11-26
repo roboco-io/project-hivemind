@@ -195,7 +195,7 @@ async function main(): Promise<void> {
     // 2. Stop the Control Plane before the instance expires.
     await controlPlane.stop();
     summary.controlPlaneStoppedBeforeExpiry = Date.now() < Date.parse(instance.expiresAt);
-    const beforeGuard = await ledger.getJob(jobId);
+    const beforeGuard = await ledger.getDoc(jobId);
     summary.settledBeforeGuard = beforeGuard?.cost.settledMicros ?? null;
 
     // 3. Wait for expiry, then run the deployed guard Lambda.
@@ -214,7 +214,7 @@ async function main(): Promise<void> {
     summary.guardErrors = guardOutput.summary?.flatMap((s) => s.errors) ?? [];
 
     // 4. Ledger state read from DSQL while the Control Plane is still stopped.
-    const afterGuard = await ledger.getJob(jobId);
+    const afterGuard = await ledger.getDoc(jobId);
     summary.controlPlaneTasksDuringSettlement = controlPlane.runningTaskCount();
     summary.ledgerAfterGuard = afterGuard
       ? {

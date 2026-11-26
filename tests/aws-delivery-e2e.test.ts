@@ -96,7 +96,7 @@ test('full AWS single-path E2E: S3 git bundle -> Spot SIGTERM flush & resume -> 
       signal,
     );
 
-    const task = store.create({
+    const task = await store.create({
       title: 'Fix multiply() via AWS Fargate Spot',
       instructions: 'Fix multiply(a, b) in src/calc.mjs without touching tests/acceptance.test.mjs.',
       provider: 'codex',
@@ -115,7 +115,7 @@ test('full AWS single-path E2E: S3 git bundle -> Spot SIGTERM flush & resume -> 
     });
     const acceptanceS3Key = `acceptance/${task.id}.json`;
     await s3.putObject(acceptanceS3Key, Buffer.from(JSON.stringify(acceptance), 'utf8'), 'application/json');
-    store.approve(task.id, task.approvalFingerprint, 'Approved for E2E AWS single-path test');
+    await store.approve(task.id, task.approvalFingerprint, 'Approved for E2E AWS single-path test');
 
     // 3. Wire DeliveryOrchestrator with fake ECS dispatcher + REAL Git push materializer + fake GitHub Draft PR API.
     const ecsLaunches: LaunchEcsWorkloadInput[] = [];
@@ -267,7 +267,7 @@ test('full AWS single-path E2E: S3 git bundle -> Spot SIGTERM flush & resume -> 
       },
     });
     assert.equal(w2.kind, 'completed');
-    store.recordWorkerSummary(
+    await store.recordWorkerSummary(
       task.id,
       r2.runId,
       '1. src/calc.mjs: fixed multiply() to use a * b instead of a - b.\n2. Verified tests/acceptance.test.mjs passes.',
@@ -312,7 +312,7 @@ test('full AWS single-path E2E: S3 git bundle -> Spot SIGTERM flush & resume -> 
     assert.equal(remoteBranchTree, att2.verifiedTreeHash);
 
     // 7. Milestone 1B: Human decides without opening diff and records durationMinutes.
-    const approved = store.recordHumanDecision(task.id, {
+    const approved = await store.recordHumanDecision(task.id, {
       decision: 'approve',
       openedDiff: false,
       durationMinutes: 1.8,
@@ -322,7 +322,7 @@ test('full AWS single-path E2E: S3 git bundle -> Spot SIGTERM flush & resume -> 
     assert.equal(approved.humanDecision?.openedDiff, false);
     assert.equal(approved.humanDecision?.durationMinutes, 1.8);
   } finally {
-    store.close();
+    await store.close();
     rmSync(root, { recursive: true, force: true });
   }
 });

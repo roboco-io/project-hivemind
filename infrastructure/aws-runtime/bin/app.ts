@@ -55,6 +55,7 @@ if (spokeRegion) {
       resourcePrefix,
       controlPlaneDesiredCount,
       ...(process.env.HIVEMIND_MF_STORAGE?.trim() === 'aurora-dsql' ? { modelFactoryStorage: 'aurora-dsql' as const } : {}),
+      ...(process.env.HIVEMIND_DELIVERY_STORAGE?.trim() === 'aurora-dsql' ? { deliveryStorage: 'aurora-dsql' as const } : {}),
       ...(process.env.HIVEMIND_SPOKE_REGIONS?.trim()
         ? { spokeRegions: process.env.HIVEMIND_SPOKE_REGIONS.split(',').map((s) => s.trim()).filter(Boolean) }
         : {}),

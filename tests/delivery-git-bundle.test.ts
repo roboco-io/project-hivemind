@@ -88,7 +88,7 @@ test('git bundle handles >4MiB repo, enforces bundle SHA-256, rejects acceptance
     );
 
     const store = new DeliveryStore(':memory:');
-    const task = store.create({
+    const task = await store.create({
       title: 'Fix add implementation',
       instructions: 'Fix add(a, b) in src/math.mjs so acceptance passes.',
       provider: 'claude',
@@ -104,7 +104,7 @@ test('git bundle handles >4MiB repo, enforces bundle SHA-256, rejects acceptance
       },
       bundle: manifest,
     });
-    store.approve(task.id, task.approvalFingerprint, 'Approved for git-bundle test');
+    await store.approve(task.id, task.approvalFingerprint, 'Approved for git-bundle test');
 
     // 1. Tampered worker patch touching pinned acceptance test is rejected immediately.
     const tamperPatch = makePatchForEdit(repoPath, 'tests/acceptance.test.mjs', 'console.log("CHEAT");\n');
@@ -124,7 +124,7 @@ test('git bundle handles >4MiB repo, enforces bundle SHA-256, rejects acceptance
     assert.equal(tamperAttestation.checksPassed, false);
 
     // 2. Iteration 1: buggy fix fails independent verification -> Ralph loop retries.
-    store.startIteration(task.id, 'worker-1', 'run-1');
+    await store.startIteration(task.id, 'worker-1', 'run-1');
     const badPatch = makePatchForEdit(repoPath, 'src/math.mjs', 'export const add = (a, b) => a * b;\n');
     const failAttestation = await verifyPatchWithImmutableAcceptance(
       {
@@ -140,11 +140,11 @@ test('git bundle handles >4MiB repo, enforces bundle SHA-256, rejects acceptance
     );
     assert.equal(failAttestation.acceptancePathsUnmodified, true);
     assert.equal(failAttestation.checksPassed, false);
-    const afterFail = store.recordVerification(task.id, failAttestation);
+    const afterFail = await store.recordVerification(task.id, failAttestation);
     assert.equal(afterFail.status, 'queued');
 
     // 3. Iteration 2: valid fix passes independent verification.
-    store.startIteration(task.id, 'worker-1', 'run-2');
+    await store.startIteration(task.id, 'worker-1', 'run-2');
     const goodPatch = makePatchForEdit(repoPath, 'src/math.mjs', 'export const add = (a, b) => a + b;\n');
     const passAttestation = await verifyPatchWithImmutableAcceptance(
       {
@@ -160,7 +160,7 @@ test('git bundle handles >4MiB repo, enforces bundle SHA-256, rejects acceptance
     );
     assert.equal(passAttestation.acceptancePathsUnmodified, true);
     assert.equal(passAttestation.checksPassed, true);
-    const verifiedTask = store.recordVerification(task.id, passAttestation);
+    const verifiedTask = await store.recordVerification(task.id, passAttestation);
     assert.equal(verifiedTask.status, 'verified');
 
     // 4. Draft PR publisher independently recomputes prTreeHash and enforces equality with verifiedTreeHash.
@@ -195,7 +195,7 @@ test('git bundle handles >4MiB repo, enforces bundle SHA-256, rejects acceptance
     assert.match(sent.body, /VERIFIED/);
     assert.equal(publication.prTreeHash, passAttestation.verifiedTreeHash);
 
-    const publishedTask = store.recordDraftPrPublication(task.id, publication);
+    const publishedTask = await store.recordDraftPrPublication(task.id, publication);
     assert.equal(publishedTask.status, 'draft_pr_published');
 
     // Refuses remote PR response whose tree hash diverges from verifiedTreeHash.
@@ -224,7 +224,7 @@ test('git bundle handles >4MiB repo, enforces bundle SHA-256, rejects acceptance
         ),
       /remote PR tree hash does not match verifiedTreeHash/,
     );
-    store.close();
+    await store.close();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -6,7 +6,12 @@ import {
   type DsqlClientLike,
   type DsqlPoolLike,
 } from '../packages/adapters/src/aws-dsql-model-factory.js';
+import { DsqlDeliveryRepository } from '../packages/adapters/src/aws-dsql-delivery.js';
+import type { CreateDeliveryTask } from '../packages/contracts/src/delivery.js';
 import type { CreateModelFactoryJob } from '../packages/contracts/src/model-factory.js';
+import { computeAcceptanceTestDigest, DeliveryStore } from '../packages/core/src/delivery.js';
+import { SqliteDeliveryRepository } from '../packages/core/src/delivery-repository.js';
+import { importHistoryIfEmpty } from '../packages/core/src/document-repository.js';
 import { ModelFactoryStore } from '../packages/core/src/model-factory.js';
 import { SqliteModelFactoryRepository } from '../packages/core/src/model-factory-repository.js';
 
@@ -19,7 +24,10 @@ type Row = { value: Record<string, unknown>; version: number };
  * Conflicts are detected on WRITTEN rows only, exactly the behavior that allows write skew.
  */
 class FakeDsql implements DsqlPoolLike {
-  tables: Record<string, Map<string, Row>> = { hm_mf_jobs: new Map(), hm_mf_events: new Map(), hm_mf_meta: new Map() };
+  tables: Record<string, Map<string, Row>>;
+  constructor(private readonly prefix = 'hm_mf') {
+    this.tables = { [`${prefix}_jobs`]: new Map(), [`${prefix}_events`]: new Map(), [`${prefix}_meta`]: new Map() };
+  }
   statements: string[] = [];
   conflicts = 0;
   ddlInsideTransactionWithOtherStatements = false;
@@ -41,8 +49,10 @@ class FakeDsql implements DsqlPoolLike {
       release: () => undefined,
       query: async (text: string, values: unknown[] = []) => {
         await Promise.resolve(); // let concurrent transactions interleave
-        const sql = text.replace(/\s+/g, ' ').trim();
-        this.statements.push(sql.slice(0, 40));
+        // Statements are matched in their hm_mf form, whatever the table prefix and event owner column are.
+        const sql = text.replace(/\s+/g, ' ').trim().replaceAll(`${this.prefix}_`, 'hm_mf_').replace('task_id', 'job_id');
+        const t = (suffix: string) => `${this.prefix}_${suffix}`;
+        this.statements.push(text.replace(/\s+/g, ' ').trim().slice(0, 40));
         if (sql === 'BEGIN') {
           snapshot = Object.fromEntries(Object.entries(this.tables).map(([k, v]) => [k, new Map(v)]));
           writes = [];
@@ -84,34 +94,34 @@ class FakeDsql implements DsqlPoolLike {
           return { rows: [] };
         }
         if (sql.startsWith('SELECT value FROM hm_mf_meta')) {
-          const row = view('hm_mf_meta').get(String(values[0]));
+          const row = view(t('meta')).get(String(values[0]));
           return { rows: row ? [row.value] : [] };
         }
         if (sql.startsWith('SELECT data FROM hm_mf_jobs WHERE id')) {
-          const row = view('hm_mf_jobs').get(String(values[0]));
+          const row = view(t('jobs')).get(String(values[0]));
           return { rows: row ? [row.value] : [] };
         }
         if (sql.startsWith('SELECT data FROM hm_mf_jobs ORDER BY write_seq DESC')) {
-          return { rows: [...view('hm_mf_jobs').values()].map((r) => r.value).sort((a, b) => Number(b.write_seq) - Number(a.write_seq)) };
+          return { rows: [...view(t('jobs')).values()].map((r) => r.value).sort((a, b) => Number(b.write_seq) - Number(a.write_seq)) };
         }
         if (sql.startsWith('SELECT sequence, data FROM hm_mf_events')) {
           return {
-            rows: [...view('hm_mf_events').values()]
+            rows: [...view(t('events')).values()]
               .map((r) => r.value)
               .sort((a, b) => Number(b.sequence) - Number(a.sequence))
               .slice(0, Number(values[0])),
           };
         }
         if (sql.startsWith('INSERT INTO hm_mf_jobs')) {
-          writes.push(['hm_mf_jobs', String(values[0]), { id: values[0], data: values[1], write_seq: values[2] }]);
+          writes.push([t('jobs'), String(values[0]), { id: values[0], data: values[1], write_seq: values[2] }]);
           return { rows: [] };
         }
         if (sql.startsWith('INSERT INTO hm_mf_events')) {
-          writes.push(['hm_mf_events', String(values[0]), { sequence: values[0], job_id: values[1], data: values[2] }]);
+          writes.push([t('events'), String(values[0]), { sequence: values[0], job_id: values[1], data: values[2] }]);
           return { rows: [] };
         }
         if (sql.startsWith('INSERT INTO hm_mf_meta')) {
-          writes.push(['hm_mf_meta', String(values[0]), { id: values[0], value: values[1] }]);
+          writes.push([t('meta'), String(values[0]), { id: values[0], value: values[1] }]);
           return { rows: [] };
         }
         throw new Error(`FakeDsql does not understand: ${sql}`);
@@ -240,4 +250,69 @@ test('importModelFactoryHistoryIfEmpty copies the SQLite ledger once and never o
   assert.equal((await moved.list()).length, 2);
   assert.equal(await importModelFactoryHistoryIfEmpty(new SqliteModelFactoryRepository(':memory:'), makeRepository(new FakeDsql())), 0);
   await local.close();
+});
+
+function deliveryInput(): CreateDeliveryTask {
+  const baseCommit = 'a'.repeat(40);
+  const files = [{ path: 'tests/acceptance.test.ts', sha256: 'd'.repeat(64) }];
+  const testCommand = ['npm', 'run', 'check'];
+  return {
+    title: 'DSQL delivery repository test',
+    instructions: 'Implement the approved change without editing acceptance tests.',
+    provider: 'codex',
+    maxIterations: 3,
+    budgetMicros: 500_000,
+    acceptance: { baseCommit, files, testCommand, digest: computeAcceptanceTestDigest({ baseCommit, files, testCommand }) },
+    delivery: { mode: 'draft_pr', repository: 'roboco-io/project-hivemind', baseBranch: 'main', branchPrefix: 'hivemind/', autoMerge: false },
+    bundle: { baseCommit, bundleSha256: 'b'.repeat(64), sizeBytes: 11_560_000, fileCount: 790, s3Key: 'bundles/hivemind.bundle' },
+    spot: { maxSpotRetries: 2, checkpointFlushTimeoutMs: 90_000 },
+  };
+}
+
+function makeDeliveryRepository(db: FakeDsql) {
+  return new DsqlDeliveryRepository({
+    endpoint: 'example.dsql.ap-northeast-2.on.aws',
+    region: 'ap-northeast-2',
+    credentials: () => ({ accessKeyId: 'unused', secretAccessKey: 'unused' }),
+    pool: db,
+    sleep: async () => undefined,
+  });
+}
+
+test('DeliveryStore runs on the DSQL repository: approval, events by task, conflict on concurrent claims, and SQLite import', async () => {
+  const db = new FakeDsql('hm_delivery');
+  const store = new DeliveryStore(makeDeliveryRepository(db));
+  assert.equal(store.storageBackend, 'aurora-dsql');
+
+  const task = await store.create(deliveryInput());
+  await assert.rejects(() => store.approve(task.id, '0'.repeat(64), 'bad fingerprint'), /fingerprint/i);
+  const approved = await store.approve(task.id, task.approvalFingerprint, 'ok');
+  assert.equal((await store.get(task.id)).status, approved.status);
+  assert.deepEqual((await store.list()).map((t) => t.id), [task.id]);
+  const types = (await store.events(task.id)).map((e) => e.type);
+  assert.equal(types.length, 2);
+  assert.ok(db.statements.some((s) => s.startsWith('INSERT INTO hm_delivery_events')), 'delivery uses its own tables');
+
+  // Two workers start the same iteration at the same time: exactly one wins, the other sees the new state.
+  const starts = await Promise.allSettled([
+    store.startIteration(task.id, 'worker-a', 'run-a'),
+    store.startIteration(task.id, 'worker-b', 'run-b'),
+  ]);
+  assert.deepEqual(starts.map((r) => r.status).sort(), ['fulfilled', 'rejected']);
+  assert.ok(db.conflicts >= 1);
+
+  // One-time import from the local SQLite file into an empty DSQL store.
+  const sqlite = new SqliteDeliveryRepository(':memory:');
+  const local = new DeliveryStore(sqlite);
+  const first = await local.create(deliveryInput());
+  await local.approve(first.id, first.approvalFingerprint, 'ok');
+  const target = makeDeliveryRepository(new FakeDsql('hm_delivery'));
+  assert.equal(await importHistoryIfEmpty(sqlite, target), 1);
+  const moved = new DeliveryStore(target);
+  assert.equal((await moved.get(first.id)).status, (await local.get(first.id)).status);
+  assert.deepEqual((await moved.events()).map((e) => e.type), (await local.events()).map((e) => e.type));
+  assert.equal(await importHistoryIfEmpty(sqlite, target), 0);
+  await local.close();
+
+  await assert.rejects(() => makeDeliveryRepository(db).dropTables(), /Refusing to drop the production tables/);
 });

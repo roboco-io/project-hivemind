@@ -400,7 +400,7 @@ export class ModelFactoryStore {
   }
 
   private load(id: string): ModelFactoryJob {
-    const job = this.txState().jobs.get(id);
+    const job = this.txState().docs.get(id);
     if (!job) throw new DomainError('Model factory job not found', 404);
     return structuredClone(job);
   }
@@ -408,8 +408,8 @@ export class ModelFactoryStore {
   private save(job: ModelFactoryJob): ModelFactoryJob {
     job.updatedAt = this.timestamp();
     const state = this.txState();
-    state.jobs.set(job.id, structuredClone(job));
-    state.dirtyJobIds.add(job.id);
+    state.docs.set(job.id, structuredClone(job));
+    state.dirtyIds.add(job.id);
     return structuredClone(job);
   }
 
@@ -418,7 +418,7 @@ export class ModelFactoryStore {
   }
 
   private computeLedgerLocked(): ModelFactoryLedgerSummary {
-    const jobs = [...this.txState().jobs.values()];
+    const jobs = [...this.txState().docs.values()];
 
     let totalReservedMicros = 0;
     let totalSettledMicros = 0;
@@ -459,11 +459,11 @@ export class ModelFactoryStore {
   }
 
   async list(): Promise<ModelFactoryJob[]> {
-    return this.repository.listJobs();
+    return this.repository.listDocs();
   }
 
   async get(id: string): Promise<ModelFactoryJob> {
-    const job = await this.repository.getJob(id);
+    const job = await this.repository.getDoc(id);
     if (!job) throw new DomainError('Model factory job not found', 404);
     return job;
   }

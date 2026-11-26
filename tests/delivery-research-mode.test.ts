@@ -355,12 +355,12 @@ test('A4: runAwsWorkerOnce restores partialPatch from prior checkpoint on Spot r
   }
 });
 
-test('A5: Draft PR body includes explicit factual-accuracy disclaimer for document_format verificationKind', () => {
+test('A5: Draft PR body includes explicit factual-accuracy disclaimer for document_format verificationKind', async () => {
   const store = new DeliveryStore(':memory:');
   try {
     const acceptanceFiles = [{ path: 'ops/stage1/check.mjs', sha256: sha256('check') }];
     const acceptanceCommand = ['node', 'ops/stage1/check.mjs', '--final'];
-    const task = store.create({
+    const task = await store.create({
       title: 'Model Factory Stage 1 Report',
       instructions: 'Produce verified markdown report',
       provider: 'claude',
@@ -410,6 +410,6 @@ test('A5: Draft PR body includes explicit factual-accuracy disclaimer for docume
     assert.match(body, /문서 산출물 검증 범위 고지/);
     assert.match(body, /사실 여부 미판정/);
   } finally {
-    store.close();
+    await store.close();
   }
 });

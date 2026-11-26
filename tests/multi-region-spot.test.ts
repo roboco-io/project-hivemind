@@ -262,7 +262,7 @@ test('AwsMultiRegionEcsDriver routes RunTask to selected spoke region + pinned A
     const baseCommit = 'a'.repeat(40);
     const files = [{ path: 'tests/a.test.ts', sha256: 'b'.repeat(64) }];
     const testCommand = ['npm', 'run', 'check'];
-    const task = store.create({
+    const task = await store.create({
       title: 'GPU Spot task with multi-region routing',
       instructions: 'Run workload in cheapest high-score region.',
       provider: 'codex',
@@ -294,7 +294,7 @@ test('AwsMultiRegionEcsDriver routes RunTask to selected spoke region + pinned A
         workloadClass: 'gpu-l40s-4x',
       },
     });
-    store.approve(task.id, task.approvalFingerprint, 'Approved multi-region task');
+    await store.approve(task.id, task.approvalFingerprint, 'Approved multi-region task');
 
     const orchestrator = new DeliveryOrchestrator({
       store,
@@ -338,7 +338,7 @@ test('AwsMultiRegionEcsDriver routes RunTask to selected spoke region + pinned A
     assert.equal(afterSpot.redispatched?.placement?.selectedRegion, 'ap-northeast-2');
     assert.equal(launchedCalls[1]!.url, 'https://ecs.ap-northeast-2.amazonaws.com/');
   } finally {
-    store.close();
+    await store.close();
   }
 });
 

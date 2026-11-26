@@ -154,10 +154,10 @@ test('TTL Guard keeps terminating when one region or the ledger fails, and works
     transaction: async () => {
       throw new Error('connect ETIMEDOUT');
     },
-    listJobs: async () => {
+    listDocs: async () => {
       throw new Error('connect ETIMEDOUT');
     },
-    getJob: async () => {
+    getDoc: async () => {
       throw new Error('connect ETIMEDOUT');
     },
     listEvents: async () => [],

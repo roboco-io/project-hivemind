@@ -6,11 +6,8 @@ import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import type { CreateModelFactoryJob, ModelFactoryEvent, ModelFactoryJob } from '../packages/contracts/src/model-factory.js';
 import { ModelFactoryStore } from '../packages/core/src/model-factory.js';
-import {
-  newModelFactoryTxState,
-  type ModelFactoryRepository,
-  type ModelFactoryTxState,
-} from '../packages/core/src/model-factory-repository.js';
+import { newDocumentTxState } from '../packages/core/src/document-repository.js';
+import type { ModelFactoryRepository, ModelFactoryTxState } from '../packages/core/src/model-factory-repository.js';
 
 function jobInput(prefix: string, maxTotalCostMicros = 400_000): CreateModelFactoryJob {
   return {
@@ -46,18 +43,18 @@ class RetryingMemoryRepository implements ModelFactoryRepository {
     let state!: ModelFactoryTxState;
     let result!: T;
     for (let i = 0; i < this.attempts; i += 1) {
-      state = newModelFactoryTxState([...this.jobs.values()].map((job) => structuredClone(job)));
+      state = newDocumentTxState([...this.jobs.values()].map((job) => structuredClone(job)));
       this.bodyRuns += 1;
       result = fn(state);
     }
-    for (const id of state.dirtyJobIds) this.jobs.set(id, structuredClone(state.jobs.get(id)!));
+    for (const id of state.dirtyIds) this.jobs.set(id, structuredClone(state.docs.get(id)!));
     for (const event of state.newEvents) this.events.push({ sequence: this.events.length + 1, ...event });
     return result;
   }
-  async listJobs() {
+  async listDocs() {
     return [...this.jobs.values()].reverse().map((job) => structuredClone(job));
   }
-  async getJob(id: string) {
+  async getDoc(id: string) {
     const job = this.jobs.get(id);
     return job ? structuredClone(job) : null;
   }

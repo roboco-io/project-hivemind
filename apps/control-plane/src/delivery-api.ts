@@ -31,8 +31,9 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
   const workerOnly = authorize('worker');
 
   app.get('/api/delivery/tasks', { onRequest: operatorOnly }, async () => ({
-    tasks: store.list(),
-    events: store.events(),
+    storageBackend: store.storageBackend,
+    tasks: await store.list(),
+    events: await store.events(),
   }));
 
   app.get<{
@@ -59,15 +60,15 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
   });
 
   app.get<{ Params: { id: string } }>('/api/delivery/tasks/:id', { onRequest: operatorOnly }, async (request) => ({
-    task: store.get(request.params.id),
-    events: store.events(request.params.id),
+    task: await store.get(request.params.id),
+    events: await store.events(request.params.id),
   }));
 
   app.post<{ Body: CreateDeliveryTask }>(
     '/api/delivery/tasks',
     { onRequest: operatorOnly, bodyLimit: 131072 },
     async (request, reply) => {
-      const created = store.create(request.body);
+      const created = await store.create(request.body);
       if (orchestrator) {
         await orchestrator.uploadAcceptanceSpec(created, AbortSignal.timeout(30_000));
       }
@@ -79,7 +80,7 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
     '/api/delivery/tasks/:id/approve',
     { onRequest: operatorOnly, bodyLimit: 16384 },
     async (request) => {
-      const approved = store.approve(request.params.id, request.body.approvalFingerprint, request.body.reason);
+      const approved = await store.approve(request.params.id, request.body.approvalFingerprint, request.body.reason);
       if (orchestrator && approved.bundle?.s3Key) {
         const dispatched = await orchestrator.dispatchWorker(approved.id, AbortSignal.timeout(30_000));
         console.log(
@@ -100,26 +101,26 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
   app.post<{ Params: { id: string }; Body: DraftPrPublication }>(
     '/api/delivery/tasks/:id/publish-draft-pr',
     { onRequest: operatorOnly, bodyLimit: 32768 },
-    async (request) => store.recordDraftPrPublication(request.params.id, request.body),
+    async (request) => await store.recordDraftPrPublication(request.params.id, request.body),
   );
 
   app.post<{ Params: { id: string }; Body: Omit<HumanDeliveryDecision, 'decidedAt'> }>(
     '/api/delivery/tasks/:id/human-decision',
     { onRequest: operatorOnly, bodyLimit: 16384 },
-    async (request) => store.recordHumanDecision(request.params.id, request.body),
+    async (request) => await store.recordHumanDecision(request.params.id, request.body),
   );
 
   app.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/api/delivery/tasks/:id/cancel',
     { onRequest: operatorOnly, bodyLimit: 16384 },
-    async (request) => store.cancel(request.params.id, request.body.reason),
+    async (request) => await store.cancel(request.params.id, request.body.reason),
   );
 
   app.get<{ Params: { id: string }; Querystring: { runId?: string } }>(
     '/api/delivery/tasks/:id/worker-spec',
     { onRequest: workerOnly },
     async (request) => {
-      const task = store.get(request.params.id);
+      const task = await store.get(request.params.id);
       const runId = request.query.runId?.trim();
       if (!runId || task.status !== 'running' || task.activeRunId !== runId) {
         throw new DomainError('Active run mismatch for worker spec', 409);
@@ -147,13 +148,13 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
   app.post<{ Params: { id: string }; Body: Omit<DeliveryPreflightReport, 'checkedAt'> }>(
     '/api/delivery/tasks/:id/preflight',
     { onRequest: workerOnly, bodyLimit: 16384 },
-    async (request) => store.recordPreflight(request.params.id, request.body),
+    async (request) => await store.recordPreflight(request.params.id, request.body),
   );
 
   app.post<{ Params: { id: string }; Body: { workerId: string; runId: string } }>(
     '/api/delivery/tasks/:id/start',
     { onRequest: workerOnly, bodyLimit: 16384 },
-    async (request) => store.startIteration(request.params.id, request.body.workerId, request.body.runId),
+    async (request) => await store.startIteration(request.params.id, request.body.workerId, request.body.runId),
   );
 
   app.post<{
@@ -163,12 +164,12 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
     '/api/delivery/tasks/:id/worker-completed',
     { onRequest: workerOnly, bodyLimit: 32768 },
     async (request) => {
-      const task = store.get(request.params.id);
+      const task = await store.get(request.params.id);
       if (task.status !== 'running' || task.activeRunId !== request.body.runId) {
         throw new DomainError('Active run mismatch for worker completion', 409);
       }
       if (request.body.summary?.trim() || request.body.checkpointS3Key?.trim()) {
-        store.recordWorkerSummary(
+        await store.recordWorkerSummary(
           task.id,
           request.body.runId,
           request.body.summary?.trim() || 'Worker execution completed',
@@ -176,7 +177,7 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
         );
       }
       if (!orchestrator) {
-        return { ok: true, task: store.get(task.id) };
+        return { ok: true, task: await store.get(task.id) };
       }
       const dispatched = await orchestrator.recordWorkerCompletion(
         task.id,
@@ -220,7 +221,7 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
         );
         return result.task;
       }
-      return store.recordSpotInterruption(
+      return await store.recordSpotInterruption(
         request.params.id,
         request.body.runId,
         request.body.checkpointRef,
@@ -234,7 +235,7 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
     { onRequest: workerOnly, bodyLimit: 65536 },
     async (request) => {
       if (orchestrator) {
-        const task = store.get(request.params.id);
+        const task = await store.get(request.params.id);
         if (!task.activeRunId || request.body.runId !== task.activeRunId) {
           throw new DomainError('Verification must match the active running iteration', 409);
         }
@@ -256,7 +257,7 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
         );
         return result.task;
       }
-      return store.recordVerification(request.params.id, request.body);
+      return await store.recordVerification(request.params.id, request.body);
     },
   );
 }

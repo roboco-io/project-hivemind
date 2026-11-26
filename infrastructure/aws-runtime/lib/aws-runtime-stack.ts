@@ -28,6 +28,8 @@ export interface AwsRuntimeConfig {
    * ledger lives in the Seoul DSQL cluster instead of the EFS SQLite file. Default: 'sqlite'.
    */
   modelFactoryStorage?: 'sqlite' | 'aurora-dsql';
+  /** Where the Control Plane keeps SW delivery tasks. 'aurora-dsql' sets HIVEMIND_DELIVERY_STORAGE. Default: 'sqlite'. */
+  deliveryStorage?: 'sqlite' | 'aurora-dsql';
   /**
    * Spoke regions whose ECS clusters the Control Plane may run, stop and describe tasks in. For each region
    * the Control Plane also gets iam:PassRole on that spoke's three fixed-name task roles.
@@ -558,6 +560,7 @@ export class AwsRuntimeStack extends Stack {
         HIVEMIND_MF_ALLOWED_REGIONS: 'ap-northeast-2,us-east-2,us-east-1,us-west-2,ap-northeast-1',
         HIVEMIND_MF_BUDGET_CAP_MICROS: '500000000',
         ...(cfg.modelFactoryStorage === 'aurora-dsql' ? { HIVEMIND_MF_STORAGE: 'aurora-dsql' } : {}),
+        ...(cfg.deliveryStorage === 'aurora-dsql' ? { HIVEMIND_DELIVERY_STORAGE: 'aurora-dsql' } : {}),
         ...(cfg.spokesJson ? { HIVEMIND_AWS_SPOKES_JSON: cfg.spokesJson } : {}),
         ...(cfg.modelFactoryRegionNetworksJson
           ? { HIVEMIND_MF_REGION_NETWORKS_JSON: cfg.modelFactoryRegionNetworksJson }

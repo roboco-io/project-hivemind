@@ -7,6 +7,9 @@ import { CollabOrchestrator } from './collab-orchestrator.js';
 import { DsqlCollaborationRepository } from '../../../packages/adapters/src/aws-dsql.js';
 import { DsqlModelFactoryRepository, importModelFactoryHistoryIfEmpty } from '../../../packages/adapters/src/aws-dsql-model-factory.js';
 import { SqliteModelFactoryRepository } from '../../../packages/core/src/model-factory-repository.js';
+import { DsqlDeliveryRepository } from '../../../packages/adapters/src/aws-dsql-delivery.js';
+import { SqliteDeliveryRepository } from '../../../packages/core/src/delivery-repository.js';
+import { importHistoryIfEmpty } from '../../../packages/core/src/document-repository.js';
 import { AwsEc2SpotTrainer } from '../../../packages/adapters/src/aws-ec2-spot-trainer.js';
 import { createTrustedHfReleasePublisher } from '../../../packages/adapters/src/model-factory-hf-publisher.js';
 import { AwsEcsFargateSpotDriver } from '../../../packages/adapters/src/aws-ecs-driver.js';
@@ -354,6 +357,29 @@ try {
     }
   }
 
+  // Same switch for the SW delivery task store: HIVEMIND_DELIVERY_STORAGE=aurora-dsql.
+  let deliveryRepository: DsqlDeliveryRepository | undefined;
+  const deliveryStorage = process.env.HIVEMIND_DELIVERY_STORAGE?.trim();
+  if (deliveryStorage !== undefined && deliveryStorage !== 'sqlite' && deliveryStorage !== 'aurora-dsql') {
+    throw new Error('HIVEMIND_DELIVERY_STORAGE must be sqlite or aurora-dsql');
+  }
+  if (deliveryStorage === 'aurora-dsql') {
+    if (!dsqlEndpoint) throw new Error('HIVEMIND_DELIVERY_STORAGE=aurora-dsql requires HIVEMIND_DSQL_ENDPOINT');
+    deliveryRepository = new DsqlDeliveryRepository({
+      endpoint: dsqlEndpoint,
+      region: dsqlRegion,
+      allowedRegions: [dsqlRegion],
+      credentials: createEcsTaskCredentialsProvider(),
+    });
+    const localDeliveryHistory = new SqliteDeliveryRepository(dbPath);
+    try {
+      const importedTasks = await importHistoryIfEmpty(localDeliveryHistory, deliveryRepository);
+      console.log(JSON.stringify({ event: 'hivemind.control_plane.delivery_dsql_enabled', dsqlRegion, importedTasks }));
+    } finally {
+      await localDeliveryHistory.close();
+    }
+  }
+
   const collabOrchestratorFactory = (service: AgentCollabService) => {
     const region = process.env.HIVEMIND_AWS_REGION?.trim();
     const bucket = process.env.HIVEMIND_ARTIFACTS_BUCKET?.trim();
@@ -417,7 +443,7 @@ try {
     });
   };
 
-  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(modelFactoryRepository ? { modelFactoryRepository } : {}),collabRepo,collabOrchestratorFactory});
+  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(modelFactoryRepository ? { modelFactoryRepository } : {}),...(deliveryRepository ? { deliveryRepository } : {}),collabRepo,collabOrchestratorFactory});
   const address = await app.listen({host,port});
   console.log(`HIVEMIND control service: ${address}`);
   for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,() => { void app!.close(); });

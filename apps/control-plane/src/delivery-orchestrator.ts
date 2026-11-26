@@ -109,7 +109,7 @@ export class DeliveryOrchestrator {
     signal?: AbortSignal,
     options?: { excludeRegions?: string[] },
   ): Promise<DispatchResult> {
-    const current = this.options.store.get(taskId);
+    const current = await this.options.store.get(taskId);
     if (!current.bundle?.s3Key) {
       throw new Error('Delivery task requires an S3 bundle manifest before ECS dispatch');
     }
@@ -130,12 +130,12 @@ export class DeliveryOrchestrator {
         },
         this.now(),
       );
-      this.options.store.recordPlacementDecision(taskId, placement);
+      await this.options.store.recordPlacementDecision(taskId, placement);
     }
 
     const runId = `run-${randomUUID()}`;
     const workerId = `ecs-spot-${placement?.selectedRegion ?? 'primary'}-${runId.slice(4, 12)}`;
-    const started = this.options.store.startIteration(taskId, workerId, runId);
+    const started = await this.options.store.startIteration(taskId, workerId, runId);
 
     const launched = await this.options.ecs.launchWorkload(
       {
@@ -160,7 +160,7 @@ export class DeliveryOrchestrator {
     patchS3Key: string,
     signal?: AbortSignal,
   ): Promise<{ ecsTaskArn: string }> {
-    const task = this.options.store.get(taskId);
+    const task = await this.options.store.get(taskId);
     if (task.status !== 'running' || task.activeRunId !== runId) {
       throw new Error('Cannot dispatch verifier: task is not running for this runId');
     }
@@ -191,8 +191,8 @@ export class DeliveryOrchestrator {
     reason: string,
     signal?: AbortSignal,
   ): Promise<{ task: DeliveryTask; redispatched?: DispatchResult }> {
-    const interruptedRegion = this.options.store.get(taskId).activeRegion;
-    const updated = this.options.store.recordSpotInterruption(taskId, runId, checkpointS3Key, reason);
+    const interruptedRegion = (await this.options.store.get(taskId)).activeRegion;
+    const updated = await this.options.store.recordSpotInterruption(taskId, runId, checkpointS3Key, reason);
     if (updated.status === 'queued') {
       // Automatically exclude the interrupted region so multi-region failover picks the next best region.
       const redispatched = await this.dispatchWorker(taskId, signal, {
@@ -213,7 +213,7 @@ export class DeliveryOrchestrator {
     publication?: DraftPrPublication;
     retried?: DispatchResult;
   }> {
-    const updated = this.options.store.recordVerification(taskId, attestation);
+    const updated = await this.options.store.recordVerification(taskId, attestation);
 
     if (updated.status === 'queued') {
       // Failed verification within maxIterations -> automatically launch next Ralph loop iteration.
@@ -274,7 +274,7 @@ export class DeliveryOrchestrator {
         signal,
       );
 
-      const published = this.options.store.recordDraftPrPublication(taskId, publication);
+      const published = await this.options.store.recordDraftPrPublication(taskId, publication);
       return { task: published, publication };
     } finally {
       await rm(scratch, { recursive: true, force: true });
