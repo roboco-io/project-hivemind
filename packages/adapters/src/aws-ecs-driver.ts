@@ -231,6 +231,59 @@ export class AwsEcsFargateSpotDriver implements RuntimeDriver {
     return { taskArn };
   }
 
+  /**
+   * Starts the verifier task in Model Factory release verification mode. The verifier task definition has
+   * no model, GitHub or Hugging Face secret; it can read artifacts and write attestations only.
+   * `specBase64` is non-secret job metadata (prefix, digest, check command, pinned input hashes).
+   */
+  async launchModelReleaseVerifier(input: { jobId: string; specBase64: string }, signal?: AbortSignal): Promise<{ taskArn: string }> {
+    if (!/^[A-Za-z0-9+/=]{1,7000}$/.test(input.specBase64)) {
+      throw new Error('Model release verification spec is not base64 or exceeds the ECS override size budget');
+    }
+    const containerName = this.config.verifierContainerName ?? 'verifier';
+    const result = await this.ecsCall(
+      'RunTask',
+      {
+        cluster: this.config.clusterArn,
+        taskDefinition: this.config.verifierTaskDefinition,
+        count: 1,
+        capacityProviderStrategy: this.config.allowOnDemandFallback
+          ? [
+              { capacityProvider: 'FARGATE_SPOT', weight: 4, base: 0 },
+              { capacityProvider: 'FARGATE', weight: 1, base: 0 },
+            ]
+          : [{ capacityProvider: 'FARGATE_SPOT', weight: 1, base: 0 }],
+        networkConfiguration: {
+          awsvpcConfiguration: {
+            subnets: this.config.subnets,
+            securityGroups: this.config.securityGroups,
+            assignPublicIp: this.config.assignPublicIp ?? 'DISABLED',
+          },
+        },
+        overrides: {
+          containerOverrides: [
+            {
+              name: containerName,
+              environment: [
+                { name: 'HIVEMIND_CONTROL_API_URL', value: assertSafeValue(this.config.controlApiUrl, 'controlApiUrl') },
+                { name: 'HIVEMIND_ARTIFACTS_BUCKET', value: assertSafeValue(this.config.artifactsBucket, 'artifactsBucket') },
+                { name: 'HIVEMIND_MF_VERIFY_SPEC_B64', value: input.specBase64 },
+              ],
+            },
+          ],
+        },
+        tags: [
+          { key: 'hivemind:jobId', value: assertSafeValue(input.jobId, 'jobId') },
+          { key: 'hivemind:kind', value: 'model-release-verifier' },
+        ],
+      },
+      signal,
+    );
+    const taskArn = (result.tasks as { taskArn?: string }[] | undefined)?.[0]?.taskArn;
+    if (!taskArn) throw new Error('AWS ECS RunTask returned no taskArn');
+    return { taskArn };
+  }
+
   async launchCollabWorker(
     input: {
       sessionId: string;

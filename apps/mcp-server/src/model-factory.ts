@@ -175,6 +175,19 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
   );
 
   server.registerTool(
+    'hivemind_mf_dispatch_verifier',
+    {
+      title: 'HIVEMIND 모델 팩토리 독립 검증기 실행',
+      description:
+        'S3 영수증이 확인된 작업에 독립 검증기 작업(Fargate Spot)을 기동합니다. 검증기는 산출물과 고정 입력의 해시를 확인하고 승인된 releaseCheckCommand를 실행한 뒤 결과를 직접 보고합니다. 이 결과는 independent_verifier로 기록됩니다. 과금 자원을 만들므로 사용자의 명시적 지시가 있을 때만 호출하세요.',
+      inputSchema: z.strictObject({ jobId }),
+      annotations: { ...mutation, openWorldHint: true },
+    },
+    async ({ jobId: id }, extra) =>
+      run(() => api(`/api/model-factory/jobs/${encodeURIComponent(id)}/dispatch-verifier`, extra.signal, {})),
+  );
+
+  server.registerTool(
     'hivemind_mf_approve_release',
     {
       title: 'HIVEMIND 모델 팩토리 공개 승인/반려',

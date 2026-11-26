@@ -14,9 +14,9 @@ MCP 서버는 환경 변수 `HIVEMIND_MCP_PROFILE`로 노출할 도구 묶음을
 
 | 프로필 | 도구 | 용도 |
 |---|---|---|
-| `default` (별칭 `aws`) | 25개: `hivemind_status` 1 + `hivemind_delivery_*` 7 + `hivemind_mf_*` 7 + `hivemind_collab_*` 10 | AWS 단일 경로 전체. 일상 사용의 기본값이다. |
+| `default` (별칭 `aws`) | 26개: `hivemind_status` 1 + `hivemind_delivery_*` 7 + `hivemind_mf_*` 8 + `hivemind_collab_*` 10 | AWS 단일 경로 전체. 일상 사용의 기본값이다. |
 | `delivery` | 7개 | SW 전달 작업만 노출한다. |
-| `model-factory` | 14개: 전달 7 + Model Factory 7 | 전달과 Model Factory만 노출한다. |
+| `model-factory` | 15개: 전달 7 + Model Factory 8 | 전달과 Model Factory만 노출한다. |
 | `collab` | 10개 | 협업 세션만 노출한다. |
 | `legacy` | 22개 | 폐기된 Cloudflare 경로의 도구다. 원격 리소스가 없어 실제 실행은 되지 않는다. `cloudflare/` 제거 때 함께 없앤다([ADR-0012](../../docs/adr/0012-cloudflare-archive-retention.md)). |
 

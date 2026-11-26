@@ -252,6 +252,32 @@ function createAwsModelFactoryOrchestratorFactory() {
         })
       : undefined;
 
+  // The independent release verifier reuses the Seoul verifier task definition (no model, GitHub or HF secret).
+  const verifierClusterArn = process.env.HIVEMIND_ECS_CLUSTER_ARN?.trim();
+  const verifierTaskDef = process.env.HIVEMIND_VERIFIER_TASK_DEF?.trim();
+  const verifierWorkerTaskDef = process.env.HIVEMIND_AI_WORKER_TASK_DEF?.trim();
+  const verifierSubnets = (process.env.HIVEMIND_WORKER_SUBNETS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const verifierSecurityGroups = (process.env.HIVEMIND_WORKER_SECURITY_GROUPS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const verifierControlIp = detectPrivateVpcIpv4();
+  const verifierControlUrl = process.env.HIVEMIND_CONTROL_API_URL?.trim() || (verifierControlIp ? `http://${verifierControlIp}:${Number(process.env.HIVEMIND_PORT ?? '4310')}` : '');
+  const verifierLauncher =
+    verifierClusterArn && verifierTaskDef && verifierWorkerTaskDef && verifierSubnets.length && verifierSecurityGroups.length && verifierControlUrl
+      ? new AwsEcsFargateSpotDriver({
+          region,
+          allowedRegions: [region],
+          clusterArn: verifierClusterArn,
+          workerTaskDefinition: verifierWorkerTaskDef,
+          verifierTaskDefinition: verifierTaskDef,
+          subnets: verifierSubnets,
+          securityGroups: verifierSecurityGroups,
+          assignPublicIp: process.env.HIVEMIND_WORKER_ASSIGN_PUBLIC_IP === 'ENABLED' ? 'ENABLED' : 'DISABLED',
+          controlApiUrl: verifierControlUrl,
+          allowVpcInternalHttp: process.env.HIVEMIND_ALLOW_VPC_INTERNAL_HTTP === 'true',
+          artifactsBucket: bucket,
+          credentials,
+        })
+      : undefined;
+
   const regionNetworks = parseRegionNetworkRegistry(process.env.HIVEMIND_MF_REGION_NETWORKS_JSON, allowedRegions);
   const amiResolver = createAwsPublicAmiResolver({ allowedRegions, credentials });
 
@@ -269,6 +295,7 @@ function createAwsModelFactoryOrchestratorFactory() {
       artifactsBucket: bucket,
       artifactsRegion: region,
       ...(regionNetworks ? { regionNetworks, amiResolver } : {}),
+      ...(verifierLauncher ? { verifierLauncher } : {}),
       onPlacementAttempt: (attempt) =>
         console.log(JSON.stringify({ event: 'hivemind.model_factory.placement_attempt', ...attempt })),
       ...(defaultInstanceProfileArn ? { defaultInstanceProfileArn } : {}),

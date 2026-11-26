@@ -69,7 +69,7 @@ aws --profile roboco --region ap-northeast-2 ecs update-service \
 
 ## 3. MCP 클라이언트 연결 (Claude Code / Codex)
 
-`HIVEMIND_MCP_PROFILE=model-factory`를 지정하면 SW 전달 도구 7개 + 모델 팩토리 도구 7개(총 14개)가 노출된다. 프로필을 지정하지 않으면 협업 도구와 상태 조회까지 포함한 25개가 노출된다.
+`HIVEMIND_MCP_PROFILE=model-factory`를 지정하면 SW 전달 도구 7개 + 모델 팩토리 도구 8개(총 15개)가 노출된다. 프로필을 지정하지 않으면 협업 도구와 상태 조회까지 포함한 26개가 노출된다.
 
 ```json
 {
@@ -110,6 +110,9 @@ aws --profile roboco --region ap-northeast-2 ecs update-service \
 6. **배포 전 검사 보고 및 출처 명시:**
    - 운영자/에이전트가 `POST /api/model-factory/jobs/:id/verify-release`로 보고할 경우, HIVEMIND는 응답과 저장 상태에 항상 `attestationSource: "operator_self_reported"`와 명시적 고지(`verificationDisclaimer: "이 검사 결과는 운영자/호출자가 직접 보고한 값이며, HIVEMIND가 releaseCheckCommand를 독립 격리 환경에서 실행해 검증하지 않았습니다."`)를 강제 기록한다.
    - 독립 검증기 워커(`workerToken` 인증 전용)가 `POST /api/model-factory/jobs/:id/verifier-attestation`으로 보고한 경우에만 `attestationSource: "independent_verifier"`(`verificationDisclaimer: null`)로 기록된다.
+   - 독립 검증기는 `POST /api/model-factory/jobs/:id/dispatch-verifier`(MCP `hivemind_mf_dispatch_verifier`)로 기동한다. 작업이 `evaluating`이고 S3 영수증이 확인된 경우에만 기동된다. 검증기는 모델·GitHub·Hugging Face 비밀이 없는 Fargate Spot 작업이며, 다음 순서로 동작한다. S3의 `receipt.json`이 이 작업의 것이고 그 `manifestDigest`가 Control Plane이 기록한 값과 같은지 확인한다. 산출물 파일을 모두 내려받아 SHA-256을 영수증과 비교한다. 고정 입력(`compute.inputs`)을 내려받아 SHA-256을 승인된 명세와 비교한다. 그다음 고정 입력 디렉터리에서 `releaseCheckCommand`를 실행하고, 산출물 디렉터리는 환경 변수 `HIVEMIND_ARTIFACT_DIR`로 전달한다. 명령의 종료 코드가 0이면 통과다. 표준 출력의 마지막 줄이 JSON 객체이면 그 값을 지표로 기록한다.
+   - 따라서 검사 스크립트는 고정 입력에 넣어 두어야 한다. 검증기는 저장소 소스를 받지 않는다. 해시가 맞지 않으면 검증기는 증명을 보고하지 않고 실패로 끝나며, 작업은 `evaluating`에 남는다. 검증기가 내려받는 산출물은 합계 4GiB까지다.
+   - 격리의 한계: 검사 명령은 셸 없이, 작업의 자격 증명 환경 변수 없이, 새 홈 디렉터리에서 실행된다. 샌드박스는 아니다. 명령은 검증기 컨테이너와 그 네트워크를 공유한다.
 7. `POST /api/model-factory/jobs/:id/approve-release`: 운영자 명시 승인 → Control Plane이 `hivemind-runtime/hf-release-token`으로 S3 검증 산출물을 Hugging Face에 직접 게시 (`released`).
 8. **Hugging Face 저장소 공개 범위(`releasePolicy.visibility`) 동작 규칙 (fail-closed):**
    - HIVEMIND의 게시 단계(`assertHfVisibility` / `hfLfsCommit`)는 **비공개 저장소를 공개로 변경하지 않으며, 저장소를 자동 생성하지도 않는다.**

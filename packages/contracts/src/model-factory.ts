@@ -162,6 +162,8 @@ export interface ModelFactoryJob {
   nextWakeAt: string | null;
   receipt: ModelArtifactReceipt | null;
   releaseAttestation: ModelReleaseAttestation | null;
+  /** Last independent verifier task the Control Plane started for this job. Absent when none was started. */
+  releaseVerifier?: { ecsTaskArn: string; dispatchedAt: string } | null;
   releaseDecision: ModelReleaseDecision | null;
   publication: ModelReleasePublication | null;
   createdAt: string;

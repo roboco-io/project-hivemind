@@ -391,6 +391,8 @@ export class AwsRuntimeStack extends Stack {
     this.artifactsBucket.grantRead(this.verifierRole, 'acceptance/*');
     this.artifactsBucket.grantRead(this.verifierRole, 'patches/*');
     this.artifactsBucket.grantPut(this.verifierRole, 'attestations/*');
+    // Model Factory release verification: the verifier reads artifacts and pinned inputs, never writes them.
+    this.artifactsBucket.grantRead(this.verifierRole, 'models/*');
 
     // 4. Model Factory EC2 Training Instance Role & Instance Profile:
     // Strictly scoped to reading models/*/inputs/* and writing models/* (excluding inputs/*) + KMS key usage.

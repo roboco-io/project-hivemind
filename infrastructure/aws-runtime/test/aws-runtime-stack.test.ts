@@ -321,3 +321,28 @@ test('restrictedDsqlRoles removes DbConnectAdmin from both services and names th
   restricted.hasOutput('ControlPlaneTaskRoleArn', {});
   restricted.hasOutput('ModelFactoryTtlGuardRoleArn', {});
 });
+
+test('verifier role can read model artifacts for release verification but still cannot write them or read any secret', () => {
+  const template = synth();
+  const policy = JSON.stringify(
+    Object.entries(template.findResources('AWS::IAM::Policy')).find(([id]) => id.startsWith('VerifierTaskRole'))![1],
+  );
+  assert.ok(policy.includes('/models/*'), 'verifier reads models/*');
+  assert.ok(policy.includes('/attestations/*'));
+  assert.ok(!policy.includes('secretsmanager'));
+  assert.ok(!policy.includes('dsql:'));
+  assert.ok(!policy.includes('ec2:'));
+  // Its only write target is attestations/*: every statement that allows s3:PutObject names that prefix alone.
+  const statements = (
+    Object.entries(template.findResources('AWS::IAM::Policy')).find(([id]) => id.startsWith('VerifierTaskRole'))![1] as {
+      Properties: { PolicyDocument: { Statement: { Action: string | string[]; Resource: unknown }[] } };
+    }
+  ).Properties.PolicyDocument.Statement;
+  for (const statement of statements) {
+    const actions = Array.isArray(statement.Action) ? statement.Action : [statement.Action];
+    if (actions.some((a) => a.startsWith('s3:Put') || a.startsWith('s3:Delete') || a === 's3:*')) {
+      assert.ok(JSON.stringify(statement.Resource).includes('/attestations/*'));
+      assert.ok(!JSON.stringify(statement.Resource).includes('/models/*'));
+    }
+  }
+});

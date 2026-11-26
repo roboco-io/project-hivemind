@@ -815,6 +815,20 @@ export class ModelFactoryStore {
     });
   }
 
+  /** Records that an independent verifier task was started. Allowed only while the job awaits verification. */
+  async recordVerifierDispatched(id: string, ecsTaskArn: string): Promise<ModelFactoryJob> {
+    return this.tx(() => {
+      const job = this.load(id);
+      if (job.status !== 'evaluating' || !job.receipt) {
+        throw new DomainError(`Cannot dispatch a release verifier without a verified artifact receipt (state: ${job.status})`, 409);
+      }
+      job.releaseVerifier = { ecsTaskArn: text(ecsTaskArn, 'ecsTaskArn', 512), dispatchedAt: this.timestamp() };
+      const saved = this.save(job);
+      this.emit(saved.id, 'model_factory.release_verifier_dispatched', { ecsTaskArn: job.releaseVerifier.ecsTaskArn });
+      return saved;
+    });
+  }
+
   async recordReleaseDecision(id: string, input: Omit<ModelReleaseDecision, 'decidedAt'>): Promise<ModelFactoryJob> {
     return this.tx(() => {
       const job = this.load(id);

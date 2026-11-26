@@ -494,7 +494,7 @@ test('B6 createTrustedHfReleasePublisher rejects mismatched digest and missing a
   }
 });
 
-test('MCP model-factory profile registers all 7 Delivery + 7 Model Factory operator tools', () => {
+test('MCP model-factory profile registers all 7 Delivery + 8 Model Factory operator tools', () => {
   const settings = loadMcpSettings({
     HIVEMIND_API_URL: 'http://127.0.0.1:4310',
     HIVEMIND_OPERATOR_TOKEN: 'local-development-only',
@@ -508,7 +508,7 @@ test('MCP model-factory profile registers all 7 Delivery + 7 Model Factory opera
   assert.ok(tools.includes('hivemind_mf_approve_training'));
   assert.ok(tools.includes('hivemind_mf_approve_release'));
   assert.ok(tools.includes('hivemind_mf_ledger'));
-  assert.equal(tools.length, 14);
+  assert.equal(tools.length, 15);
 });
 
 test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerprint + preflight, bootstrap metadata, and attestationSource provenance', async () => {

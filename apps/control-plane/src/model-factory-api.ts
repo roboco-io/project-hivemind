@@ -90,6 +90,24 @@ export function registerModelFactoryRoutes(app: FastifyInstance, options: ModelF
     async (request) => store.recordReleaseAttestation(request.params.id, request.body, 'operator_self_reported'),
   );
 
+  // Starts the independent verifier task. Its report arrives on /verifier-attestation below.
+  app.post<{ Params: { id: string } }>(
+    '/api/model-factory/jobs/:id/dispatch-verifier',
+    { onRequest: operatorOnly, bodyLimit: 1024 },
+    async (request) => {
+      if (!orchestrator) {
+        throw new DomainError('Independent release verifier is unavailable in local mode', 503);
+      }
+      try {
+        return await orchestrator.dispatchReleaseVerifier(request.params.id, AbortSignal.timeout(30_000));
+      } catch (error) {
+        if (error instanceof DomainError) throw error;
+        const message = error instanceof Error ? error.message : String(error);
+        throw new DomainError(message, /not configured/.test(message) ? 503 : 409);
+      }
+    },
+  );
+
   // Independent verifier attestation: authenticated strictly with workerToken (never operatorToken).
   app.post<{ Params: { id: string }; Body: SubmitModelReleaseAttestation }>(
     '/api/model-factory/jobs/:id/verifier-attestation',

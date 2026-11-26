@@ -5,7 +5,7 @@ description: HIVEMIND의 AWS 단일 경로에서 SW 전달 작업, Model Factory
 
 # HIVEMIND 작업 관제 (AWS 단일 경로)
 
-웹을 열지 않고 프로젝트의 `hivemind` MCP 서버를 사용한다. 기본 프로필은 AWS Control Plane의 도구 25개를 한 서버로 제공한다. 상태 조회 1개, SW 전달 7개, Model Factory 7개, 협업 10개다. 폐기된 Cloudflare 경로의 도구는 기본 프로필에 없다.
+웹을 열지 않고 프로젝트의 `hivemind` MCP 서버를 사용한다. 기본 프로필은 AWS Control Plane의 도구 26개를 한 서버로 제공한다. 상태 조회 1개, SW 전달 7개, Model Factory 8개, 협업 10개다. 폐기된 Cloudflare 경로의 도구는 기본 프로필에 없다.
 
 도구가 보이지 않으면 [MCP 서버 안내](../../../apps/mcp-server/README.md)를 확인한다. MCP 연결을 고치려고 사용자 전역 설정이나 원격 인증을 임의로 바꾸지 않는다.
 
@@ -24,6 +24,7 @@ description: HIVEMIND의 AWS 단일 경로에서 SW 전달 작업, Model Factory
 |---|---|
 | `hivemind_delivery_approve` | Fargate Spot 워커 기동, 실제 모델 호출, 검증 통과 시 Draft PR 생성 |
 | `hivemind_mf_approve_training` | 중앙 예산 예약, EC2 스팟 인스턴스 기동 |
+| `hivemind_mf_dispatch_verifier` | 독립 검증기 Fargate Spot 작업 기동 |
 | `hivemind_mf_approve_release` | Hugging Face 저장소에 산출물 공개 |
 | `hivemind_collab_fan_out` | 하위 작업마다 Fargate Spot 워커 기동, 실제 모델 호출 |
 | `hivemind_collab_run_orchestrator` | Control Plane 안에서 실제 모델 호출 |
@@ -57,7 +58,8 @@ EC2 스팟 인스턴스에서 학습·평가를 실행하고, 사람이 승인�
 2. `hivemind_mf_create`로 초안을 등록한다. 리전, 인스턴스 유형, AMI, 최대 수명, 시간당 상한가, 총비용 상한, 산출물 경로, 공개 정책을 전달한다. 값을 추측하지 않는다.
 3. 사용자가 학습을 지시했으면 `hivemind_mf_approve_training`을 호출한다. 예산이 부족하면 서버가 거절한다.
 4. `hivemind_mf_get`으로 인스턴스 상태, 만료 시각, 비용 예약·정산, S3 영수증을 조회한다.
-5. 사용자가 공개를 지시했으면 `hivemind_mf_approve_release`를 호출한다.
+5. 작업이 `evaluating`이 되면, 사용자가 지시했을 때 `hivemind_mf_dispatch_verifier`로 독립 검증기를 기동한다. 검증기는 산출물과 고정 입력의 해시를 확인하고 승인된 `releaseCheckCommand`를 실행한 뒤 결과를 직접 보고한다. 검사가 통과하면 작업이 `awaiting_release_approval`이 되고, 실패하면 `failed`가 된다.
+6. 사용자가 공개를 지시했으면 `hivemind_mf_approve_release`를 호출한다.
 
 비용 값의 의미를 구분해 보고한다. `reservedMicros`는 예약 상한이다. `settledMicros`는 실행 시간에 시간당 상한가를 곱한 추정치이며 실제 청구액이 아니다. `null`은 미정산이다. 배포 전 검사 결과의 `attestationSource`가 `operator_self_reported`이면 HIVEMIND가 독립적으로 검증한 값이 아니라고 함께 알린다.
 

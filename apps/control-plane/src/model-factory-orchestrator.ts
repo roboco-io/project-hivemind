@@ -131,6 +131,10 @@ export interface ModelFactoryOrchestratorOptions {
   allowedInstanceProfileArns?: string[];
   hfPublisher?: TrustedHfReleasePublisherPort;
   spotFeed?: SpotPlacementFeedPort;
+  /** Starts the independent verifier task. Without it `dispatchReleaseVerifier` is unavailable. */
+  verifierLauncher?: {
+    launchModelReleaseVerifier(input: { jobId: string; specBase64: string }, signal?: AbortSignal): Promise<{ taskArn: string }>;
+  };
   /** Per-region network and AMI defaults; a job's own `regionOverrides` entry always wins. */
   regionNetworks?: Record<string, RegionNetworkDefaults>;
   /** Resolves `RegionNetworkDefaults.amiSsmParameter`; without it that field is ignored. */
@@ -566,6 +570,32 @@ export class ModelFactoryOrchestrator {
       });
     }
     return cancelled;
+  }
+
+  /**
+   * Starts the independent verifier for a job that has a verified artifact receipt. The verifier task
+   * downloads the artifacts and the pinned inputs, checks their hashes, runs the job's approved
+   * `releaseCheckCommand`, and reports through the worker-token endpoint, which records the attestation
+   * as `independent_verifier`. This method only starts it; the job changes state when the report arrives.
+   */
+  async dispatchReleaseVerifier(jobId: string, signal?: AbortSignal): Promise<ModelFactoryJob> {
+    if (!this.options.verifierLauncher) {
+      throw new Error('Independent release verifier is not configured');
+    }
+    const job = await this.options.store.get(jobId);
+    if (job.status !== 'evaluating' || !job.receipt) {
+      throw new Error(`Cannot dispatch a release verifier without a verified artifact receipt (state: ${job.status})`);
+    }
+    const spec = {
+      jobId: job.id,
+      artifactPrefix: job.compute.s3ArtifactPrefix,
+      expectedManifestDigest: job.receipt.manifestDigest,
+      releaseCheckCommand: job.releasePolicy.releaseCheckCommand,
+      ...(job.compute.inputs ? { inputs: { s3Prefix: job.compute.inputs.s3Prefix, files: job.compute.inputs.files } } : {}),
+    };
+    const specBase64 = Buffer.from(JSON.stringify(spec), 'utf8').toString('base64');
+    const launched = await this.options.verifierLauncher.launchModelReleaseVerifier({ jobId: job.id, specBase64 }, signal);
+    return this.options.store.recordVerifierDispatched(job.id, launched.taskArn);
   }
 
   async approveAndPublishRelease(
