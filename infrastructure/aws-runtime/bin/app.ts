@@ -54,6 +54,7 @@ if (spokeRegion) {
       allowedRegions: [primaryRegion],
       resourcePrefix,
       controlPlaneDesiredCount,
+      ...(process.env.HIVEMIND_RESTRICTED_DSQL_ROLES?.trim() === '1' ? { restrictedDsqlRoles: true } : {}),
       ...(process.env.HIVEMIND_MF_STORAGE?.trim() === 'aurora-dsql' ? { modelFactoryStorage: 'aurora-dsql' as const } : {}),
       ...(process.env.HIVEMIND_DELIVERY_STORAGE?.trim() === 'aurora-dsql' ? { deliveryStorage: 'aurora-dsql' as const } : {}),
       ...(process.env.HIVEMIND_SPOKE_REGIONS?.trim()

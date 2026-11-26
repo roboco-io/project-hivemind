@@ -47,6 +47,8 @@ export HIVEMIND_CONTROL_PLANE_DESIRED_COUNT=0
 export HIVEMIND_SPOKE_REGIONS="$SPOKE_REGIONS"
 export HIVEMIND_MF_STORAGE="${HIVEMIND_MF_STORAGE:-aurora-dsql}"
 export HIVEMIND_DELIVERY_STORAGE="${HIVEMIND_DELIVERY_STORAGE:-aurora-dsql}"
+# 1이면 Control Plane과 TTL Guard가 제한된 DB 역할로 DSQL에 접속한다. 먼저 scripts/aws-dsql-apply-roles.ts 를 실행해야 한다.
+export HIVEMIND_RESTRICTED_DSQL_ROLES="${HIVEMIND_RESTRICTED_DSQL_ROLES:-0}"
 HIVEMIND_MF_REGION_NETWORKS_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["networks"], separators=(",", ":")))' "$ENV_JSON")"
 export HIVEMIND_MF_REGION_NETWORKS_JSON
 if [[ "${HIVEMIND_DEPLOY_SPOKES_JSON:-0}" == "1" ]]; then

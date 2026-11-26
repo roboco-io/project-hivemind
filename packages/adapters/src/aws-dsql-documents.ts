@@ -38,7 +38,8 @@ export interface DsqlDocumentTables<TEventDraft> {
 }
 
 // Aurora DSQL has no FOREIGN KEY, SERIAL or trigger, and needs one DDL statement per transaction.
-function schemaStatements(prefix: string, eventOwnerColumn: string): string[] {
+/** DDL of one document store's three tables. One statement per transaction on Aurora DSQL. */
+export function documentSchemaStatements(prefix: string, eventOwnerColumn: string): string[] {
   return [
     `CREATE TABLE IF NOT EXISTS ${prefix}_jobs (
     id VARCHAR(128) PRIMARY KEY,
@@ -80,6 +81,7 @@ export class DsqlDocumentRepository<TDoc extends { id: string }, TEventDraft> im
   private readonly maxRetries: number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly t: string;
+  private readonly manageSchema: boolean;
   private schemaReady: Promise<void> | null = null;
 
   constructor(
@@ -92,6 +94,7 @@ export class DsqlDocumentRepository<TDoc extends { id: string }, TEventDraft> im
     // The prefix is interpolated into SQL identifiers, so it is restricted to a fixed safe alphabet.
     if (!/^[a-z][a-z0-9_]{1,24}$/.test(this.t)) throw new Error('Invalid DSQL table prefix');
     this.maxRetries = options.maxRetries ?? 5;
+    this.manageSchema = options.manageSchema ?? true;
     this.sleep = options.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     if (options.pool) {
       this.pool = options.pool;
@@ -119,9 +122,10 @@ export class DsqlDocumentRepository<TDoc extends { id: string }, TEventDraft> im
   }
 
   async initSchema(): Promise<void> {
+    if (!this.manageSchema) return;
     if (!this.schemaReady) {
       this.schemaReady = (async () => {
-        for (const ddl of schemaStatements(this.t, this.tables.eventOwnerColumn)) {
+        for (const ddl of documentSchemaStatements(this.t, this.tables.eventOwnerColumn)) {
           const client = await this.pool.connect();
           try {
             await client.query('BEGIN');

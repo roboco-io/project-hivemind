@@ -332,16 +332,26 @@ try {
 
   const dsqlEndpoint = process.env.HIVEMIND_DSQL_ENDPOINT?.trim();
   const dsqlRegion = process.env.HIVEMIND_DSQL_REGION?.trim() || process.env.HIVEMIND_AWS_REGION?.trim() || 'ap-northeast-2';
+  // HIVEMIND_DSQL_USER selects a restricted database role (dsql:DbConnect). With such a role the service
+  // cannot create tables, so HIVEMIND_DSQL_MANAGE_SCHEMA=false turns its DDL off; an operator creates the
+  // tables and grants with scripts/aws-dsql-apply-roles.ts. Unset, the service connects as `admin`.
+  const dsqlUser = process.env.HIVEMIND_DSQL_USER?.trim() || undefined;
+  if (dsqlUser !== undefined && !/^[a-z][a-z0-9_]{1,62}$/.test(dsqlUser)) {
+    throw new Error('HIVEMIND_DSQL_USER must be a lowercase database role name');
+  }
+  const dsqlManageSchema = process.env.HIVEMIND_DSQL_MANAGE_SCHEMA?.trim() !== 'false';
+  const dsqlAccess = { ...(dsqlUser ? { user: dsqlUser } : {}), manageSchema: dsqlManageSchema };
   const collabRepo = dsqlEndpoint
     ? new DsqlCollaborationRepository({
         endpoint: dsqlEndpoint,
         region: dsqlRegion,
         allowedRegions: [dsqlRegion],
         credentials: createEcsTaskCredentialsProvider(),
+        ...dsqlAccess,
       })
     : undefined;
   if (collabRepo) {
-    console.log(JSON.stringify({ event: 'hivemind.control_plane.aurora_dsql_enabled', dsqlEndpoint, dsqlRegion }));
+    console.log(JSON.stringify({ event: 'hivemind.control_plane.aurora_dsql_enabled', dsqlEndpoint, dsqlRegion, dsqlUser: dsqlUser ?? 'admin', manageSchema: dsqlManageSchema }));
   }
 
   // The Model Factory ledger moves to Aurora DSQL only when HIVEMIND_MF_STORAGE=aurora-dsql is set. On the
@@ -358,6 +368,7 @@ try {
       region: dsqlRegion,
       allowedRegions: [dsqlRegion],
       credentials: createEcsTaskCredentialsProvider(),
+      ...dsqlAccess,
     });
     const localHistory = new SqliteModelFactoryRepository(dbPath);
     try {
@@ -381,6 +392,7 @@ try {
       region: dsqlRegion,
       allowedRegions: [dsqlRegion],
       credentials: createEcsTaskCredentialsProvider(),
+      ...dsqlAccess,
     });
     const localDeliveryHistory = new SqliteDeliveryRepository(dbPath);
     try {

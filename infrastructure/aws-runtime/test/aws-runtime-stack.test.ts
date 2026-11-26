@@ -297,3 +297,27 @@ test('TTL Guard Lambda is a bundled asset and gets DSQL ledger access only with 
   assert.ok(!guardPolicy.includes('ec2:RunInstances'));
   assert.ok(!guardPolicy.includes('secretsmanager'));
 });
+
+test('restrictedDsqlRoles removes DbConnectAdmin from both services and names their database roles', () => {
+  const policyOf = (template: Template, prefix: string) =>
+    JSON.stringify(Object.entries(template.findResources('AWS::IAM::Policy')).find(([id]) => id.startsWith(prefix))![1]);
+
+  const admin = synth({ modelFactoryStorage: 'aurora-dsql' });
+  assert.ok(policyOf(admin, 'ControlPlaneTaskRole').includes('dsql:DbConnectAdmin'));
+  assert.ok(policyOf(admin, 'ModelFactoryTtlGuardRole').includes('dsql:DbConnectAdmin'));
+  assert.ok(!JSON.stringify(admin.toJSON()).includes('HIVEMIND_DSQL_USER'));
+
+  const restricted = synth({ modelFactoryStorage: 'aurora-dsql', restrictedDsqlRoles: true });
+  for (const prefix of ['ControlPlaneTaskRole', 'ModelFactoryTtlGuardRole']) {
+    const policy = policyOf(restricted, prefix);
+    assert.ok(policy.includes('"dsql:DbConnect"'), prefix);
+    assert.ok(!policy.includes('dsql:DbConnectAdmin'), `${prefix} must not connect as admin`);
+  }
+  const json = JSON.stringify(restricted.toJSON());
+  assert.ok(json.includes('"Name":"HIVEMIND_DSQL_USER","Value":"hm_control_plane"'));
+  assert.ok(json.includes('"Name":"HIVEMIND_DSQL_MANAGE_SCHEMA","Value":"false"'));
+  assert.ok(json.includes('"HIVEMIND_DSQL_USER":"hm_ttl_guard"'));
+  // The role ARNs the operator script needs are stack outputs.
+  restricted.hasOutput('ControlPlaneTaskRoleArn', {});
+  restricted.hasOutput('ModelFactoryTtlGuardRoleArn', {});
+});

@@ -88,9 +88,15 @@ export interface AwsDsqlStorageOptions {
   user?: string;
   credentials: () => Promise<AwsEcsCredentials> | AwsEcsCredentials;
   maxRetries?: number;
+  /**
+   * When false, the repository never issues DDL. A restricted database role cannot create tables, so an
+   * operator creates them once with scripts/aws-dsql-apply-roles.ts. Default: true.
+   */
+  manageSchema?: boolean;
 }
 
-const DSQL_SCHEMA_STATEMENTS = [
+/** DDL of the collaboration tables. One statement per transaction on Aurora DSQL. */
+export const DSQL_COLLAB_SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS hm_collab_sessions (
     id VARCHAR(128) PRIMARY KEY,
     status VARCHAR(32) NOT NULL,
@@ -134,12 +140,14 @@ export class DsqlCollaborationRepository implements CollaborationStoragePort {
   readonly backend = 'aurora-dsql' as const;
   private readonly pool: Pool;
   private readonly maxRetries: number;
+  private readonly manageSchema: boolean;
   private schemaReady: Promise<void> | null = null;
 
   constructor(options: AwsDsqlStorageOptions) {
     assertAwsRegion(options.region, options.allowedRegions);
     const host = options.endpoint.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
     this.maxRetries = options.maxRetries ?? 5;
+    this.manageSchema = options.manageSchema ?? true;
     this.pool = new Pool({
       host,
       port: 5432,
@@ -162,10 +170,11 @@ export class DsqlCollaborationRepository implements CollaborationStoragePort {
   }
 
   async initSchema(): Promise<void> {
+    if (!this.manageSchema) return;
     if (!this.schemaReady) {
       this.schemaReady = (async () => {
         // Aurora DSQL requires each DDL statement in its own transaction.
-        for (const ddl of DSQL_SCHEMA_STATEMENTS) {
+        for (const ddl of DSQL_COLLAB_SCHEMA_STATEMENTS) {
           const client = await this.pool.connect();
           try {
             await client.query('BEGIN');

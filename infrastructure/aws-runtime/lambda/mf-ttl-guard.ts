@@ -29,12 +29,21 @@ function ledgerStore(): ModelFactoryStore | null {
   if (cachedStore !== undefined) return cachedStore;
   const endpoint = process.env.HIVEMIND_DSQL_ENDPOINT?.trim();
   const region = process.env.HIVEMIND_DSQL_REGION?.trim();
+  const dsqlUser = process.env.HIVEMIND_DSQL_USER?.trim() || undefined;
+  if (dsqlUser !== undefined && !/^[a-z][a-z0-9_]{1,62}$/.test(dsqlUser)) throw new Error('Invalid HIVEMIND_DSQL_USER');
   if (process.env.HIVEMIND_MF_STORAGE !== 'aurora-dsql' || !endpoint || !region) {
     cachedStore = null;
     return cachedStore;
   }
   cachedStore = new ModelFactoryStore(
-    new DsqlModelFactoryRepository({ endpoint, region, allowedRegions: [region], credentials: lambdaCredentials }),
+    new DsqlModelFactoryRepository({
+      endpoint,
+      region,
+      allowedRegions: [region],
+      credentials: lambdaCredentials,
+      // A restricted database role cannot create tables; the operator creates them beforehand.
+      ...(dsqlUser ? { user: dsqlUser, manageSchema: false } : {}),
+    }),
   );
   return cachedStore;
 }
