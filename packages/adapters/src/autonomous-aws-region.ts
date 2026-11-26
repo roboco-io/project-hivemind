@@ -5,7 +5,13 @@ export function assertAwsRegion(region:string,allowedRegions:readonly string[]=[
 }
 function zoneId(region:string,id:string):void {
  // These physical-zone prefixes are explicit, never inferred from zone names.
- const prefixes:Record<string,string>={'ap-northeast-2':'apne2','us-east-2':'use2'};
+ const prefixes:Record<string,string>={
+  'ap-northeast-2':'apne2',
+  'ap-northeast-1':'apne1',
+  'us-east-1':'use1',
+  'us-east-2':'use2',
+  'us-west-2':'usw2',
+ };
  if(!prefixes[region]||typeof id!=='string'||!new RegExp(`^${prefixes[region]}-az[1-9][0-9]*$`).test(id))throw Error('AWS placement unavailable');
 }
 export function awsPlacement(region:string,availabilityZoneId?:string):Record<string,string>{

@@ -3,9 +3,12 @@ import { buildApp } from './app.js';
 import { configurationGitEnvironment, configurationScope, loadCloudflareConfig, loadCloudWorkflowChecks } from './cloudflare-config.js';
 import { DeliveryOrchestrator } from './delivery-orchestrator.js';
 import { AwsEcsFargateSpotDriver } from '../../../packages/adapters/src/aws-ecs-driver.js';
+import { AwsMultiRegionEcsDriver } from '../../../packages/adapters/src/aws-multi-region-driver.js';
 import { createEcsTaskCredentialsProvider } from '../../../packages/adapters/src/aws-ecs-metadata-creds.js';
 import { createAwsS3ArtifactsPort } from '../../../packages/adapters/src/aws-s3-artifacts.js';
 import { createAwsSecretsManagerPort } from '../../../packages/adapters/src/aws-secrets-manager.js';
+import { createSpotPlacementFeedPort, DEFAULT_SPOT_FEED_URL } from '../../../packages/adapters/src/spot-placement-feed.js';
+import type { AwsSpokeRegionConfig } from '../../../packages/contracts/src/multi-region.js';
 import { createCloudPort } from '../../../packages/adapters/src/cloudflare.js';
 import { createCloudWorkflowPort } from '../../../packages/adapters/src/cloud-workflow.js';
 import { createGitHubDraftPrPort } from '../../../packages/adapters/src/github-draft-pr.js';
@@ -79,9 +82,9 @@ function createAwsDeliveryOrchestratorFactory(port: number, extraRedactSecrets: 
   const credentials = createEcsTaskCredentialsProvider();
   const s3 = createAwsS3ArtifactsPort({ region, allowedRegions: [region], bucket, credentials });
   const secretsManager = createAwsSecretsManagerPort({ region, allowedRegions: [region], credentials });
-  const ecs = new AwsEcsFargateSpotDriver({
+
+  const primarySpoke: AwsSpokeRegionConfig = {
     region,
-    allowedRegions: [region],
     clusterArn,
     workerTaskDefinition: workerTaskDef,
     verifierTaskDefinition: verifierTaskDef,
@@ -91,13 +94,43 @@ function createAwsDeliveryOrchestratorFactory(port: number, extraRedactSecrets: 
     controlApiUrl,
     allowVpcInternalHttp,
     artifactsBucket: bucket,
-    credentials,
+  };
+  const extraSpokesRaw = process.env.HIVEMIND_AWS_SPOKES_JSON?.trim();
+  const extraSpokes: AwsSpokeRegionConfig[] = extraSpokesRaw
+    ? (JSON.parse(extraSpokesRaw) as AwsSpokeRegionConfig[])
+    : [];
+  const allSpokes = [primarySpoke, ...extraSpokes];
+  const ecs =
+    allSpokes.length > 1
+      ? new AwsMultiRegionEcsDriver({ primaryRegion: region, spokes: allSpokes, credentials })
+      : new AwsEcsFargateSpotDriver({
+          region,
+          allowedRegions: [region],
+          clusterArn,
+          workerTaskDefinition: workerTaskDef,
+          verifierTaskDefinition: verifierTaskDef,
+          subnets,
+          securityGroups,
+          assignPublicIp,
+          controlApiUrl,
+          allowVpcInternalHttp,
+          artifactsBucket: bucket,
+          credentials,
+        });
+  const spotFeed = createSpotPlacementFeedPort({
+    feedUrl: process.env.HIVEMIND_SPOT_FEED_URL?.trim() || DEFAULT_SPOT_FEED_URL,
   });
+  const defaultRoutingPolicy = {
+    primaryRegion: region,
+    allowedRegions: allSpokes.map((s) => s.region),
+    workloadClass: process.env.HIVEMIND_DEFAULT_WORKLOAD_CLASS?.trim() || 'c.xlarge-arm',
+  };
 
   console.log(
     JSON.stringify({
       event: 'hivemind.control_plane.aws_orchestrator_enabled',
       region,
+      allowedRegions: defaultRoutingPolicy.allowedRegions,
       bucket,
       controlApiUrl,
       assignPublicIp,
@@ -109,6 +142,8 @@ function createAwsDeliveryOrchestratorFactory(port: number, extraRedactSecrets: 
       store,
       s3,
       ecs,
+      spotFeed,
+      defaultRoutingPolicy,
       redactSecrets: extraRedactSecrets,
       githubFactory: async ({ task, bundlePath, expectedBundleSha256, workRoot, signal }) => {
         const rawSecret = await secretsManager.getSecretString(githubSecretArn, signal);

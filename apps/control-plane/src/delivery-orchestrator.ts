@@ -3,15 +3,27 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DeliveryTask, DraftPrPublication, VerificationAttestation } from '../../../packages/contracts/src/delivery.js';
-import type { AwsEcsFargateSpotDriver } from '../../../packages/adapters/src/aws-ecs-driver.js';
+import type { RegionPlacementDecision, RegionRoutingPolicy } from '../../../packages/contracts/src/multi-region.js';
+import type { LaunchEcsWorkloadInput } from '../../../packages/adapters/src/aws-ecs-driver.js';
+import type { MultiRegionLaunchInput } from '../../../packages/adapters/src/aws-multi-region-driver.js';
 import type { S3ObjectPort } from '../../../packages/adapters/src/aws-s3-artifacts.js';
+import type { SpotPlacementFeedPort } from '../../../packages/adapters/src/spot-placement-feed.js';
 import { publishVerifiedDraftPr, type GitHubDraftPrPort } from '../../../packages/adapters/src/draft-pr-publisher.js';
 import type { DeliveryStore } from '../../../packages/core/src/delivery.js';
+import { selectOptimalSpotPlacement } from '../../../packages/core/src/multi-region.js';
 
 export interface DeliveryOrchestratorOptions {
   store: DeliveryStore;
   s3: S3ObjectPort;
-  ecs: Pick<AwsEcsFargateSpotDriver, 'launchWorkload' | 'stop'>;
+  ecs: {
+    launchWorkload(
+      input: LaunchEcsWorkloadInput & Partial<Pick<MultiRegionLaunchInput, 'targetRegion' | 'targetAzId'>>,
+      signal?: AbortSignal,
+    ): Promise<{ taskArn: string; region?: string; azId?: string | null }>;
+    stop(externalRunId: string): Promise<void>;
+  };
+  spotFeed?: SpotPlacementFeedPort;
+  defaultRoutingPolicy?: RegionRoutingPolicy;
   github?: GitHubDraftPrPort;
   githubFactory?: (context: {
     task: DeliveryTask;
@@ -29,6 +41,7 @@ export interface DispatchResult {
   task: DeliveryTask;
   runId: string;
   ecsTaskArn: string;
+  placement?: RegionPlacementDecision;
 }
 
 export class DeliveryOrchestrator {
@@ -41,6 +54,26 @@ export class DeliveryOrchestrator {
     }
     this.workRoot = options.workRoot ?? tmpdir();
     this.now = options.now ?? Date.now;
+  }
+
+  async evaluateSpotPlacement(
+    overridePolicy?: Partial<RegionRoutingPolicy>,
+    signal?: AbortSignal,
+  ): Promise<RegionPlacementDecision> {
+    const base = this.options.defaultRoutingPolicy ?? {
+      primaryRegion: 'ap-northeast-2',
+      allowedRegions: ['ap-northeast-2'],
+      workloadClass: 'c.xlarge-arm',
+    };
+    const policy: RegionRoutingPolicy = {
+      ...base,
+      ...overridePolicy,
+      allowedRegions: overridePolicy?.allowedRegions ?? base.allowedRegions,
+      primaryRegion: overridePolicy?.primaryRegion ?? base.primaryRegion,
+      workloadClass: overridePolicy?.workloadClass ?? base.workloadClass,
+    };
+    const snapshot = this.options.spotFeed ? await this.options.spotFeed.getSnapshot(signal) : null;
+    return selectOptimalSpotPlacement(snapshot, policy, this.now());
   }
 
   async uploadAcceptanceSpec(task: DeliveryTask, signal?: AbortSignal): Promise<{ s3Key: string; sha256: string }> {
@@ -71,13 +104,37 @@ export class DeliveryOrchestrator {
     return this.dispatchVerifier(taskId, runId, patchS3Key, signal);
   }
 
-  async dispatchWorker(taskId: string, signal?: AbortSignal): Promise<DispatchResult> {
+  async dispatchWorker(
+    taskId: string,
+    signal?: AbortSignal,
+    options?: { excludeRegions?: string[] },
+  ): Promise<DispatchResult> {
     const current = this.options.store.get(taskId);
     if (!current.bundle?.s3Key) {
       throw new Error('Delivery task requires an S3 bundle manifest before ECS dispatch');
     }
+
+    let placement: RegionPlacementDecision | undefined;
+    const routing = current.routing ?? this.options.defaultRoutingPolicy;
+    if (routing && this.options.spotFeed) {
+      const snapshot = await this.options.spotFeed.getSnapshot(signal);
+      const mergedExcluded = [
+        ...(routing.excludeRegions ?? []),
+        ...(options?.excludeRegions ?? []),
+      ];
+      placement = selectOptimalSpotPlacement(
+        snapshot,
+        {
+          ...routing,
+          ...(mergedExcluded.length ? { excludeRegions: [...new Set(mergedExcluded)] } : {}),
+        },
+        this.now(),
+      );
+      this.options.store.recordPlacementDecision(taskId, placement);
+    }
+
     const runId = `run-${randomUUID()}`;
-    const workerId = `ecs-spot-${runId.slice(4, 12)}`;
+    const workerId = `ecs-spot-${placement?.selectedRegion ?? 'primary'}-${runId.slice(4, 12)}`;
     const started = this.options.store.startIteration(taskId, workerId, runId);
 
     const launched = await this.options.ecs.launchWorkload(
@@ -90,10 +147,11 @@ export class DeliveryOrchestrator {
         bundleSha256: current.bundle.bundleSha256,
         acceptanceDigest: started.acceptance.digest,
         ...(started.latestCheckpointRef ? { checkpointS3Key: started.latestCheckpointRef } : {}),
+        ...(placement ? { targetRegion: placement.selectedRegion, targetAzId: placement.selectedAzId } : {}),
       },
       signal,
     );
-    return { task: started, runId, ecsTaskArn: launched.taskArn };
+    return { task: started, runId, ecsTaskArn: launched.taskArn, ...(placement ? { placement } : {}) };
   }
 
   async dispatchVerifier(
@@ -119,6 +177,7 @@ export class DeliveryOrchestrator {
         bundleSha256: task.bundle.bundleSha256,
         acceptanceDigest: task.acceptance.digest,
         patchS3Key,
+        ...(task.activeRegion ? { targetRegion: task.activeRegion } : {}),
       },
       signal,
     );
@@ -132,9 +191,13 @@ export class DeliveryOrchestrator {
     reason: string,
     signal?: AbortSignal,
   ): Promise<{ task: DeliveryTask; redispatched?: DispatchResult }> {
+    const interruptedRegion = this.options.store.get(taskId).activeRegion;
     const updated = this.options.store.recordSpotInterruption(taskId, runId, checkpointS3Key, reason);
     if (updated.status === 'queued') {
-      const redispatched = await this.dispatchWorker(taskId, signal);
+      // Automatically exclude the interrupted region so multi-region failover picks the next best region.
+      const redispatched = await this.dispatchWorker(taskId, signal, {
+        ...(interruptedRegion ? { excludeRegions: [interruptedRegion] } : {}),
+      });
       return { task: redispatched.task, redispatched };
     }
     return { task: updated };

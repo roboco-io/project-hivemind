@@ -18,6 +18,8 @@ import type {
   SpotInterruptionPolicy,
   VerificationAttestation,
 } from '../../contracts/src/delivery.js';
+import type { RegionPlacementDecision, RegionRoutingPolicy } from '../../contracts/src/multi-region.js';
+import { validateRegionRoutingPolicy } from './multi-region.js';
 import { DomainError, text } from './store.js';
 
 const HEX40 = /^[a-f0-9]{40}$/;
@@ -196,6 +198,7 @@ export function computeDeliveryApprovalFingerprint(spec: {
   delivery: DeliveryPolicy;
   bundle?: BundleManifest;
   spot: SpotInterruptionPolicy;
+  routing?: RegionRoutingPolicy;
 }): string {
   return sha256Hex(
     JSON.stringify({
@@ -208,6 +211,7 @@ export function computeDeliveryApprovalFingerprint(spec: {
       delivery: spec.delivery,
       bundleSha256: spec.bundle?.bundleSha256 ?? null,
       spot: spec.spot,
+      ...(spec.routing ? { routing: spec.routing } : {}),
     }),
   );
 }
@@ -315,6 +319,7 @@ export class DeliveryStore {
       const delivery = validateDeliveryPolicy(input.delivery);
       const bundle = input.bundle === undefined ? undefined : validateBundleManifest(input.bundle, acceptance.baseCommit);
       const spot = validateSpotPolicy(input.spot);
+      const routing = input.routing === undefined ? undefined : validateRegionRoutingPolicy(input.routing);
       const approvalFingerprint = computeDeliveryApprovalFingerprint({
         provider,
         maxIterations: input.maxIterations,
@@ -323,6 +328,7 @@ export class DeliveryStore {
         delivery,
         bundle,
         spot,
+        routing,
       });
       const at = this.timestamp();
       const task: DeliveryTask = {
@@ -339,6 +345,9 @@ export class DeliveryStore {
         delivery,
         ...(bundle ? { bundle } : {}),
         spot,
+        ...(routing ? { routing } : {}),
+        activeRegion: null,
+        lastPlacement: null,
         spotRetriesUsed: 0,
         activeRunId: null,
         activeWorkerId: null,
@@ -409,6 +418,28 @@ export class DeliveryStore {
         runId: cleanRun,
         iteration: saved.currentIteration,
         checkpointRef: saved.latestCheckpointRef,
+      });
+      return saved;
+    });
+  }
+
+  recordPlacementDecision(id: string, decision: RegionPlacementDecision): DeliveryTask {
+    return this.tx(() => {
+      const task = this.load(id);
+      if (task.routing && !task.routing.allowedRegions.includes(decision.selectedRegion)) {
+        throw new DomainError(`Selected region ${decision.selectedRegion} is not in approved allowedRegions`, 409);
+      }
+      task.activeRegion = decision.selectedRegion;
+      task.lastPlacement = structuredClone(decision);
+      const saved = this.save(task);
+      this.emit(saved.id, 'delivery.region_selected', {
+        selectedRegion: decision.selectedRegion,
+        selectedAzId: decision.selectedAzId,
+        workloadClass: decision.workloadClass,
+        latestScore: decision.latestScore,
+        latestPriceUsd: decision.latestPriceUsd,
+        savingsVsPrimaryPercent: decision.savingsVsPrimaryPercent,
+        feedStaleFallback: decision.feedStaleFallback,
       });
       return saved;
     });
