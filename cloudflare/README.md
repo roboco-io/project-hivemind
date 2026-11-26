@@ -27,7 +27,7 @@ Claude 호환 모드는 해당 계정의 파일·부모 프로세스·인증 경
 
 중앙 MCP·스킬과 보조 웹의 원격 API 연결은 [프로젝트 안내](../docs/codex-integration.md)를 따른다.
 전체 장애·재개 수용, 외부 Queue와 고급 MCP compute 제출은 후속 범위다.
-AWS는 Cloudflare 원격 수용 후 별도로 구현한다. 현재 AWS 리소스를 생성하거나 배포하지 않는다.
+이 문단은 폐기 전의 기록이다. 당시에는 AWS를 Cloudflare 원격 수용 뒤에 구현할 계획이었다. 현재는 AWS 단일 경로가 현행 실행 경로이며, 이 디렉터리의 보관 범위와 제거 조건은 [ADR-0012](../docs/adr/0012-cloudflare-archive-retention.md)를 따른다.
 
 ## Interface
 

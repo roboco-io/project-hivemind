@@ -130,7 +130,7 @@ core는 작업 선택과 상태 변경을 SQLite `BEGIN IMMEDIATE` 트랜잭션 
 
 ### 실행 백엔드: 로컬 worktree와 Cloudflare 컨테이너
 
-실행 경로는 두 가지다. 로컬 경로는 개발과 계약 검증에 쓰고, Cloudflare 경로가 이 프로젝트의 목표인 원격 실행이다.
+아래 두 경로는 초기 구조다. 로컬 경로는 개발과 계약 검증에 쓴다. Cloudflare 경로는 2026-11-25에 폐기했고 원격 리소스가 없으므로 지금은 실행되지 않는다. 현행 원격 실행은 AWS 단일 경로(`infrastructure/aws-runtime`)이며 [ADR-0008](docs/adr/0008-aws-single-path-and-verified-draft-pr.md)이 설명한다. `cloudflare/` 디렉터리의 보관 범위와 제거 조건은 [ADR-0012](docs/adr/0012-cloudflare-archive-retention.md)에 있다. 이 절의 Cloudflare 설명은 과거 구조의 기록이다.
 
 로컬 경로에서는 `apps/worker`가 HTTP로 작업을 claim한다. `packages/adapters`의 공통 실행 계층이 고정 커밋에서 실행별 detached worktree를 만들고, 선택한 Codex 또는 Claude Code CLI를 실행한 뒤 준비·테스트 명령을 실행하고 실제 Git diff를 수집한다. worktree는 파일 변경을 분리할 뿐이며 보안 컨테이너가 아니다. 그래서 로컬 경로는 신뢰하는 저장소만 대상으로 한다. mock 워커는 합성 diff와 모의 비용을 만들며, 이 값은 실제 실행 근거와 구분해 표시한다.
 
@@ -399,7 +399,7 @@ npm run check
 - [자동 테스트와 실제 Codex 검증 결과](docs/verification.md)
 
 공개 저장소: [roboco-io/project-hivemind](https://github.com/roboco-io/project-hivemind).
-Cloudflare 배포 설정은 [백엔드 패키지](./cloudflare/backend/README.md)에 있다. 전체 AWS 실행 백엔드는 후속 범위다.
+현행 원격 실행 백엔드는 AWS 단일 경로이며 배포 구성은 [infrastructure/aws-runtime](./infrastructure/aws-runtime/README.md)에 있다. 폐기된 Cloudflare 백엔드의 과거 배포 설정은 [아카이브 패키지](./cloudflare/backend/README.md)에 남아 있다.
 
 ## Subdirectories & System Boundaries
 
