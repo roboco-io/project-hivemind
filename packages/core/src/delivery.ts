@@ -135,7 +135,22 @@ export function validateDeliveryPolicy(input: unknown): DeliveryPolicy {
   }
   const raw = input as Record<string, unknown>;
   if (raw.mode !== 'draft_pr') throw new DomainError('Only draft_pr delivery mode is supported', 400);
-  if (raw.autoMerge !== false) throw new DomainError('Automatic merge to base branch is forbidden', 400);
+  if (raw.autoMerge !== false && raw.autoMerge !== true) throw new DomainError('delivery.autoMerge must be a boolean', 400);
+  let protectedPaths: string[] | undefined;
+  if (raw.autoMerge === true) {
+    if (!Array.isArray(raw.protectedPaths) || raw.protectedPaths.length < 1 || raw.protectedPaths.length > 64) {
+      throw new DomainError('delivery.autoMerge requires 1..64 protectedPaths', 400);
+    }
+    protectedPaths = raw.protectedPaths.map((p) => {
+      const path = text(p, 'protectedPaths[]', 300);
+      if (path.startsWith('/') || path.includes('..') || path.includes('\\') || /\*\*|\*[^/]*\*/.test(path) || !/^[A-Za-z0-9_.*\/-]+$/.test(path)) {
+        throw new DomainError(`Invalid protected path: ${path}`, 400);
+      }
+      return path;
+    });
+  } else if (raw.protectedPaths !== undefined) {
+    throw new DomainError('delivery.protectedPaths is only for autoMerge', 400);
+  }
   const repository = text(raw.repository, 'delivery repository', 200);
   if (!REPO_PATTERN.test(repository)) throw new DomainError('Invalid delivery repository', 400);
   const baseBranch = validateGitRefPart(String(raw.baseBranch ?? ''), 'baseBranch', false);
@@ -147,7 +162,36 @@ export function validateDeliveryPolicy(input: unknown): DeliveryPolicy {
   if (PROTECTED_BRANCHES.has(prefixRoot) || prefixRoot === baseBranch) {
     throw new DomainError('branchPrefix cannot target a protected or base branch', 400);
   }
-  return { mode: 'draft_pr', repository, baseBranch, branchPrefix, autoMerge: false };
+  return { mode: 'draft_pr', repository, baseBranch, branchPrefix, autoMerge: raw.autoMerge === true, ...(protectedPaths ? { protectedPaths } : {}) };
+}
+
+function protectedPatternToRegExp(pattern: string): RegExp {
+  const escaped = pattern.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*');
+  return new RegExp(pattern.endsWith('/') ? `^${escaped}` : `^${escaped}$`);
+}
+
+/** The changed paths that an auto-merge must not include (issue #20). */
+export function touchedProtectedPaths(changedPaths: readonly string[], protectedPaths: readonly string[]): string[] {
+  const patterns = protectedPaths.map(protectedPatternToRegExp);
+  return [...new Set(changedPaths.filter((path) => patterns.some((re) => re.test(path))))].sort();
+}
+
+/** Old and new paths of every file a unified git diff touches, including renames. */
+export function pathsInPatch(patch: string): string[] {
+  const paths = new Set<string>();
+  for (const line of patch.split('\n')) {
+    const header = /^diff --git a\/(.+) b\/(.+)$/.exec(line);
+    if (header) {
+      paths.add(header[1]!);
+      paths.add(header[2]!);
+      continue;
+    }
+    const rename = /^rename (?:from|to) (.+)$/.exec(line);
+    if (rename) paths.add(rename[1]!);
+    const side = /^(?:---|\+\+\+) [ab]\/(.+)$/.exec(line);
+    if (side) paths.add(side[1]!);
+  }
+  return [...paths].sort();
 }
 
 export function validateBundleManifest(input: unknown, expectedBaseCommit: string): BundleManifest {
@@ -325,8 +369,52 @@ export class DeliveryStore {
    * @param storage A SQLite file path (local default) or any DeliveryRepository, for example the Aurora
    *   DSQL repository on AWS.
    */
-  constructor(storage: string | DeliveryRepository = ':memory:', private now: () => number = Date.now) {
+  constructor(
+    storage: string | DeliveryRepository = ':memory:',
+    private now: () => number = Date.now,
+    /** Repositories whose tasks may use autoMerge (issue #20). Default: none. */
+    private readonly autoMergeRepositories: readonly string[] = [],
+  ) {
     this.repository = typeof storage === 'string' ? new SqliteDeliveryRepository(storage) : storage;
+  }
+
+  /** True when the task's policy asks for auto-merge and its repository is still allowed. */
+  autoMergeAllowed(task: DeliveryTask): boolean {
+    return task.delivery.autoMerge === true && this.autoMergeRepositories.includes(task.delivery.repository);
+  }
+
+  /** Records the auto-merge outcome. A merge also settles the task as approved, by the policy. */
+  async recordAutoMerge(
+    id: string,
+    outcome: { outcome: 'merged'; mergeCommitSha: string } | { outcome: 'refused'; reason: string; touchedProtectedPaths?: string[] },
+  ): Promise<DeliveryTask> {
+    return this.tx(() => {
+      const task = this.load(id);
+      if (task.status !== 'draft_pr_published' || !task.publication || task.delivery.autoMerge !== true) {
+        throw new DomainError(`Cannot record an auto-merge in state ${task.status}`, 409);
+      }
+      const at = this.timestamp();
+      if (outcome.outcome === 'merged') {
+        if (!/^[a-f0-9]{40}$/i.test(outcome.mergeCommitSha)) throw new DomainError('Invalid merge commit SHA', 400);
+        task.autoMerge = { outcome: 'merged', reason: 'Verifier passed and no protected path changed', mergeCommitSha: outcome.mergeCommitSha.toLowerCase(), at };
+        task.humanDecision = { decision: 'approve', openedDiff: false, durationMinutes: 0, reason: 'Auto-merge policy', decidedAt: at };
+        task.status = 'approved';
+        task.waitReason = null;
+      } else {
+        task.autoMerge = {
+          outcome: 'refused',
+          reason: text(outcome.reason, 'reason', 1000),
+          ...(outcome.touchedProtectedPaths?.length ? { touchedProtectedPaths: outcome.touchedProtectedPaths.slice(0, 50) } : {}),
+          at,
+        };
+        task.waitReason = 'auto_merge_refused';
+      }
+      const saved = this.save(task);
+      this.emit(saved.id, outcome.outcome === 'merged' ? 'delivery.auto_merged' : 'delivery.auto_merge_refused', {
+        ...(outcome.outcome === 'merged' ? { mergeCommitSha: saved.autoMerge!.mergeCommitSha } : { reason: saved.autoMerge!.reason, touchedProtectedPaths: saved.autoMerge!.touchedProtectedPaths ?? [] }),
+      });
+      return saved;
+    });
   }
 
   get storageBackend(): DeliveryRepository['storageBackend'] {
@@ -402,6 +490,9 @@ export class DeliveryStore {
       }
       const acceptance = validateAcceptanceTestSpec(input.acceptance);
       const delivery = validateDeliveryPolicy(input.delivery);
+      if (delivery.autoMerge && !this.autoMergeRepositories.includes(delivery.repository)) {
+        throw new DomainError('delivery.autoMerge is not allowed for this repository on this Control Plane', 403);
+      }
       const bundle = input.bundle === undefined ? undefined : validateBundleManifest(input.bundle, acceptance.baseCommit);
       const spot = validateSpotPolicy(input.spot);
       const routing = input.routing === undefined ? undefined : validateRegionRoutingPolicy(input.routing);

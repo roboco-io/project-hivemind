@@ -9,10 +9,14 @@ import type { MultiRegionLaunchInput } from '../../../packages/adapters/src/aws-
 import type { S3ObjectPort } from '../../../packages/adapters/src/aws-s3-artifacts.js';
 import type { SpotPlacementFeedPort } from '../../../packages/adapters/src/spot-placement-feed.js';
 import { publishVerifiedDraftPr, type GitHubDraftPrPort } from '../../../packages/adapters/src/draft-pr-publisher.js';
-import type { DeliveryStore } from '../../../packages/core/src/delivery.js';
+import { pathsInPatch, touchedProtectedPaths, type DeliveryStore } from '../../../packages/core/src/delivery.js';
 import { selectOptimalSpotPlacement } from '../../../packages/core/src/multi-region.js';
 
 export interface DeliveryOrchestratorOptions {
+  /** Best-effort notification (issue #20). */
+  notify?: (kind: 'auto_merge_refused', subject: string, message: string) => Promise<void>;
+  /** Called after an auto-merge was refused; the periodic trigger uses it to stop itself. */
+  onAutoMergeRefused?: (task: DeliveryTask, reason: string) => Promise<void>;
   store: DeliveryStore;
   s3: S3ObjectPort;
   ecs: {
@@ -284,9 +288,40 @@ export class DeliveryOrchestrator {
       );
 
       const published = await this.options.store.recordDraftPrPublication(taskId, publication);
+      if (published.delivery.autoMerge) {
+        const merged = await this.autoMerge(published, patchText, resolvedGithub.port, signal);
+        return { task: merged, publication };
+      }
       return { task: published, publication };
     } finally {
       await rm(scratch, { recursive: true, force: true });
+    }
+  }
+
+  /**
+   * Auto-merge (issue #20): merges a verified Draft PR into the base branch unless the change touches a
+   * protected path. A refusal is recorded, reported, and handed to `onAutoMergeRefused` (which stops the
+   * periodic trigger) so a change to a safety mechanism never lands without a person.
+   */
+  private async autoMerge(task: DeliveryTask, patch: string, github: GitHubDraftPrPort, signal: AbortSignal): Promise<DeliveryTask> {
+    const refuse = async (reason: string, touched: string[] = []) => {
+      const refused = await this.options.store.recordAutoMerge(task.id, { outcome: 'refused', reason, touchedProtectedPaths: touched });
+      await this.options.notify?.('auto_merge_refused', `HIVEMIND auto-merge refused: ${task.delivery.repository}`, `Task ${task.id} (${task.publication?.prUrl ?? ''}) was not merged: ${reason}${touched.length ? ` Paths: ${touched.slice(0, 20).join(', ')}` : ''}`);
+      await this.options.onAutoMergeRefused?.(refused, reason);
+      return refused;
+    };
+    if (!this.options.store.autoMergeAllowed(task)) return refuse('The repository is not allowed to auto-merge on this Control Plane.');
+    const touched = touchedProtectedPaths(pathsInPatch(patch), task.delivery.protectedPaths ?? []);
+    if (touched.length) return refuse('The change touches protected paths.', touched);
+    if (!github.mergePullRequest || !task.publication) return refuse('This GitHub connection cannot merge pull requests.');
+    try {
+      const { mergeCommitSha } = await github.mergePullRequest(
+        { repository: task.delivery.repository, prNumber: task.publication.prNumber, expectedHeadSha: task.publication.commitSha, title: task.title },
+        signal,
+      );
+      return await this.options.store.recordAutoMerge(task.id, { outcome: 'merged', mergeCommitSha });
+    } catch (error) {
+      return refuse(`GitHub merge failed: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}`);
     }
   }
 

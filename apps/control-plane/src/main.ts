@@ -61,7 +61,10 @@ function detectPrivateVpcIpv4(): string | null {
   return null;
 }
 
-function createAwsDeliveryOrchestratorFactory(port: number, extraRedactSecrets: string[]) {
+/** Late-bound autonomy hooks: the periodic trigger registers itself here once it exists (issue #20). */
+const autonomyHooks: { onAutoMergeRefused?: (task: import('../../../packages/contracts/src/delivery.js').DeliveryTask, reason: string) => Promise<void> } = {};
+
+function createAwsDeliveryOrchestratorFactory(port: number, extraRedactSecrets: string[], notifications?: NotificationGate) {
   const region = process.env.HIVEMIND_AWS_REGION?.trim();
   const bucket = process.env.HIVEMIND_ARTIFACTS_BUCKET?.trim();
   const clusterArn = process.env.HIVEMIND_ECS_CLUSTER_ARN?.trim();
@@ -144,6 +147,8 @@ function createAwsDeliveryOrchestratorFactory(port: number, extraRedactSecrets: 
       store,
       s3,
       ecs,
+      ...(notifications ? { notify: (kind: 'auto_merge_refused', subject: string, message: string) => notifications.sendQuietly(kind, subject, message) } : {}),
+      onAutoMergeRefused: async (task, reason) => { await autonomyHooks.onAutoMergeRefused?.(task, reason); },
       spotFeed,
       defaultRoutingPolicy,
       redactSecrets: extraRedactSecrets,
@@ -378,16 +383,19 @@ try {
   const workflows = config && checks ? createCloudWorkflowControl(dbPath,
     createHash('sha256').update(JSON.stringify({scope:configurationScope(config),checks})).digest('hex'),
     createCloudWorkflowPort(config,checks)) : undefined;
-  const deliveryOrchestratorFactory = createAwsDeliveryOrchestratorFactory(port, [operatorToken, workerToken, ...(agentToken ? [agentToken] : [])]);
   // SNS notifications (issue #20): enabled when the operator configured a topic.
   const notifyTopicArn = process.env.HIVEMIND_NOTIFY_TOPIC_ARN?.trim();
   const notifications = notifyTopicArn
     ? new NotificationGate(createAwsSnsNotifier({ topicArn: notifyTopicArn, credentials: createEcsTaskCredentialsProvider(), redact: [operatorToken, workerToken, ...(agentToken ? [agentToken] : [])] }))
     : undefined;
   const modelFactoryOrchestratorFactory = createAwsModelFactoryOrchestratorFactory(notifications);
+  const deliveryOrchestratorFactory = createAwsDeliveryOrchestratorFactory(port, [operatorToken, workerToken, ...(agentToken ? [agentToken] : [])], notifications);
   // Auto-publish (issue #20) is allowed only into these Hugging Face repository prefixes, e.g. "roboco-io/".
   const modelFactoryAutoPublishRepoPrefixes = (process.env.HIVEMIND_MF_AUTO_PUBLISH_REPO_PREFIXES ?? '')
     .split(',').map((p) => p.trim()).filter((p) => /^[A-Za-z0-9][A-Za-z0-9_.-]*\/$/.test(p));
+  // Delivery auto-merge (issue #20) is allowed only for these repositories, e.g. "roboco-io/silicon-model-factory".
+  const deliveryAutoMergeRepositories = (process.env.HIVEMIND_DELIVERY_AUTO_MERGE_REPOS ?? '')
+    .split(',').map((r) => r.trim()).filter((r) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r));
   const modelFactoryBudgetCapMicros = process.env.HIVEMIND_MF_BUDGET_CAP_MICROS
     ? Number(process.env.HIVEMIND_MF_BUDGET_CAP_MICROS)
     : undefined;
@@ -536,7 +544,7 @@ try {
   };
 
   const agentCredentials = createAgentCredentialsOptions();
-  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(modelFactoryAutoPublishRepoPrefixes.length ? { modelFactoryAutoPublishRepoPrefixes } : {}),...(modelFactoryRepository ? { modelFactoryRepository } : {}),...(deliveryRepository ? { deliveryRepository } : {}),collabRepo,collabOrchestratorFactory,...(agentCredentials ? { agentCredentials } : {}),...(agentToken ? { agentToken } : {}),...(notifications ? { notifications } : {})});
+  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(deliveryAutoMergeRepositories.length ? { deliveryAutoMergeRepositories } : {}),...(modelFactoryAutoPublishRepoPrefixes.length ? { modelFactoryAutoPublishRepoPrefixes } : {}),...(modelFactoryRepository ? { modelFactoryRepository } : {}),...(deliveryRepository ? { deliveryRepository } : {}),collabRepo,collabOrchestratorFactory,...(agentCredentials ? { agentCredentials } : {}),...(agentToken ? { agentToken } : {}),...(notifications ? { notifications } : {})});
   const address = await app.listen({host,port});
   console.log(`HIVEMIND control service: ${address}`);
   for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,() => { void app!.close(); });

@@ -36,7 +36,52 @@ export function createGitHubDraftPrPort(
   }
   const fetchImpl = config.fetchImpl ?? fetch;
 
+  const headers = {
+    accept: 'application/vnd.github+json',
+    authorization: `Bearer ${config.token}`,
+    'content-type': 'application/json',
+    'x-github-api-version': '2022-11-28',
+    'user-agent': 'project-hivemind-draft-pr-publisher',
+  };
   return {
+    async mergePullRequest(request, signal) {
+      if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(request.repository)) throw new Error('Invalid GitHub repository format');
+      if (!Number.isSafeInteger(request.prNumber) || request.prNumber < 1) throw new Error('Invalid pull request number');
+      if (!/^[a-f0-9]{40}$/i.test(request.expectedHeadSha)) throw new Error('Invalid expected head SHA');
+      const timeout = () => AbortSignal.any([signal, AbortSignal.timeout(20_000)]);
+      const prUrl = `${apiOrigin}/repos/${request.repository}/pulls/${request.prNumber}`;
+      const pr = await fetchImpl(prUrl, { headers, redirect: 'error', signal: timeout() });
+      if (!pr.ok) throw new Error(`GitHub pull request lookup failed with HTTP ${pr.status}`);
+      const data = (await pr.json()) as { node_id?: string; draft?: boolean; state?: string; head?: { sha?: string } };
+      if (data.state !== 'open') throw new Error('Pull request is not open');
+      if ((data.head?.sha ?? '').toLowerCase() !== request.expectedHeadSha.toLowerCase()) throw new Error('Pull request head moved after verification');
+      if (data.draft) {
+        const ready = await fetchImpl(`${apiOrigin}/graphql`, {
+          method: 'POST',
+          headers,
+          redirect: 'error',
+          body: JSON.stringify({ query: 'mutation($id: ID!) { markPullRequestReadyForReview(input: { pullRequestId: $id }) { pullRequest { isDraft } } }', variables: { id: data.node_id } }),
+          signal: timeout(),
+        });
+        const readyBody = (await ready.json().catch(() => null)) as { data?: { markPullRequestReadyForReview?: { pullRequest?: { isDraft?: boolean } } }; errors?: unknown } | null;
+        if (!ready.ok || readyBody?.errors || readyBody?.data?.markPullRequestReadyForReview?.pullRequest?.isDraft !== false) {
+          throw new Error(`GitHub could not mark the pull request ready (HTTP ${ready.status})`);
+        }
+      }
+      const merged = await fetchImpl(`${prUrl}/merge`, {
+        method: 'PUT',
+        headers,
+        redirect: 'error',
+        body: JSON.stringify({ sha: request.expectedHeadSha, merge_method: 'squash', commit_title: request.title.slice(0, 200) }),
+        signal: timeout(),
+      });
+      const mergedBody = (await merged.json().catch(() => null)) as { merged?: boolean; sha?: string } | null;
+      if (!merged.ok || mergedBody?.merged !== true || !/^[a-f0-9]{40}$/i.test(mergedBody.sha ?? '')) {
+        throw new Error(`GitHub merge failed with HTTP ${merged.status}`);
+      }
+      return { mergeCommitSha: mergedBody.sha!.toLowerCase() };
+    },
+
     async publishDraftPr(request: GitHubDraftPrRequest, signal: AbortSignal): Promise<GitHubDraftPrResponse> {
       if (request.draft !== true) {
         throw new Error('Refusing non-draft pull request creation');

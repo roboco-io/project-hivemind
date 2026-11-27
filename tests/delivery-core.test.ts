@@ -82,7 +82,7 @@ test('rejects unsupported providers (e.g. gemini), main branch prefix, autoMerge
     );
     await assert.rejects(
       () => store.create({ ...sampleInput(), delivery: { ...sampleInput().delivery, autoMerge: true as never } }),
-      /Automatic merge/,
+      /protectedPaths/,
     );
     assert.throws(
       () => assertPatchDoesNotTouchAcceptancePaths(['src/app.ts', 'tests/acceptance.test.ts'], sampleInput().acceptance),

@@ -27,6 +27,11 @@ export interface GitHubDraftPrResponse {
 
 export interface GitHubDraftPrPort {
   publishDraftPr(request: GitHubDraftPrRequest, signal: AbortSignal): Promise<GitHubDraftPrResponse>;
+  /**
+   * Marks the Draft PR ready and squash-merges it, only if its head is still `expectedHeadSha` (issue #20).
+   * Optional: without it auto-merge is refused.
+   */
+  mergePullRequest?(request: { repository: string; prNumber: number; expectedHeadSha: string; title: string }, signal: AbortSignal): Promise<{ mergeCommitSha: string }>;
 }
 
 export interface PublishDraftPrOptions {

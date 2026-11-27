@@ -19,7 +19,13 @@ export interface DeliveryPolicy {
   repository: string;
   baseBranch: string;
   branchPrefix: string;
-  autoMerge: false;
+  /**
+   * true: once the verifier passed and the Draft PR is open, the Control Plane merges it into baseBranch
+   * unless the change touches `protectedPaths` (issue #20). Allowed only for operator-listed repositories.
+   */
+  autoMerge: boolean;
+  /** Paths an auto-merged change may not touch: `dir/` prefixes, exact files, or one `*` per segment. */
+  protectedPaths?: string[];
 }
 
 export interface BundleManifest {
@@ -179,6 +185,8 @@ export interface DeliveryTask {
   latestAttestation: VerificationAttestation | null;
   publication: DraftPrPublication | null;
   humanDecision: HumanDeliveryDecision | null;
+  /** Outcome of the auto-merge policy, when the policy asked for it. */
+  autoMerge?: { outcome: 'merged' | 'refused'; reason: string; mergeCommitSha?: string; touchedProtectedPaths?: string[]; at: string } | null;
   createdAt: string;
   updatedAt: string;
   approvedAt: string | null;
