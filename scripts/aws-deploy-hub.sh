@@ -56,6 +56,13 @@ export HIVEMIND_DELIVERY_STORAGE="${HIVEMIND_DELIVERY_STORAGE:-aurora-dsql}"
 export HIVEMIND_RESTRICTED_DSQL_ROLES="${HIVEMIND_RESTRICTED_DSQL_ROLES:-1}"
 HIVEMIND_MF_REGION_NETWORKS_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["networks"], separators=(",", ":")))' "$ENV_JSON")"
 export HIVEMIND_MF_REGION_NETWORKS_JSON
+# 알림(이슈 #20): HIVEMIND_NOTIFY_TOPIC_ARN 이 없으면 이름(기본 smf-budget)과 리전(기본 us-east-2)으로 SNS 주제를 찾는다.
+# 찾지 못하면 알림 없이 배포한다.
+if [[ -z "${HIVEMIND_NOTIFY_TOPIC_ARN:-}" ]]; then
+  HIVEMIND_NOTIFY_TOPIC_ARN="$(aws sns list-topics --region "${HIVEMIND_NOTIFY_TOPIC_REGION:-us-east-2}" --query "Topics[?ends_with(TopicArn, ':${HIVEMIND_NOTIFY_TOPIC_NAME:-smf-budget}')].TopicArn | [0]" --output text 2>/dev/null || true)"
+  [[ "$HIVEMIND_NOTIFY_TOPIC_ARN" == arn:aws:sns:* ]] || HIVEMIND_NOTIFY_TOPIC_ARN=""
+fi
+if [[ -n "$HIVEMIND_NOTIFY_TOPIC_ARN" ]]; then export HIVEMIND_NOTIFY_TOPIC_ARN; else unset HIVEMIND_NOTIFY_TOPIC_ARN; fi
 if [[ "${HIVEMIND_DEPLOY_SPOKES_JSON:-0}" == "1" ]]; then
   HIVEMIND_AWS_SPOKES_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["spokes"], separators=(",", ":")))' "$ENV_JSON")"
   export HIVEMIND_AWS_SPOKES_JSON

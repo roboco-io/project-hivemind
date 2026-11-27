@@ -447,3 +447,15 @@ test('the MCP tunnel role can only find the Control Plane task and port-forward 
   assert.doesNotMatch(JSON.stringify(statements), /UpdateService|ExecuteCommand|iam:|secretsmanager:/);
   template.hasOutput('McpTunnelRoleArn', {});
 });
+
+test('the Control Plane may publish only to the configured notification topic', () => {
+  const topic = 'arn:aws:sns:us-east-2:123456789012:smf-budget';
+  const withTopic = synth({ notifyTopicArn: topic });
+  const docs = JSON.stringify(withTopic.findResources('AWS::IAM::Policy'));
+  assert.match(docs, /"sns:Publish"/);
+  assert.match(docs, /arn:aws:sns:us-east-2:123456789012:smf-budget/);
+  assert.match(JSON.stringify(withTopic.findResources('AWS::ECS::TaskDefinition')), /HIVEMIND_NOTIFY_TOPIC_ARN/);
+  const without = synth();
+  assert.doesNotMatch(JSON.stringify(without.findResources('AWS::IAM::Policy')), /sns:Publish/);
+  assert.throws(() => synth({ notifyTopicArn: 'arn:aws:sqs:us-east-2:123456789012:x' }), /SNS topic ARN/);
+});

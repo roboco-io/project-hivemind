@@ -49,6 +49,8 @@ export interface AwsRuntimeConfig {
    * HIVEMIND_MF_REGION_NETWORKS_JSON. Contains resource IDs only, never secrets.
    */
   modelFactoryRegionNetworksJson?: string;
+  /** SNS topic for release, budget and loop notifications (issue #20). */
+  notifyTopicArn?: string;
   accountId: string;
   region: string;
   allowedRegions?: string[];
@@ -657,6 +659,7 @@ export class AwsRuntimeStack extends Stack {
         ...(cfg.modelFactoryStorage === 'aurora-dsql' ? { HIVEMIND_MF_STORAGE: 'aurora-dsql' } : {}),
         ...(cfg.deliveryStorage === 'aurora-dsql' ? { HIVEMIND_DELIVERY_STORAGE: 'aurora-dsql' } : {}),
         ...(cfg.spokesJson ? { HIVEMIND_AWS_SPOKES_JSON: cfg.spokesJson } : {}),
+        ...(cfg.notifyTopicArn ? { HIVEMIND_NOTIFY_TOPIC_ARN: cfg.notifyTopicArn } : {}),
         ...(cfg.modelFactoryRegionNetworksJson
           ? { HIVEMIND_MF_REGION_NETWORKS_JSON: cfg.modelFactoryRegionNetworksJson }
           : {}),
@@ -687,6 +690,11 @@ export class AwsRuntimeStack extends Stack {
       // does not fall back to on-demand capacity by itself.
       capacityProviderStrategies: [{ capacityProvider: 'FARGATE_SPOT', weight: 1, base: 1 }],
     });
+
+    if (cfg.notifyTopicArn) {
+      if (!/^arn:aws:sns:[a-z]{2}-[a-z]+-\d+:\d{12}:[A-Za-z0-9_-]{1,256}$/.test(cfg.notifyTopicArn)) throw new Error('notifyTopicArn must be an SNS topic ARN');
+      this.controlPlaneRole.addToPolicy(new iam.PolicyStatement({ sid: 'PublishNotifications', actions: ['sns:Publish'], resources: [cfg.notifyTopicArn] }));
+    }
 
     // 6. Tunnel-only role for MCP servers (agent profile). It can find the running Control Plane task and
     // open an SSM port-forwarding session to it, nothing else: no UpdateService, no ECS Exec shell, no

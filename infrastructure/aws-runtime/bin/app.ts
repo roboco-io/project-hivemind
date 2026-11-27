@@ -66,6 +66,7 @@ if (spokeRegion) {
       ...(process.env.HIVEMIND_MF_REGION_NETWORKS_JSON?.trim()
         ? { modelFactoryRegionNetworksJson: process.env.HIVEMIND_MF_REGION_NETWORKS_JSON.trim() }
         : {}),
+      ...(process.env.HIVEMIND_NOTIFY_TOPIC_ARN?.trim() ? { notifyTopicArn: process.env.HIVEMIND_NOTIFY_TOPIC_ARN.trim() } : {}),
     },
   });
 }
