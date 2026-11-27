@@ -158,7 +158,7 @@ CDK 배포 시에는 셸 환경 변수 `HIVEMIND_MF_REGION_NETWORKS_JSON`에 같
 
 ### 리전과 AZ 시도 순서 (`placementPlan`)
 
-Control Plane은 스팟 배치 점수 피드(`https://d16jdvzof4zpo7.cloudfront.net/data.json`)의 추세로 리전과 AZ의 시도 순서를 정한다. 스팟 배치 점수는 AWS가 1(낮음)부터 10(높음)까지 매기는 용량 확보 가능성이다. 피드는 리전별, AZ ID별 점수를 시간 순서로 담고 있다.
+Control Plane은 스팟 배치 점수 피드(`https://d16jdvzof4zpo7.cloudfront.net/data.json`)의 추세와 EC2 `GetSpotPlacementScores`로 얻은 현재 점수를 함께 써서 리전과 AZ의 시도 순서를 정한다. 스팟 배치 점수는 AWS가 1(낮음)부터 10(높음)까지 매기는 용량 확보 가능성이다. 피드는 리전별, AZ ID별 점수를 시간 순서로 담고 있다. 현재 점수는 작업의 인스턴스 유형 그대로, 리전 단위와 AZ 단위로 한 번씩 조회하며, 피드 표본 뒤에 가장 최근 표본으로 더한다. 두 출처 중 하나만 있어도 순서를 정하고, 현재 점수를 더한 시각은 `placementPlan.liveScoredAt`에 남는다.
 
 Control Plane은 작업을 등록할 때 순서를 계산해 작업의 `placementPlan`에 저장하고, 등록 응답으로 돌려준다. 사람은 학습을 승인하기 전에 이 순서를 볼 수 있다. 학습을 승인해 인스턴스를 기동할 때 Control Plane은 최신 피드로 순서를 다시 계산하고, 그 결과를 `placementPlan`에 다시 저장한다. 기동 시점에 피드를 쓸 수 없으면 등록 때 계산한 순서를 쓴다.
 
@@ -168,7 +168,7 @@ Control Plane은 작업을 등록할 때 순서를 계산해 작업의 `placemen
 
 리전 안에서 Control Plane은 서브넷의 AZ ID를 `ec2:DescribeSubnets`로 조회해, 계획한 AZ 순서대로 서브넷을 시도한다. AZ 이름(`us-east-2a`)은 계정마다 다른 물리 AZ를 가리키므로 AZ ID(`use2-az1`)로 비교한다. 서브넷 조회가 실패하면 서브넷은 적힌 순서대로 시도한다. 작업이 `compute.availabilityZoneId`를 적었으면 `compute.region`에서는 그 AZ를 먼저 시도한다.
 
-피드는 인스턴스 유형을 풀(pool) 단위로 다룬다. Control Plane은 `compute.workloadClass`가 있으면 그 풀을 쓰고, 없으면 인스턴스 유형과 이름이 같은 풀이나 구성원에 그 유형이 들어 있는 풀을 쓴다. 2026-11-27 기준 피드는 `p5.48xlarge`, `g6e.12xlarge`, `g6e.24xlarge`, `g6e.48xlarge`와 범용 CPU 풀만 다루고 `g4dn.xlarge`, `g5.xlarge`, `g6.xlarge`는 다루지 않는다. 피드에 없는 유형, 24시간보다 오래된 피드, 피드 조회 실패에서는 `placementPlan.status`가 각각 `type_not_in_feed`, `feed_stale`, `feed_unavailable`이 되고 리전은 적힌 순서대로 시도한다.
+피드는 인스턴스 유형을 풀(pool) 단위로 다룬다. Control Plane은 `compute.workloadClass`가 있으면 그 풀을 쓰고, 없으면 인스턴스 유형과 이름이 같은 풀이나 구성원에 그 유형이 들어 있는 풀을 쓴다. 2026-11-27 기준 피드는 `p5.48xlarge`, `g6e.12xlarge`, `g6e.24xlarge`, `g6e.48xlarge`와 범용 CPU 풀만 다룬다. 피드에 없는 유형은 추세 없이 현재 점수만으로 순서를 정하고, `note`에 피드가 그 유형을 다루지 않는다고 적는다. 현재 점수 조회도 실패하면 `placementPlan.status`가 `type_not_in_feed`, `feed_stale`(24시간보다 오래된 피드), `feed_unavailable`(피드 조회 실패) 중 하나가 되고 리전은 적힌 순서대로 시도한다. 현재 점수 조회에는 Control Plane 역할의 `ec2:GetSpotPlacementScores` 권한이 필요하며, 조회 요청은 작업의 `compute.region` 엔드포인트로 보낸다.
 
 ### 원장 저장소와 TTL Guard 정산 (`HIVEMIND_MF_STORAGE`)
 
