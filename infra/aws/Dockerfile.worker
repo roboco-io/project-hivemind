@@ -12,7 +12,7 @@ WORKDIR /app
 # Isolated AI Worker image: Git + ripgrep + Node 24 + official Codex & Claude Code CLIs (Gemini excluded),
 # plus Python 3.12 and the AWS CLI.
 # Never includes operator tokens, GitHub push tokens, or control-plane SQLite files.
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates ripgrep && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates ripgrep curl && rm -rf /var/lib/apt/lists/*
 RUN npm install --global @openai/codex@0.171.0 @anthropic-ai/claude-code@2.1.331 && npm cache clean --force
 # Python 3.12 for Model Factory data and evaluation scripts (issue #20), and the AWS CLI for scoped
 # credentials the Control Plane issues. Debian bookworm ships 3.11, so uv installs a pinned 3.12.
