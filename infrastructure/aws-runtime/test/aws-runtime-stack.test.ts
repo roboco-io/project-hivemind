@@ -52,7 +52,12 @@ test('synthesizes NAT-free, zero-public-ingress SSM-tunneled Control Plane + Spo
     NetworkConfiguration: {
       AwsvpcConfiguration: { AssignPublicIp: 'ENABLED' },
     },
-    CapacityProviderStrategy: [{ CapacityProvider: 'FARGATE', Weight: 1, Base: 1 }],
+    // The Control Plane runs all day on Fargate Spot.
+    CapacityProviderStrategy: [{ CapacityProvider: 'FARGATE_SPOT', Weight: 1, Base: 1 }],
+  });
+  // It gets the full two-minute Spot warning to close cleanly.
+  template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+    ContainerDefinitions: Match.arrayWith([Match.objectLike({ Name: 'control-plane', StopTimeout: 120 })]),
   });
   // NAT-free architecture: zero NAT Gateways and zero Elastic IPs.
   template.resourceCountIs('AWS::EC2::NatGateway', 0);

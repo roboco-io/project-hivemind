@@ -624,6 +624,8 @@ export class AwsRuntimeStack extends Stack {
     });
     const cpContainer = controlPlaneTaskDef.addContainer('control-plane', {
       image: ecs.ContainerImage.fromEcrRepository(controlPlaneRepo, 'latest'),
+      // Fargate Spot gives two minutes between SIGTERM and stop; use them to close the server cleanly.
+      stopTimeout: Duration.seconds(120),
       logging: ecs.LogDrivers.awsLogs({ streamPrefix: 'control-plane', logGroup }),
       linuxParameters: new ecs.LinuxParameters(this, 'ControlPlaneLinuxParams', { initProcessEnabled: true }),
       environment: {
@@ -679,10 +681,13 @@ export class AwsRuntimeStack extends Stack {
       assignPublicIp: true,
       vpcSubnets: { subnetType: ec2.SubnetType.PUBLIC },
       securityGroups: [controlPlaneSg],
-      capacityProviderStrategies: [{ capacityProvider: 'FARGATE', weight: 1, base: 1 }],
+      // Runs all day on Fargate Spot (ARM64 is supported). An interrupted task gets SIGTERM two minutes
+      // before it stops, and the service starts a replacement when Spot capacity is available. Fargate
+      // does not fall back to on-demand capacity by itself.
+      capacityProviderStrategies: [{ capacityProvider: 'FARGATE_SPOT', weight: 1, base: 1 }],
     });
 
-    // Autonomous $0-idle Multi-Region Model Factory TTL Guard (runs every 5 min even when ControlPlaneService desiredCount=0).
+    // Multi-Region Model Factory TTL Guard: runs every 5 min on its own, so it also covers a Control Plane that is down (Spot interruption or desiredCount 0).
     // Fails closed: terminates any hivemind:managed-by=hivemind-model-factory instance past hivemind:expires-at or missing the tag.
     const ttlGuardRole = new iam.Role(this, 'ModelFactoryTtlGuardRole', {
       assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com'),

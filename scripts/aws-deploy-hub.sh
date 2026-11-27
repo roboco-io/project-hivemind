@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 서울 Hub 스택(HivemindAwsRuntimeStack)을 배포한다. Control Plane 서비스는 desiredCount 0으로 유지한다.
+# 서울 Hub 스택(HivemindAwsRuntimeStack)을 배포한다. Control Plane 서비스는 Fargate Spot에서 상시 1개로 운영한다.
+# 일시적으로 끄려면 HIVEMIND_CONTROL_PLANE_DESIRED_COUNT=0 을 지정한다.
 # 사용법: AWS_PROFILE=<profile> scripts/aws-deploy-hub.sh [diff|deploy]
 #
 # 배포된 Spoke 스택의 출력에서 다음 설정을 만든다.
@@ -45,7 +46,7 @@ PY
 
 export HIVEMIND_AWS_ACCOUNT_ID="$ACCOUNT_ID"
 export HIVEMIND_AWS_REGION="$PRIMARY_REGION"
-export HIVEMIND_CONTROL_PLANE_DESIRED_COUNT=0
+export HIVEMIND_CONTROL_PLANE_DESIRED_COUNT="${HIVEMIND_CONTROL_PLANE_DESIRED_COUNT:-1}"
 if [[ -n "$SPOKE_REGIONS" ]]; then export HIVEMIND_SPOKE_REGIONS="$SPOKE_REGIONS"; else unset HIVEMIND_SPOKE_REGIONS; fi
 export HIVEMIND_MF_STORAGE="${HIVEMIND_MF_STORAGE:-aurora-dsql}"
 export HIVEMIND_DELIVERY_STORAGE="${HIVEMIND_DELIVERY_STORAGE:-aurora-dsql}"
