@@ -219,7 +219,7 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
     'hivemind_mf_approve_release',
     {
       title: 'HIVEMIND 모델 팩토리 공개 승인/반려',
-      description: '검증을 통과한 모델의 Hugging Face 또는 S3 공개를 승인하거나 반려합니다.',
+      description: '검증을 통과한 모델의 Hugging Face 또는 S3 공개를 승인하거나 반려합니다. Hugging Face 업로드는 Control Plane에서 백그라운드로 진행되므로, 결과(publication 또는 diagnostics의 실패 사유)는 hivemind_mf_get으로 확인합니다.',
       inputSchema: z.strictObject({
         jobId,
         decision: z.enum(['approve', 'reject']),
@@ -231,6 +231,18 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
     },
     async ({ jobId: id, ...body }, extra) =>
       run(() => api(`/api/model-factory/jobs/${encodeURIComponent(id)}/approve-release`, extra.signal, body)),
+  );
+
+  server.registerTool(
+    'hivemind_mf_publish_release',
+    {
+      title: 'HIVEMIND 모델 팩토리 공개 다시 시도',
+      description:
+        '이미 공개가 승인되었지만(release_approved) 게시에 실패한 작업을 다시 게시합니다. 외부 공개를 일으키므로 사용자의 명시적 지시가 있을 때만 호출합니다. 업로드는 백그라운드로 진행되며 결과는 hivemind_mf_get으로 확인합니다.',
+      inputSchema: z.strictObject({ jobId }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ jobId: id }, extra) => run(() => api(`/api/model-factory/jobs/${encodeURIComponent(id)}/publish-release`, extra.signal, {})),
   );
 
   server.registerTool(

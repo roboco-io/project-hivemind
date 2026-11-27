@@ -15,6 +15,11 @@ export interface S3ObjectPort {
   putObject(key: string, body: Uint8Array, contentType: string, signal?: AbortSignal): Promise<{ sha256: string; etag?: string }>;
   getObject(key: string, expectedSha256?: string, signal?: AbortSignal): Promise<Uint8Array>;
   headObject?(key: string, signal?: AbortSignal): Promise<{ contentLength: number; etag?: string }>;
+  /**
+   * Streams an object. The stream fails at its end when the size or SHA-256 differs from the expected
+   * values, so a consumer that commits only after the whole stream never commits wrong bytes.
+   */
+  openObjectStream?(key: string, expectedSha256: string, expectedSize: number, signal?: AbortSignal): Promise<AsyncIterable<Uint8Array>>;
   /** Server-side copy inside the bucket (single request, objects up to 5 GiB). */
   copyObject?(sourceKey: string, destinationKey: string, signal?: AbortSignal): Promise<void>;
 }
@@ -157,6 +162,31 @@ export function createAwsS3ArtifactsPort(config: AwsS3ArtifactsConfig): S3Object
         }
       }
       return bytes;
+    },
+
+    async openObjectStream(key, expectedSha256, expectedSize, signal) {
+      if (!HEX64.test(expectedSha256)) throw new Error('expectedSha256 must be 64 hex characters');
+      const credentials = await config.credentials();
+      const signed = signS3Request({ method: 'GET', region: config.region, bucket: config.bucket, key, body: new Uint8Array(0), credentials, nowMs: now() });
+      const response = await fetchImpl(signed.url, { method: 'GET', headers: signed.headers, redirect: 'error', ...(signal ? { signal } : {}) });
+      if (!response.ok || !response.body) {
+        void response.body?.cancel().catch(() => undefined);
+        throw new Error(`S3 GET ${key} failed with HTTP ${response.status}`);
+      }
+      const body = response.body;
+      return (async function* () {
+        const hash = createHash('sha256');
+        let size = 0;
+        for await (const chunk of body as unknown as AsyncIterable<Uint8Array>) {
+          size += chunk.byteLength;
+          if (size > expectedSize) throw new Error(`S3 object ${key} is larger than expected`);
+          hash.update(chunk);
+          yield chunk;
+        }
+        if (size !== expectedSize || hash.digest('hex') !== expectedSha256.toLowerCase()) {
+          throw new Error(`S3 object ${key} does not match its expected size or SHA-256`);
+        }
+      })();
     },
 
     async copyObject(sourceKey, destinationKey, signal) {

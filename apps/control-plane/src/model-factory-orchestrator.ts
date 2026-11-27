@@ -17,6 +17,7 @@ import {
 } from '../../../packages/adapters/src/aws-ssm-public-ami.js';
 import type { SpotPlacementFeedPort } from '../../../packages/adapters/src/spot-placement-feed.js';
 import type { ModelFactoryStore } from '../../../packages/core/src/model-factory.js';
+import { DomainError } from '../../../packages/core/src/store.js';
 import { calculateActualCostMicros } from '../../../packages/core/src/model-factory-guard-settlement.js';
 import {
   type LivePlacementScores,
@@ -224,7 +225,10 @@ export function composeTrainingUserData(
   return combined;
 }
 
+const PUBLISH_TIMEOUT_MS = 30 * 60_000;
+
 export class ModelFactoryOrchestrator {
+  private readonly publishing = new Set<string>();
   private readonly wakeIntervalMs: number;
   private readonly now: () => number;
 
@@ -702,7 +706,53 @@ export class ModelFactoryOrchestrator {
     if (decided.status !== 'release_approved') {
       return decided;
     }
+    return await this.publishApproved(decided, signal);
+  }
 
+  /**
+   * Records the release decision and starts a Hugging Face publication in the background. Uploading a
+   * model can take minutes, longer than an HTTP client waits; the caller reads the result from the job.
+   * An S3-only release is recorded at once.
+   */
+  async approveAndStartPublishRelease(jobId: string, decision: Omit<ModelReleaseDecision, 'decidedAt'>): Promise<ModelFactoryJob> {
+    const decided = await this.options.store.recordReleaseDecision(jobId, decision);
+    if (decided.status !== 'release_approved') return decided;
+    if (decided.releasePolicy.mode === 's3_artifact_only' || !this.options.hfPublisher) {
+      return await this.publishApproved(decided);
+    }
+    return await this.startBackgroundPublish(decided);
+  }
+
+  /** Publishes again a release that was approved but whose publication failed. */
+  async startPublishRelease(jobId: string): Promise<ModelFactoryJob> {
+    const job = await this.options.store.get(jobId);
+    if (job.status !== 'release_approved' || job.publication) {
+      throw new DomainError(`Only an approved, unpublished release can be published (state: ${job.status})`, 409);
+    }
+    if (job.releasePolicy.mode === 's3_artifact_only' || !this.options.hfPublisher) {
+      return await this.publishApproved(job);
+    }
+    return await this.startBackgroundPublish(job);
+  }
+
+  /** True while a publication for the job runs in this process. */
+  isPublishing(jobId: string): boolean {
+    return this.publishing.has(jobId);
+  }
+
+  private async startBackgroundPublish(job: ModelFactoryJob): Promise<ModelFactoryJob> {
+    if (this.publishing.has(job.id)) {
+      throw new DomainError('A publication for this job is already running', 409);
+    }
+    await this.options.store.recordPublicationStarted(job.id);
+    this.publishing.add(job.id);
+    void this.publishApproved(job, AbortSignal.timeout(PUBLISH_TIMEOUT_MS), true)
+      .catch(() => undefined)
+      .finally(() => this.publishing.delete(job.id));
+    return job;
+  }
+
+  private async publishApproved(decided: ModelFactoryJob, signal?: AbortSignal, alreadyMarked = false): Promise<ModelFactoryJob> {
     if (decided.releasePolicy.mode === 's3_artifact_only') {
       return await this.options.store.recordReleasePublication(decided.id, {
         mode: 's3_artifact_only',
@@ -718,12 +768,22 @@ export class ModelFactoryOrchestrator {
       );
     }
 
-    const publication = await this.options.hfPublisher.publish({
-      job: decided,
-      receipt: decided.receipt!,
-      attestation: decided.releaseAttestation!,
-      signal,
-    });
+    if (!alreadyMarked) await this.options.store.recordPublicationStarted(decided.id);
+    let publication: ModelReleasePublication;
+    try {
+      publication = await this.options.hfPublisher.publish({
+        job: decided,
+        receipt: decided.receipt!,
+        attestation: decided.releaseAttestation!,
+        signal,
+      });
+    } catch (error) {
+      // The job stays release_approved so the same approved release can be published again.
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(JSON.stringify({ event: 'hivemind.mf_release_publish.error', jobId: decided.id, message: reason.slice(0, 500) }));
+      await this.options.store.recordPublicationFailure(decided.id, reason);
+      throw new DomainError(`Release publication failed: ${reason.slice(0, 300)}`, 502);
+    }
     return await this.options.store.recordReleasePublication(decided.id, publication);
   }
 }

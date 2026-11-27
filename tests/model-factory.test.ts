@@ -509,7 +509,8 @@ test('MCP model-factory profile registers all 7 Delivery + 9 Model Factory opera
   assert.ok(tools.includes('hivemind_mf_approve_release'));
   assert.ok(tools.includes('hivemind_mf_ledger'));
   assert.ok(tools.includes('hivemind_mf_wake'));
-  assert.equal(tools.length, 16);
+  assert.ok(tools.includes('hivemind_mf_publish_release'));
+  assert.equal(tools.length, 17);
 });
 
 test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerprint + preflight, bootstrap metadata, and attestationSource provenance', async () => {

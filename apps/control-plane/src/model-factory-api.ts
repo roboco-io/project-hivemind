@@ -125,9 +125,22 @@ export function registerModelFactoryRoutes(app: FastifyInstance, options: ModelF
     { onRequest: operatorOnly, bodyLimit: 16384 },
     async (request) => {
       if (orchestrator) {
-        return orchestrator.approveAndPublishRelease(request.params.id, request.body, AbortSignal.timeout(60_000));
+        // A Hugging Face upload runs in the background; read the job for its publication or failure.
+        return orchestrator.approveAndStartPublishRelease(request.params.id, request.body);
       }
       return store.recordReleaseDecision(request.params.id, request.body);
+    },
+  );
+
+  // Publishes again an approved release whose earlier publication failed. Runs in the background.
+  app.post<{ Params: { id: string } }>(
+    '/api/model-factory/jobs/:id/publish-release',
+    { onRequest: operatorOnly, bodyLimit: 1024 },
+    async (request) => {
+      if (!orchestrator) {
+        throw new DomainError('Release publication is unavailable in local mode', 503);
+      }
+      return orchestrator.startPublishRelease(request.params.id);
     },
   );
 

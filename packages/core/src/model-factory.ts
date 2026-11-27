@@ -917,6 +917,35 @@ export class ModelFactoryStore {
     });
   }
 
+  /**
+   * Records a failed publication attempt. The job stays release_approved so the approved release can be
+   * published again; the reason goes to diagnostics and an event.
+   */
+  async recordPublicationFailure(id: string, reason: string): Promise<ModelFactoryJob> {
+    return this.tx(() => {
+      const job = this.load(id);
+      if (job.status !== 'release_approved' || job.publication) {
+        throw new DomainError(`Cannot record a publication failure in state ${job.status}`, 409);
+      }
+      const clipped = reason.length > 500 ? `${reason.slice(0, 497)}...` : reason;
+      job.diagnostics = [...job.diagnostics, `Release publication failed: ${clipped}`].slice(-20);
+      const saved = this.save(job);
+      this.emit(saved.id, 'model_factory.release_publish_failed', { reason: clipped });
+      return saved;
+    });
+  }
+
+  /** Marks the start of a publication attempt, for the audit trail. */
+  async recordPublicationStarted(id: string): Promise<void> {
+    await this.tx(() => {
+      const job = this.load(id);
+      if (job.status !== 'release_approved' || job.publication) {
+        throw new DomainError(`Cannot publish in state ${job.status}`, 409);
+      }
+      this.emit(job.id, 'model_factory.release_publish_started', { mode: job.releasePolicy.mode });
+    });
+  }
+
   async recordReleasePublication(id: string, publication: ModelReleasePublication): Promise<ModelFactoryJob> {
     return this.tx(() => {
       const job = this.load(id);

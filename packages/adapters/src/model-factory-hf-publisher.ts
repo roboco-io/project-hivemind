@@ -91,13 +91,18 @@ export function createTrustedHfReleasePublisher(config: TrustedHfReleasePublishe
         revision,
         message: `HIVEMIND release ${job.modelId} (manifest ${receipt.manifestDigest.slice(0, 12)}, check: ${provenanceTag})`,
         visibility: job.releasePolicy.visibility,
-        allowPublicLarge: config.allowPublicLarge ?? job.releasePolicy.visibility === 'public',
+        // The acknowledgement exists only for public repositories; any value for a private one is refused.
+        ...(job.releasePolicy.visibility === 'public' ? { allowPublicLarge: config.allowPublicLarge ?? true } : {}),
         forbiddenValues: config.forbiddenValues,
         fetch: config.fetchImpl,
         now,
         signal,
         uploadHosts,
         async open(file) {
+          // Stream large files so a model bigger than the Control Plane's memory can still be published.
+          if (config.s3.openObjectStream) {
+            return config.s3.openObjectStream(file.storageRef, file.sha256, file.size, signal);
+          }
           const bytes = await config.s3.getObject(file.storageRef, file.sha256, signal);
           return (async function* () {
             const chunkSize = 1024 * 1024;
