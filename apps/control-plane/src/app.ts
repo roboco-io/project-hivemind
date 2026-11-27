@@ -31,7 +31,7 @@ import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js
 
 import {projectTeamResponse,type CloudWorkflowControl} from '../../../packages/contracts/src/workflow.js';
 
-export interface AppOptions { /** Storage for DeliveryStore. Default: SQLite at dbPath. */ deliveryRepository?: DeliveryRepository; /** Storage for ModelFactoryStore. Default: SQLite at dbPath. */ modelFactoryRepository?: ModelFactoryRepository; autonomousCloudProxy?:AutonomousCloudProxy; localExternalService?:AutonomousExternalService; dbPath?: string; operatorToken?: string; workerToken?: string; nativeReporterToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl; deliveryOrchestratorFactory?: (store: DeliveryStore) => DeliveryOrchestrator; modelFactoryOrchestratorFactory?: (store: ModelFactoryStore) => ModelFactoryOrchestrator; modelFactoryBudgetCapMicros?: number; modelFactoryWakePollMs?: number; collabRepo?: CollaborationStoragePort; collabOrchestratorFactory?: (service: AgentCollabService) => CollabOrchestrator; /** Scoped AWS credentials for agents. Absent: the routes are not registered. */ agentCredentials?: Omit<AgentCredentialsApiOptions, 'operatorToken'> }
+export interface AppOptions { /** Storage for DeliveryStore. Default: SQLite at dbPath. */ deliveryRepository?: DeliveryRepository; /** Storage for ModelFactoryStore. Default: SQLite at dbPath. */ modelFactoryRepository?: ModelFactoryRepository; autonomousCloudProxy?:AutonomousCloudProxy; localExternalService?:AutonomousExternalService; dbPath?: string; operatorToken?: string; workerToken?: string; /** Model Factory agent token; see registerModelFactoryRoutes. */ agentToken?: string; nativeReporterToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl; deliveryOrchestratorFactory?: (store: DeliveryStore) => DeliveryOrchestrator; modelFactoryOrchestratorFactory?: (store: ModelFactoryStore) => ModelFactoryOrchestrator; modelFactoryBudgetCapMicros?: number; modelFactoryWakePollMs?: number; collabRepo?: CollaborationStoragePort; collabOrchestratorFactory?: (service: AgentCollabService) => CollabOrchestrator; /** Scoped AWS credentials for agents. Absent: the routes are not registered. */ agentCredentials?: Omit<AgentCredentialsApiOptions, 'operatorToken'> }
 const string = {type:'string',minLength:1,maxLength:4000};
 const credentials = {workerId:{...string,maxLength:120},leaseToken:{...string,maxLength:120}};
 const body = (properties: Record<string,unknown>, required = Object.keys(properties)) => ({body:{type:'object',additionalProperties:false,required,properties}});
@@ -57,6 +57,8 @@ export function buildApp(options: AppOptions = {}) {
   const operatorToken = options.operatorToken ?? 'local-development-only';
   const workerToken = options.workerToken ?? 'local-worker-only';
   if (!operatorToken.trim() || !workerToken.trim() || equalSecret(operatorToken,workerToken)) throw new Error('Operator and worker tokens must be nonempty and distinct');
+  const agentToken = options.agentToken;
+  if (agentToken !== undefined && (agentToken.trim().length < 24 || equalSecret(agentToken,operatorToken) || equalSecret(agentToken,workerToken))) throw new Error('Agent token must be at least 24 characters and distinct from the operator and worker tokens');
   const app = Fastify({bodyLimit:2000000,logger:false,ajv:{customOptions:{coerceTypes:false,removeAdditional:false}}});
   const store = new HiveStore(options.dbPath ?? ':memory:',options.now,options.repository);
   const deliveryStore = new DeliveryStore(options.deliveryRepository ?? options.dbPath ?? ':memory:',options.now);
@@ -69,7 +71,7 @@ export function buildApp(options: AppOptions = {}) {
   const deliveryOrchestrator = options.deliveryOrchestratorFactory?.(deliveryStore);
   const modelFactoryOrchestrator = options.modelFactoryOrchestratorFactory?.(modelFactoryStore);
   const collabRepo = options.collabRepo ?? new SqliteCollaborationRepository(options.dbPath ?? ':memory:');
-  const collabService = new AgentCollabService(collabRepo, { now: options.now, redactSecrets: [operatorToken, workerToken] });
+  const collabService = new AgentCollabService(collabRepo, { now: options.now, redactSecrets: [operatorToken, workerToken, ...(agentToken ? [agentToken] : [])] });
   const collabOrchestrator = options.collabOrchestratorFactory?.(collabService);
   let mfWakeTimer: ReturnType<typeof setInterval> | undefined;
   if (modelFactoryOrchestrator && options.modelFactoryWakePollMs && options.modelFactoryWakePollMs >= 1000) {
@@ -90,9 +92,9 @@ export function buildApp(options: AppOptions = {}) {
   }
   app.addHook('onClose',async()=>{if(mfWakeTimer)clearInterval(mfWakeTimer);await collabService.close();await deliveryStore.close();await modelFactoryStore.close();autonomousStore.close();toolAuditDb.close();});
   registerDeliveryRoutes(app,{store:deliveryStore,operatorToken,workerToken,orchestrator:deliveryOrchestrator});
-  registerModelFactoryRoutes(app,{store:modelFactoryStore,operatorToken,workerToken,orchestrator:modelFactoryOrchestrator});
+  registerModelFactoryRoutes(app,{store:modelFactoryStore,operatorToken,workerToken,...(agentToken?{agentToken}:{}),orchestrator:modelFactoryOrchestrator});
   registerCollabRoutes(app,{service:collabService,operatorToken,workerToken,orchestrator:collabOrchestrator});
-  if (options.agentCredentials) registerAgentCredentialRoutes(app,{...options.agentCredentials,operatorToken});
+  if (options.agentCredentials) registerAgentCredentialRoutes(app,{...options.agentCredentials,operatorToken,...(agentToken?{agentToken}:{})});
   app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});
   app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks/*',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});
   async function autonomousGuard(request:FastifyRequest,reply:FastifyReply){

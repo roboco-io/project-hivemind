@@ -347,6 +347,8 @@ try {
   const port = Number(process.env.HIVEMIND_PORT ?? '4310');
   const operatorToken = process.env.HIVEMIND_OPERATOR_TOKEN ?? 'local-development-only';
   const workerToken = process.env.HIVEMIND_WORKER_TOKEN ?? 'local-worker-only';
+  // Optional. Absent: no agent token is accepted and the Model Factory agent uses the operator token as before.
+  const agentToken = process.env.HIVEMIND_AGENT_TOKEN?.trim() || undefined;
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid HIVEMIND_PORT');
   if (!['127.0.0.1','localhost','::1'].includes(host) &&
       (operatorToken.length < 24 || workerToken.length < 24 || operatorToken === 'local-development-only' || workerToken === 'local-worker-only')) {
@@ -368,12 +370,12 @@ try {
   const dbPath = process.env.HIVEMIND_DB ?? 'data/hivemind.sqlite';
   const config = loadCloudflareConfig();
   if (config) cloudflare = createCloudControl({ dbPath, policy: config.policy, port: createCloudPort(config), executionScope: configurationScope(config) });
-  const autonomousCloudProxy=config?createAutonomousCloudProxy(config,{localTokens:[operatorToken,workerToken]}):undefined;
+  const autonomousCloudProxy=config?createAutonomousCloudProxy(config,{localTokens:[operatorToken,workerToken,...(agentToken?[agentToken]:[])]}):undefined;
   const checks = loadCloudWorkflowChecks(config);
   const workflows = config && checks ? createCloudWorkflowControl(dbPath,
     createHash('sha256').update(JSON.stringify({scope:configurationScope(config),checks})).digest('hex'),
     createCloudWorkflowPort(config,checks)) : undefined;
-  const deliveryOrchestratorFactory = createAwsDeliveryOrchestratorFactory(port, [operatorToken, workerToken]);
+  const deliveryOrchestratorFactory = createAwsDeliveryOrchestratorFactory(port, [operatorToken, workerToken, ...(agentToken ? [agentToken] : [])]);
   const modelFactoryOrchestratorFactory = createAwsModelFactoryOrchestratorFactory();
   const modelFactoryBudgetCapMicros = process.env.HIVEMIND_MF_BUDGET_CAP_MICROS
     ? Number(process.env.HIVEMIND_MF_BUDGET_CAP_MICROS)
@@ -494,7 +496,7 @@ try {
       service,
       controlApiUrl: `http://127.0.0.1:${port}`,
       workerToken,
-      redactSecrets: [operatorToken, workerToken],
+      redactSecrets: [operatorToken, workerToken, ...(agentToken ? [agentToken] : [])],
       spotFeed: createSpotPlacementFeedPort({
         feedUrl: process.env.HIVEMIND_SPOT_FEED_URL?.trim() || DEFAULT_SPOT_FEED_URL,
       }),
@@ -523,7 +525,7 @@ try {
   };
 
   const agentCredentials = createAgentCredentialsOptions();
-  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(modelFactoryRepository ? { modelFactoryRepository } : {}),...(deliveryRepository ? { deliveryRepository } : {}),collabRepo,collabOrchestratorFactory,...(agentCredentials ? { agentCredentials } : {})});
+  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(modelFactoryRepository ? { modelFactoryRepository } : {}),...(deliveryRepository ? { deliveryRepository } : {}),collabRepo,collabOrchestratorFactory,...(agentCredentials ? { agentCredentials } : {}),...(agentToken ? { agentToken } : {})});
   const address = await app.listen({host,port});
   console.log(`HIVEMIND control service: ${address}`);
   for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,() => { void app!.close(); });

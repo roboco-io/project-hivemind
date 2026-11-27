@@ -24,6 +24,8 @@ export interface AgentCredentialAuditRecord {
 
 export interface AgentCredentialsApiOptions {
   operatorToken: string;
+  /** The Model Factory agent token may also ask for scoped credentials. */
+  agentToken?: string;
   catalog: AgentCredentialCatalogConfig;
   issuer: AgentCredentialIssuerPort;
   /** Region of the STS endpoint; returned so the client can pin its own calls. */
@@ -40,7 +42,10 @@ export function registerAgentCredentialRoutes(app: FastifyInstance, options: Age
   const now = options.now ?? Date.now;
   const audit = options.audit ?? ((record) => console.log(JSON.stringify(record)));
   const operatorOnly = async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!equalSecret(request.headers.authorization ?? '', `Bearer ${options.operatorToken}`)) {
+    const header = request.headers.authorization ?? '';
+    const allowed =
+      equalSecret(header, `Bearer ${options.operatorToken}`) || (Boolean(options.agentToken) && equalSecret(header, `Bearer ${options.agentToken}`));
+    if (!allowed) {
       return reply.code(401).send({ error: 'Unauthorized' });
     }
   };

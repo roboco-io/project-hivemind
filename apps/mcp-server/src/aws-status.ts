@@ -10,6 +10,8 @@ export interface AwsStatusMcpOptions {
   redact?: (value: string) => string;
   /** When given, an unreachable Control Plane is reported with its power state instead of a bare error. */
   power?: ControlPlanePower;
+  /** 'agent': the Model Factory agent token can read only Model Factory jobs and the ledger. */
+  scope?: 'operator' | 'agent';
 }
 
 const TOOL_ERROR = 'HIVEMIND 상태를 조회하지 못했습니다. 연결·권한과 Control Plane 기동 여부를 확인하세요.';
@@ -59,12 +61,26 @@ export function registerAwsStatusTool(server: McpServer, options: AwsStatusMcpOp
     },
     async (_args, extra): Promise<CallToolResult> => {
       try {
+        const agent = options.scope === 'agent';
         const [delivery, jobs, ledger, collab] = await Promise.all([
-          get('/api/delivery/tasks', extra.signal),
+          agent ? Promise.resolve<Record<string, unknown>>({}) : get('/api/delivery/tasks', extra.signal),
           get('/api/model-factory/jobs', extra.signal),
           get('/api/model-factory/ledger', extra.signal),
-          get('/api/collab/sessions', extra.signal),
+          agent ? Promise.resolve<Record<string, unknown>>({}) : get('/api/collab/sessions', extra.signal),
         ]);
+        const modelFactory = {
+          storageBackend: backend(jobs.storageBackend),
+          total: Array.isArray(jobs.jobs) ? jobs.jobs.length : 0,
+          byStatus: countByStatus(jobs.jobs),
+          globalBudgetCapMicros: micros(ledger.globalBudgetCapMicros),
+          reservedMicros: micros(ledger.totalReservedMicros),
+          settledMicros: micros(ledger.totalSettledMicros),
+          remainingBudgetMicros: micros(ledger.remainingBudgetMicros),
+        };
+        if (agent) {
+          const output = { runtime: 'aws', connected: true, principal: 'agent', modelFactory };
+          return { content: [{ type: 'text', text: JSON.stringify(output) }], structuredContent: output };
+        }
         const output = {
           runtime: 'aws',
           connected: true,
@@ -73,15 +89,7 @@ export function registerAwsStatusTool(server: McpServer, options: AwsStatusMcpOp
             total: Array.isArray(delivery.tasks) ? delivery.tasks.length : 0,
             byStatus: countByStatus(delivery.tasks),
           },
-          modelFactory: {
-            storageBackend: backend(jobs.storageBackend),
-            total: Array.isArray(jobs.jobs) ? jobs.jobs.length : 0,
-            byStatus: countByStatus(jobs.jobs),
-            globalBudgetCapMicros: micros(ledger.globalBudgetCapMicros),
-            reservedMicros: micros(ledger.totalReservedMicros),
-            settledMicros: micros(ledger.totalSettledMicros),
-            remainingBudgetMicros: micros(ledger.remainingBudgetMicros),
-          },
+          modelFactory,
           collab: {
             storageBackend: backend(collab.storageBackend),
             total: Array.isArray(collab.sessions) ? collab.sessions.length : 0,

@@ -7,6 +7,8 @@ export interface ModelFactoryMcpOptions {
   operatorToken: string;
   fetchImpl?: typeof fetch;
   redact?: (value: string) => string;
+  /** Agent profile: release approval and publication tools are not registered. */
+  agent?: boolean;
 }
 
 const TOOL_ERROR = 'HIVEMIND 모델 팩토리 요청을 처리하지 못했습니다. 연결·권한·입력과 현재 작업 상태를 확인하세요.';
@@ -215,7 +217,7 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
       run(() => api(`/api/model-factory/jobs/${encodeURIComponent(id)}/dispatch-verifier`, extra.signal, {})),
   );
 
-  server.registerTool(
+  if (!options.agent) server.registerTool(
     'hivemind_mf_approve_release',
     {
       title: 'HIVEMIND 모델 팩토리 공개 승인/반려',
@@ -233,7 +235,7 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
       run(() => api(`/api/model-factory/jobs/${encodeURIComponent(id)}/approve-release`, extra.signal, body)),
   );
 
-  server.registerTool(
+  if (!options.agent) server.registerTool(
     'hivemind_mf_publish_release',
     {
       title: 'HIVEMIND 모델 팩토리 공개 다시 시도',

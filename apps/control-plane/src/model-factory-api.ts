@@ -13,14 +13,29 @@ export interface ModelFactoryApiOptions {
   store: ModelFactoryStore;
   operatorToken: string;
   workerToken?: string;
+  /**
+   * Bearer token for a Model Factory agent. It may read jobs, register drafts, approve training, wake,
+   * start the independent verifier, cancel, and nothing else. Release approval and publication, manual
+   * receipts and attestations, and the expiry sweep stay operator-only.
+   */
+  agentToken?: string;
   orchestrator?: ModelFactoryOrchestrator;
 }
 
 export function registerModelFactoryRoutes(app: FastifyInstance, options: ModelFactoryApiOptions): void {
-  const { store, operatorToken, workerToken, orchestrator } = options;
+  const { store, operatorToken, workerToken, agentToken, orchestrator } = options;
 
   const operatorOnly = async (request: FastifyRequest, reply: FastifyReply) => {
     if (!equalSecret(request.headers.authorization ?? '', `Bearer ${operatorToken}`)) {
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
+  };
+
+  const operatorOrAgent = async (request: FastifyRequest, reply: FastifyReply) => {
+    const header = request.headers.authorization ?? '';
+    const isOperator = equalSecret(header, `Bearer ${operatorToken}`);
+    const isAgent = Boolean(agentToken) && equalSecret(header, `Bearer ${agentToken}`);
+    if (!isOperator && !isAgent) {
       return reply.code(401).send({ error: 'Unauthorized' });
     }
   };
@@ -31,22 +46,22 @@ export function registerModelFactoryRoutes(app: FastifyInstance, options: ModelF
     }
   };
 
-  app.get('/api/model-factory/jobs', { onRequest: operatorOnly }, async () => ({
+  app.get('/api/model-factory/jobs', { onRequest: operatorOrAgent }, async () => ({
     storageBackend: store.storageBackend,
     jobs: await store.list(),
     events: await store.events(),
   }));
 
-  app.get('/api/model-factory/ledger', { onRequest: operatorOnly }, async () => store.ledger());
+  app.get('/api/model-factory/ledger', { onRequest: operatorOrAgent }, async () => store.ledger());
 
-  app.get<{ Params: { id: string } }>('/api/model-factory/jobs/:id', { onRequest: operatorOnly }, async (request) => ({
+  app.get<{ Params: { id: string } }>('/api/model-factory/jobs/:id', { onRequest: operatorOrAgent }, async (request) => ({
     job: await store.get(request.params.id),
     events: await store.events(request.params.id),
   }));
 
   app.post<{ Body: CreateModelFactoryJob }>(
     '/api/model-factory/jobs',
-    { onRequest: operatorOnly, bodyLimit: 131072 },
+    { onRequest: operatorOrAgent, bodyLimit: 131072 },
     async (request, reply) => {
       const created = await store.create(request.body);
       // Rank the job's regions and AZs by Spot placement score stability so the human sees the order before approving.
@@ -57,7 +72,7 @@ export function registerModelFactoryRoutes(app: FastifyInstance, options: ModelF
 
   app.post<{ Params: { id: string }; Body: { approvalFingerprint: string; reason: string } }>(
     '/api/model-factory/jobs/:id/approve-training',
-    { onRequest: operatorOnly, bodyLimit: 16384 },
+    { onRequest: operatorOrAgent, bodyLimit: 16384 },
     async (request) => {
       if (orchestrator) {
         return orchestrator.approveAndLaunchTraining(
@@ -73,7 +88,7 @@ export function registerModelFactoryRoutes(app: FastifyInstance, options: ModelF
 
   app.post<{ Params: { id: string } }>(
     '/api/model-factory/jobs/:id/wake',
-    { onRequest: operatorOnly, bodyLimit: 8192 },
+    { onRequest: operatorOrAgent, bodyLimit: 8192 },
     async (request) => {
       if (!orchestrator) {
         throw new DomainError('Model factory EC2 wake orchestrator is unavailable in local mock mode', 503);
@@ -98,7 +113,7 @@ export function registerModelFactoryRoutes(app: FastifyInstance, options: ModelF
   // Starts the independent verifier task. Its report arrives on /verifier-attestation below.
   app.post<{ Params: { id: string } }>(
     '/api/model-factory/jobs/:id/dispatch-verifier',
-    { onRequest: operatorOnly, bodyLimit: 1024 },
+    { onRequest: operatorOrAgent, bodyLimit: 1024 },
     async (request) => {
       if (!orchestrator) {
         throw new DomainError('Independent release verifier is unavailable in local mode', 503);
@@ -146,7 +161,7 @@ export function registerModelFactoryRoutes(app: FastifyInstance, options: ModelF
 
   app.post<{ Params: { id: string }; Body: { reason: string } }>(
     '/api/model-factory/jobs/:id/cancel',
-    { onRequest: operatorOnly, bodyLimit: 16384 },
+    { onRequest: operatorOrAgent, bodyLimit: 16384 },
     async (request) => {
       if (orchestrator) {
         return orchestrator.cancelJob(request.params.id, request.body.reason, AbortSignal.timeout(30_000));

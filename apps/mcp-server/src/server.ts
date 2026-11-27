@@ -19,7 +19,7 @@ import { join } from 'node:path';
  * `default` (and its alias `aws`) exposes the AWS single path: status + delivery + model factory + collab.
  * `legacy` is the retired Cloudflare tool set, kept only until the archive is removed (ADR-0012).
  */
-export type McpProfile = 'default' | 'aws' | 'delivery' | 'model-factory' | 'collab' | 'legacy';
+export type McpProfile = 'default' | 'aws' | 'delivery' | 'model-factory' | 'collab' | 'legacy' | 'agent';
 export interface McpSettings { apiUrl: string; operatorToken: string; profile?: McpProfile; collabLocalAuthFile?: string; controlPlanePower?: ControlPlanePowerConfig }
 export interface HivemindMcpOptions extends McpSettings { fetchImpl?: typeof fetch; powerSystem?: PowerSystem; /** Where hivemind_agent_credentials writes credential files. */ agentCredentialsDir?: string }
 const configurationError = () => new Error('Invalid HIVEMIND MCP configuration.');
@@ -39,18 +39,26 @@ function validateSettings(settings: McpSettings): McpSettings {
 }
 export function loadMcpSettings(env: NodeJS.ProcessEnv = process.env): McpSettings {
   try {
-    if (env.HIVEMIND_OPERATOR_TOKEN !== undefined && env.HIVEMIND_OPERATOR_TOKEN_FILE !== undefined) throw configurationError();
-    let operatorToken = env.HIVEMIND_OPERATOR_TOKEN;
-    if (env.HIVEMIND_OPERATOR_TOKEN_FILE !== undefined) {
-      const descriptor = openSync(env.HIVEMIND_OPERATOR_TOKEN_FILE, constants.O_RDONLY | constants.O_NOFOLLOW);
+    const readTokenFile = (path: string, key: string): string => {
+      const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
       try {
         const info = fstatSync(descriptor);
         if (!info.isFile() || (info.mode & 0o777) !== 0o600 || info.size > 64000) throw configurationError();
         const value = record(JSON.parse(readFileSync(descriptor, 'utf8')));
-        if (typeof value.OPERATOR_TOKEN !== 'string') throw configurationError();
-        operatorToken = value.OPERATOR_TOKEN;
+        if (typeof value[key] !== 'string') throw configurationError();
+        return value[key] as string;
       } finally { closeSync(descriptor); }
+    };
+    // The agent profile runs with the Model Factory agent token only. Mixing it with an operator token is refused.
+    if (env.HIVEMIND_AGENT_TOKEN_FILE !== undefined) {
+      if (env.HIVEMIND_MCP_PROFILE !== 'agent' || env.HIVEMIND_OPERATOR_TOKEN !== undefined || env.HIVEMIND_OPERATOR_TOKEN_FILE !== undefined) throw configurationError();
+      const apiUrl = env.HIVEMIND_API_URL ?? 'http://127.0.0.1:4310';
+      return { ...validateSettings({ apiUrl, operatorToken: readTokenFile(env.HIVEMIND_AGENT_TOKEN_FILE, 'AGENT_TOKEN') }), profile: 'agent' };
     }
+    if (env.HIVEMIND_MCP_PROFILE === 'agent') throw configurationError();
+    if (env.HIVEMIND_OPERATOR_TOKEN !== undefined && env.HIVEMIND_OPERATOR_TOKEN_FILE !== undefined) throw configurationError();
+    let operatorToken = env.HIVEMIND_OPERATOR_TOKEN;
+    if (env.HIVEMIND_OPERATOR_TOKEN_FILE !== undefined) operatorToken = readTokenFile(env.HIVEMIND_OPERATOR_TOKEN_FILE, 'OPERATOR_TOKEN');
     const apiUrl = env.HIVEMIND_API_URL ?? 'http://127.0.0.1:4310';
     const rawProfile = env.HIVEMIND_MCP_PROFILE;
     if (rawProfile !== undefined && rawProfile !== 'default' && rawProfile !== 'aws' && rawProfile !== 'delivery' && rawProfile !== 'model-factory' && rawProfile !== 'collab' && rawProfile !== 'legacy') throw configurationError();
@@ -105,6 +113,14 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
   }
   if (options.profile === 'collab') {
     registerCollabOperatorTools(server, { ...settings, ...(options.collabLocalAuthFile ? { localAuthFile: options.collabLocalAuthFile } : {}), fetchImpl, redact });
+    return server;
+  }
+  if (options.profile === 'agent') {
+    // Model Factory agent: reads, drafts, training approval, wake, verifier, cancel and scoped AWS credentials.
+    // Release approval and publication stay with the operator and are not registered here.
+    registerAwsStatusTool(server, { ...settings, fetchImpl, redact, scope: 'agent' });
+    registerModelFactoryOperatorTools(server, { ...settings, fetchImpl, redact, agent: true });
+    registerAgentCredentialTools(server, { ...settings, fetchImpl, ...(options.agentCredentialsDir ? { credentialsDir: options.agentCredentialsDir } : {}) });
     return server;
   }
   if (options.profile === 'model-factory') {
