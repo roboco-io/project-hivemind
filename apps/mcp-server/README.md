@@ -27,25 +27,21 @@ MCP 서버는 환경 변수 `HIVEMIND_MCP_PROFILE`로 노출할 도구 묶음을
 
 ## Control Plane 기동과 종료 (`hivemind_control_plane_start`, `hivemind_control_plane_stop`)
 
-AWS Control Plane은 평소 `desiredCount 0`으로 꺼져 있고, API는 SSM 포트 포워딩 터널로만 닿는다. 기본 프로필의 두 도구가 이 기동과 종료를 MCP 서버 안에서 수행한다. 구현은 `src/control-plane-power.ts`에 있다.
+AWS Control Plane은 2026-11-27부터 Fargate Spot에서 작업 1개로 상시 운영하고, API는 SSM 포트 포워딩 터널로만 닿는다. 기본 프로필의 MCP 서버가 터널을 관리한다. 구현은 `src/control-plane-power.ts`에 있다. 동작은 설정 파일의 `mode`로 정한다.
 
-`hivemind_control_plane_start`는 ECS 서비스를 1로 올리고, `control-plane` 컨테이너가 실행 상태가 될 때까지 기다린 뒤, `HIVEMIND_API_URL`의 로컬 포트로 터널을 연다. 기동은 과금을 일으키므로 다른 도구가 대신 일으키지 않는다. `hivemind_status`를 포함한 어떤 도구도 Control Plane을 켜지 않는다. 기동이 호출 대기 시간(50초)보다 오래 걸리면 `state: starting`을 돌려주고, 기동은 계속 진행된다. 다시 호출하면 진행 중인 기동의 결과를 받는다. 기동이 실패하면 터널을 닫고, 이 호출이 올린 서비스는 다시 0으로 내린다. 다른 주체가 올려 둔 서비스는 내리지 않는다.
+**`always-on`(기본값).** `hivemind_control_plane_start`는 지금 실행 중인 작업으로 터널을 연다. 서비스가 0이면 1로 올린다. 운영자 도구 호출이 연결 실패로 끝나면, 서비스가 1 이상일 때만 터널을 다시 열고 그 호출을 한 번 다시 시도한다. Spot 회수로 작업이 바뀌면 터널이 끊기기 때문이다. 서비스가 0일 때 이 재시도는 서비스를 올리지 않는다. MCP 서버는 유휴 시간이 지나도, 서버가 닫혀도 서비스를 내리지 않는다. `hivemind_control_plane_stop`은 `force: true`일 때만 서비스를 0으로 내린다.
 
-`hivemind_control_plane_stop`은 터널을 닫고 서비스를 0으로 내린다. 그 전에 Control Plane의 정리 경로(`POST /api/delivery/reconcile`, 활성 협업 세션의 `reconcile`)를 호출한다. 이 경로는 ECS가 워커를 더 이상 실행하지 않는다고 확인한 작업만 `failed`로 바꾼다. 그다음 `running` 전달 작업, `training_running` 학습 작업, `running` 협업 하위 작업을 센다. 하나라도 있으면 내리지 않는다. Control Plane API에 닿지 않아 셀 수 없을 때도 내리지 않는다. `force: true`는 이 확인을 건너뛴다.
-
-이 서버가 켠 Control Plane은 유휴 시간이 지나면 같은 확인을 거쳐 자동으로 내려간다. 유휴 시간은 운영자 도구 호출이 없었던 시간이며 기본 15분이다. 진행 중인 작업이 있으면 내리지 않고 5분 뒤 다시 본다. MCP 서버가 닫힐 때도 같은 확인을 거쳐 내린다. 유휴 타이머가 서버와 함께 끝나므로, 내리지 않으면 지켜보는 주체 없이 켜진 채 남기 때문이다.
+**`on-demand`.** 2026-11-27 이전의 동작이다. `hivemind_control_plane_start`는 서비스를 1로 올리고, `control-plane` 컨테이너가 실행 상태가 될 때까지 기다린 뒤 터널을 연다. 기동은 과금을 일으키므로 다른 도구가 대신 일으키지 않는다. 기동이 호출 대기 시간(50초)보다 오래 걸리면 `state: starting`을 돌려주고 기동은 계속된다. 기동이 실패하면 이 호출이 올린 서비스만 다시 0으로 내린다. `hivemind_control_plane_stop`은 정리 경로(`POST /api/delivery/reconcile`, 활성 협업 세션의 `reconcile`)를 호출한 뒤 `running` 전달 작업, `training_running` 학습 작업, `running` 협업 하위 작업을 센다. 하나라도 있거나 셀 수 없으면 내리지 않는다. `force: true`는 이 확인을 건너뛴다. 이 서버가 켠 Control Plane은 운영자 도구 호출이 `idleMinutes`(기본 15분) 동안 없으면 같은 확인을 거쳐 내려가고, MCP 서버가 닫힐 때도 내려간다.
 
 설정은 비밀이 아닌 파일 하나다. `npm run bootstrap`이 `~/.hivemind/aws-control-plane.json`을 쓴다. 경로는 `HIVEMIND_CONTROL_PLANE_CONFIG_FILE`로 바꿀 수 있다.
 
 ```json
-{ "profile": "roboco", "region": "ap-northeast-2", "cluster": "hivemind-runtime-cluster", "service": "hivemind-runtime-control-plane", "idleMinutes": 15 }
+{ "profile": "roboco", "region": "ap-northeast-2", "cluster": "hivemind-runtime-cluster", "service": "hivemind-runtime-control-plane", "mode": "always-on" }
 ```
 
-`profile`과 `idleMinutes`는 생략할 수 있다. 값은 영문자, 숫자, `.`, `_`, `-`만 허용한다. 파일이 없거나 형식이 맞지 않으면 두 도구는 아무것도 하지 않고 설정 방법을 안내한다. MCP 서버를 실행하는 환경에 `aws` CLI와 `session-manager-plugin`이 있어야 하고, 해당 프로필로 로그인되어 있어야 한다. 필요한 AWS 권한은 `ecs:DescribeServices`, `ecs:UpdateService`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ssm:StartSession`이다.
+`profile`, `idleMinutes`, `mode`는 생략할 수 있다. `mode`를 생략하면 `always-on`이다. 값은 영문자, 숫자, `.`, `_`, `-`만 허용한다. 파일이 없거나 형식이 맞지 않으면 두 도구는 아무것도 하지 않고 설정 방법을 안내한다. MCP 서버를 실행하는 환경에 `aws` CLI와 `session-manager-plugin`이 있어야 하고, 해당 프로필로 로그인되어 있어야 한다. 필요한 AWS 권한은 `ecs:DescribeServices`, `ecs:UpdateService`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ssm:StartSession`이다.
 
-종료가 거절되면 응답의 `inProgress.blockingIds`가 진행 중으로 센 기록의 ID를 알려 준다. `inProgress.unverifiable`은 Control Plane이 워커에 대한 근거가 없어 정리하지 못한 기록이다. 예를 들어 ECS 작업 ARN을 기록하기 전에 만든 전달 작업이 그렇다. 이런 기록은 자동으로 `failed`가 되지 않으므로, 운영자가 취소하기 전까지 자동 종료를 막는다.
-
-한계는 세 가지다. 다른 클라이언트가 켠 Control Plane은 이 서버가 자동으로 내리지 않는다. 이 서버가 켠 Control Plane을 다른 클라이언트가 함께 쓰는 경우, 이 서버는 그 사용을 알지 못해 유휴로 판단하고 내릴 수 있다. 클라이언트가 MCP 서버를 강제 종료하면 종료 처리가 실행되지 않아 Control Plane이 켜진 채 남는다.
+`on-demand`에서 종료가 거절되면 응답의 `inProgress.blockingIds`가 진행 중으로 센 기록의 ID를 알려 준다. `inProgress.unverifiable`은 Control Plane이 워커에 대한 근거가 없어 정리하지 못한 기록이다. 이런 기록은 자동으로 `failed`가 되지 않으므로, 운영자가 취소하기 전까지 자동 종료를 막는다.
 
 ## 장기 자율 작업 운영자 계약
 

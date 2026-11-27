@@ -50,22 +50,36 @@ printf '%s' "$HUGGINGFACE_ORG_TOKEN" | \
   npx tsx scripts/aws-set-hf-secret.ts
 ```
 
-## 2. Control Plane 기동·SSM 터널·유휴 중지
+## 2. Control Plane 상시 운영 (Fargate Spot)·SSM 터널
 
-작업 시에만 서울 Control Plane을 켜고, 유휴 시 `desiredCount: 0`으로 되돌리면 상시 비용이 `$0/hr`로 유지된다(5분 TTL Guard Lambda는 별도로 상시 작동).
+서울 Control Plane은 2026-11-27부터 Fargate Spot에서 작업 1개로 상시 운영한다(사람의 결정). ECS 서비스는 `FARGATE_SPOT` 용량 공급자만 쓰고(`base 1`, `weight 1`), ARM64 작업 정의(0.5 vCPU, 1 GiB)를 그대로 쓴다. Fargate Spot은 ARM64를 지원한다(AWS Fargate 가격 페이지 각주, 2026-11-27 확인). `scripts/aws-deploy-hub.sh`와 `npm run bootstrap`은 이제 서비스를 1로 둔다. 잠시 끄려면 배포 때 `HIVEMIND_CONTROL_PLANE_DESIRED_COUNT=0`을 주거나 MCP `hivemind_control_plane_stop`을 `force: true`로 호출한다. 실증 스크립트는 시작할 때 본 desiredCount로 서비스를 되돌린다.
+
+API는 여전히 SSM 포트 포워딩 터널로만 닿는다.
 
 ```bash
-# 1) Control Plane 시작
-aws --profile roboco --region ap-northeast-2 ecs update-service \
-  --cluster hivemind-runtime-cluster --service hivemind-runtime-control-plane --desired-count 1
-
-# 2) 로컬 SSM 포트 포워딩 터널 열기 (http://127.0.0.1:4310)
+# 로컬 SSM 포트 포워딩 터널 열기 (http://127.0.0.1:4310). 작업이 바뀌면 다시 실행한다.
 npx tsx scripts/aws-ssm-tunnel.ts
-
-# 3) 작업 종료 후 유휴 중지 ($0/hr)
-aws --profile roboco --region ap-northeast-2 ecs update-service \
-  --cluster hivemind-runtime-cluster --service hivemind-runtime-control-plane --desired-count 0
 ```
+
+### Spot 회수와 복구
+
+AWS가 용량을 회수하면 Control Plane 작업은 2분 전에 SIGTERM을 받는다. 컨테이너의 `stopTimeout`은 120초이고, Control Plane은 SIGTERM에 서버를 닫는다. ECS 서비스는 Spot 용량이 생기면 새 작업을 띄운다. 작업이 1개뿐인 서비스는 새 작업이 뜰 때까지 멈춘다. Fargate는 Spot 용량이 없을 때 일반 Fargate로 바꿔 띄우지 않는다(AWS ECS 문서 "Fargate capacity providers", 2026-11-27 확인). 그래서 서울 ARM Spot 용량이 오래 없으면 그동안 Control Plane이 멈춘다.
+
+| 항목 | 회수 뒤 상태 |
+|---|---|
+| 전달·Model Factory·협업 기록 | Aurora DSQL에 있으므로 그대로 남는다 |
+| 학습 인스턴스 | 계속 실행된다. 수명 초과는 5분 주기 TTL Guard Lambda가 Control Plane과 관계없이 종료하고 정산한다 |
+| 학습 점검(wake) | 새 작업이 5분 주기 점검을 다시 시작한다. 영수증은 S3에 남아 있으므로 다음 점검이 처리한다 |
+| Hugging Face 게시 | 진행 중이던 업로드는 끊기고, 작업은 `release_approved`에 남는다. `publish-release`로 다시 게시한다 |
+| 독립 검증기 | 검증기는 기동 때의 Control Plane 사설 IP로 결과를 보낸다. 새 작업은 IP가 달라 결과를 받지 못하므로, 작업이 `evaluating`에 남으면 `dispatch-verifier`로 다시 기동한다 |
+| SW 전달·협업 워커 | 검증기와 같은 이유로 결과 보고가 실패할 수 있다. `reconcile`이 워커가 끝난 작업을 `failed`로 정리한다 |
+| SSM 터널 | 작업이 바뀌면 끊긴다. MCP 서버는 다음 호출에서 새 작업으로 터널을 다시 연다(아래 3절). 직접 연 터널은 다시 실행한다 |
+
+**대체 전략 검토.** 서비스에 `FARGATE`와 `FARGATE_SPOT`을 섞어도 ECS는 Spot 용량이 없다고 일반 Fargate로 바꾸지 않는다. 섞으면 비율만큼 항상 일반 Fargate 요금이 든다. 그래서 지금은 Spot만 쓴다. 오래 멈추는 일이 생기면 두 가지를 검토한다. 하나는 `RunningTaskCount`가 일정 시간 0일 때 알림을 보내는 CloudWatch 경보다. 다른 하나는 TTL Guard Lambda처럼 주기적으로 도는 감시 함수가 서비스를 잠시 `FARGATE`로 바꾸는 방식이다. 둘 다 아직 구현하지 않았다.
+
+### 월 비용 추정
+
+다음은 추정이며 실제 청구로 확인하지 않았다. 서울 일반 Fargate Linux ARM 단가는 AWS 가격 API 기준(2026-11-27 조회) vCPU-시간당 0.03725달러, GB-시간당 0.00409달러다. 0.5 vCPU, 1 GiB 작업 하나는 시간당 약 0.0227달러, 한 달(730시간) 약 16.6달러다. Fargate Spot 단가는 가격 API에 없어 확인하지 못했다. Spot은 이보다 싸므로 이 값이 위 상한이다. 작업에 공인 IPv4 주소가 붙으므로 IPv4 요금이 따로 든다. 시간당 0.005달러로 계산하면 한 달 약 3.65달러이며, 이 단가도 이번에 다시 조회하지 않았다. EFS, CloudWatch Logs, DSQL 사용량은 포함하지 않았다.
 
 ## 3. MCP 클라이언트 연결 (Claude Code / Codex)
 
@@ -82,6 +96,8 @@ aws --profile roboco --region ap-northeast-2 ecs update-service \
   }
 }
 ```
+
+기본 프로필의 MCP 서버는 `~/.hivemind/aws-control-plane.json`이 있으면 Control Plane 터널을 스스로 관리한다. 이 파일의 `mode`가 `always-on`(기본값)이면 MCP 서버는 서비스를 내리지 않는다. 운영자 도구 호출이 연결 실패로 끝나면, 서비스가 1 이상일 때만 지금 실행 중인 작업으로 터널을 다시 열고 그 호출을 한 번 다시 시도한다. 그래서 Spot 회수로 작업이 바뀌어도 다음 호출이 새 작업에 붙는다. 새 작업이 뜨기 전이면 호출은 실패하고, 몇 분 뒤 다시 호출하면 된다.
 
 ## 4. API 계약 요약
 
@@ -233,7 +249,7 @@ Control Plane은 부트스트랩에서 IMDSv2로 인스턴스 ID를 읽어 `HIVE
 
 Model Factory의 작업과 비용 원장은 기본적으로 Control Plane의 SQLite 파일에 저장된다. Control Plane 환경 변수 `HIVEMIND_MF_STORAGE=aurora-dsql`을 설정하면 서울 Aurora DSQL 클러스터에 저장한다. `GET /api/model-factory/jobs` 응답의 `storageBackend` 필드(`sqlite` 또는 `aurora-dsql`)로 현재 저장소를 확인할 수 있다. 요청과 나머지 응답 형식은 저장소와 무관하게 같다.
 
-DSQL로 바꾸는 이유는 TTL Guard Lambda 때문이다. Control Plane은 평소 `desiredCount 0`으로 꺼져 있고, 그동안 만료된 학습 인스턴스는 5분 주기의 TTL Guard Lambda가 강제 종료한다. 원장이 Control Plane의 SQLite 파일에 있으면 Lambda는 종료만 하고 비용을 정산하지 못한다. 원장이 DSQL에 있으면 Lambda가 종료 직후 같은 원장에 비용을 정산한다.
+DSQL로 바꾸는 이유는 TTL Guard Lambda 때문이다. Control Plane은 Spot 회수나 운영자의 중지로 꺼져 있을 수 있고, 그동안 만료된 학습 인스턴스는 5분 주기의 TTL Guard Lambda가 강제 종료한다. 원장이 Control Plane의 SQLite 파일에 있으면 Lambda는 종료만 하고 비용을 정산하지 못한다. 원장이 DSQL에 있으면 Lambda가 종료 직후 같은 원장에 비용을 정산한다.
 
 Lambda의 정산은 다음과 같이 동작한다. Lambda는 인스턴스를 먼저 종료하고 그다음 정산하므로, 원장에 접속하지 못해도 인스턴스는 종료된다. 정산 금액은 기동 시각부터 종료 시각까지의 초 단위 시간(최소 60초)에 작업의 `maxHourlyPriceUsd`를 곱한 값이며 예약 금액을 넘지 않는다. 이 값은 상한가 기준 추정치이고 실제 스팟 청구액이 아니다. Lambda는 S3 영수증 확인과 작업 실패 처리를 하지 않는다. Control Plane이 다음에 기동하면 wake가 이 단계를 이어서 처리하고, 이미 정산된 작업을 다시 정산하지 않는다.
 

@@ -13,25 +13,17 @@ description: HIVEMIND의 AWS 단일 경로에서 SW 전달 작업, Model Factory
 
 `hivemind_status`를 호출한다. 응답의 `runtime`이 `aws`이고 `connected`가 `true`이면 Control Plane 연결과 운영자 인증이 정상이다. 응답에는 세 저장소의 종류(`sqlite` 또는 `aurora-dsql`), 상태별 건수, Model Factory의 남은 중앙 예산이 들어 있다.
 
-`connected`가 `false`이고 `controlPlane.state`가 `stopped`이면 Control Plane이 휴지 상태다. 평소에는 비용을 줄이려고 서비스를 `desiredCount 0`으로 둔다. 이것은 오류가 아니다.
+Control Plane은 Fargate Spot에서 상시 운영한다. Spot 회수로 작업이 바뀌면 MCP 서버가 다음 호출에서 터널을 다시 연다. 새 작업이 뜨는 동안(보통 1-2분)은 호출이 실패할 수 있으니 잠시 뒤 다시 호출한다. `connected`가 `false`이고 `controlPlane.state`가 `stopped`이면 누군가 서비스를 0으로 내린 상태다.
 
 오류가 나면 원인은 대개 셋 중 하나다. Control Plane 기동 설정 파일(`~/.hivemind/aws-control-plane.json`)이 없어 휴지 상태를 구분하지 못했다. SSM 포트 포워딩 터널이 열려 있지 않다. MCP 서버에 운영자 토큰이 전달되지 않았다. 세 경우 모두 같은 일반 오류 문구가 나오므로 문구만으로는 구분할 수 없다. 연결이 실패하면 로컬 실행이나 다른 서버로 전환하지 않고 사용자에게 알린다.
 
 ## Control Plane을 켜고 끈다
 
-`hivemind_control_plane_start`는 ECS 서비스를 1로 올리고, 작업이 실행될 때까지 기다린 뒤, 로컬 SSM 터널을 연다. Fargate 작업이 실행되어 과금되므로 **사용자가 HIVEMIND 사용을 요청했을 때만 호출한다.** 사용자가 작업 등록, 조회, 승인처럼 Control Plane이 필요한 일을 요청했고 Control Plane이 휴지 상태이면, 그 요청이 기동 요청을 포함한다고 본다. 이때는 켠다고 알리고 켠다. 상태만 물었을 때는 켜지 않고 휴지 상태라고 답한다.
+Control Plane은 Fargate Spot에서 상시 운영하므로 평소에는 켜고 끌 일이 없다. `hivemind_control_plane_start`는 실행 중인 작업으로 터널을 열고, 서비스가 0이면 1로 올린다. 서비스가 0인 상태에서 사용자가 작업 등록, 조회, 승인처럼 Control Plane이 필요한 일을 요청했으면, 켠다고 알리고 호출한다. 기동에는 보통 1-2분이 걸리고, 호출이 먼저 끝나면 `state`가 `starting`으로 돌아온다. 그때는 잠시 뒤 같은 도구를 다시 호출한다.
 
-기동에는 보통 1-2분이 걸린다. 호출이 먼저 끝나면 `state`가 `starting`으로 돌아온다. 그때는 잠시 뒤 같은 도구를 다시 호출한다. 다시 호출해도 기동이 두 번 일어나지 않는다.
+`hivemind_control_plane_stop`은 상시 운영 중에는 `force: true`일 때만 서비스를 내린다. 사용자가 Control Plane을 끄라고 명시했을 때만 쓴다. 끄면 Control Plane이 받던 워커 보고와 5분 주기 학습 점검이 멈춘다. 학습 인스턴스의 수명 초과 종료는 TTL Guard Lambda가 따로 맡는다.
 
-`hivemind_control_plane_stop`은 터널을 닫고 서비스를 0으로 내린다. 내리기 전에 Control Plane이 워커가 사라진 작업을 정리하고, 진행 중인 SW 전달 작업, 학습 작업, 협업 하위 작업을 센다. 하나라도 있으면 내리지 않고 건수를 돌려준다. 실행 중인 워커가 결과를 Control Plane에 보고하기 때문이다. `force: true`는 이 확인을 건너뛴다. 사용자가 진행 중인 작업을 버려도 된다고 명시했을 때만 쓴다.
-
-종료가 거절되면 응답의 `inProgress.blockingIds`와 `inProgress.unverifiable`을 사용자에게 그대로 알린다. `unverifiable`은 워커가 살아 있는지 확인할 근거가 없는 기록이며, 사용자가 취소하기 전까지 종료를 막는다. 사용자의 지시 없이 그 기록을 취소하지 않는다.
-
-이 MCP 서버가 켠 Control Plane은 도구 호출이 15분 동안 없고 진행 중인 작업도 없으면 스스로 내려간다. 클라이언트를 종료할 때도 같은 조건으로 내려간다. 따라서 작업이 끝났다고 반드시 `stop`을 호출할 필요는 없다. 사용자가 끄라고 했거나 더 쓸 일이 없다고 했을 때 호출한다.
-
-자동 종료에는 한계가 있다. 다른 사람이나 다른 클라이언트가 켠 Control Plane은 이 서버가 자동으로 내리지 않는다. 반대로 이 서버가 켠 Control Plane을 다른 클라이언트가 함께 쓰고 있어도, 이 서버는 그 사용을 알지 못하고 유휴로 판단해 내릴 수 있다. 클라이언트가 강제 종료되면 종료 처리가 실행되지 않아 Control Plane이 켜진 채 남는다.
-
-기동 설정이 없으면 두 도구는 아무것도 하지 않고 `npm run bootstrap`을 안내한다. 설치는 `hivemind-bootstrap` 스킬의 일이다.
+설정 파일(`~/.hivemind/aws-control-plane.json`)의 `mode`가 `on-demand`이면 2026-11-27 이전 동작을 따른다. 이 서버가 켠 Control Plane은 15분 동안 도구 호출이 없고 진행 중인 작업도 없으면 내려가고, 종료는 진행 중인 작업이 있으면 거절된다. 거절 응답의 `inProgress.blockingIds`와 `inProgress.unverifiable`은 사용자에게 그대로 알리고, 사용자의 지시 없이 그 기록을 취소하지 않는다.
 
 ## 공통 규칙
 
