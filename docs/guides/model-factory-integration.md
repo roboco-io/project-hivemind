@@ -133,7 +133,7 @@ aws --profile roboco --region ap-northeast-2 ecs update-service \
 
 ### 리전별 기본 네트워크와 AMI (`HIVEMIND_MF_REGION_NETWORKS_JSON`)
 
-작업이 `compute.candidateRegions`에 여러 리전을 적으면 Control Plane은 스팟 배치 점수 순서대로 리전을 시도한다. 서브넷, 보안 그룹과 AMI는 리전마다 다른 자원이므로, Control Plane은 리전마다 아래 순서로 값을 정한다.
+작업이 `compute.candidateRegions`에 여러 리전을 적으면 Control Plane은 아래 "리전과 AZ 시도 순서"에서 정한 순서대로 리전을 시도한다. 서브넷, 보안 그룹과 AMI는 리전마다 다른 자원이므로, Control Plane은 리전마다 아래 순서로 값을 정한다.
 
 1. 작업의 `compute.regionOverrides[<리전>]`에 적힌 값.
 2. 대상 리전이 작업의 `compute.region`과 같으면 작업의 `amiId`, `subnetId`, `securityGroupIds`.
@@ -155,6 +155,20 @@ aws --profile roboco --region ap-northeast-2 ecs update-service \
 SSM으로 얻은 AMI ID는 `approvalFingerprint`에 들어 있지 않다. 승인 시점에는 AMI ID가 정해지지 않기 때문이다. 실제로 사용한 AMI ID는 작업의 `instance.amiId`에 기록된다. AMI를 승인 시점에 고정해야 하는 작업은 `regionOverrides[<리전>].amiId`를 직접 적는다. AMI 조회가 실패한 리전에서는 인스턴스를 기동하지 않고 다음 후보 리전으로 넘어가며, 실패 사유는 작업의 `failureReason`에 남는다.
 
 CDK 배포 시에는 셸 환경 변수 `HIVEMIND_MF_REGION_NETWORKS_JSON`에 같은 JSON을 넣으면 `HivemindAwsRuntimeStack`이 Control Plane 컨테이너에 그대로 전달한다.
+
+### 리전과 AZ 시도 순서 (`placementPlan`)
+
+Control Plane은 스팟 배치 점수 피드(`https://d16jdvzof4zpo7.cloudfront.net/data.json`)의 추세로 리전과 AZ의 시도 순서를 정한다. 스팟 배치 점수는 AWS가 1(낮음)부터 10(높음)까지 매기는 용량 확보 가능성이다. 피드는 리전별, AZ ID별 점수를 시간 순서로 담고 있다.
+
+Control Plane은 작업을 등록할 때 순서를 계산해 작업의 `placementPlan`에 저장하고, 등록 응답으로 돌려준다. 사람은 학습을 승인하기 전에 이 순서를 볼 수 있다. 학습을 승인해 인스턴스를 기동할 때 Control Plane은 최신 피드로 순서를 다시 계산하고, 그 결과를 `placementPlan`에 다시 저장한다. 기동 시점에 피드를 쓸 수 없으면 등록 때 계산한 순서를 쓴다.
+
+순서는 최근 72시간의 점수로 정한다. 가장 낮은 점수가 높은 리전이 앞에 오고, 같으면 평균 점수, 최근 점수, 리전 스팟 가격 순서로 비교한다. 지금 점수가 높아도 최근에 점수가 떨어진 적이 있는 리전은 용량이 불안정하다고 보기 때문이다. AZ도 같은 기준으로 정렬한다. 점수가 없는 리전은 작업에 적힌 순서대로 뒤에 붙는다.
+
+이 순서는 작업의 `compute.region`과 `compute.candidateRegions`에 적힌 리전만 다시 정렬한다. 리전을 더하거나 빼지 않으므로 `approvalFingerprint`에 넣지 않는다. 작업의 `compute.region`은 `candidateRegions`에 없어도 항상 후보에 들어간다.
+
+리전 안에서 Control Plane은 서브넷의 AZ ID를 `ec2:DescribeSubnets`로 조회해, 계획한 AZ 순서대로 서브넷을 시도한다. AZ 이름(`us-east-2a`)은 계정마다 다른 물리 AZ를 가리키므로 AZ ID(`use2-az1`)로 비교한다. 서브넷 조회가 실패하면 서브넷은 적힌 순서대로 시도한다. 작업이 `compute.availabilityZoneId`를 적었으면 `compute.region`에서는 그 AZ를 먼저 시도한다.
+
+피드는 인스턴스 유형을 풀(pool) 단위로 다룬다. Control Plane은 `compute.workloadClass`가 있으면 그 풀을 쓰고, 없으면 인스턴스 유형과 이름이 같은 풀이나 구성원에 그 유형이 들어 있는 풀을 쓴다. 2026-11-27 기준 피드는 `p5.48xlarge`, `g6e.12xlarge`, `g6e.24xlarge`, `g6e.48xlarge`와 범용 CPU 풀만 다루고 `g4dn.xlarge`, `g5.xlarge`, `g6.xlarge`는 다루지 않는다. 피드에 없는 유형, 24시간보다 오래된 피드, 피드 조회 실패에서는 `placementPlan.status`가 각각 `type_not_in_feed`, `feed_stale`, `feed_unavailable`이 되고 리전은 적힌 순서대로 시도한다.
 
 ### 원장 저장소와 TTL Guard 정산 (`HIVEMIND_MF_STORAGE`)
 

@@ -75,7 +75,7 @@ description: HIVEMIND의 AWS 단일 경로에서 SW 전달 작업, Model Factory
 EC2 스팟 인스턴스에서 학습·평가를 실행하고, 사람이 승인하면 산출물을 공개한다.
 
 1. `hivemind_mf_ledger`로 남은 중앙 예산을 확인한다.
-2. `hivemind_mf_create`로 초안을 등록한다. 리전, 인스턴스 유형, AMI, 최대 수명, 시간당 상한가, 총비용 상한, 산출물 경로, 공개 정책을 전달한다. 값을 추측하지 않는다.
+2. `hivemind_mf_create`로 초안을 등록한다. 리전, 인스턴스 유형, AMI, 최대 수명, 시간당 상한가, 총비용 상한, 산출물 경로, 공개 정책을 전달한다. 값을 추측하지 않는다. 등록 응답의 `placementPlan`은 스팟 배치 점수 추세로 정한 리전·AZ 시도 순서다. 승인을 요청할 때 첫 리전·AZ와 `placementPlan.status`를 사용자에게 함께 보여 준다. `status`가 `ranked`가 아니면 그 이유(`note`)도 알린다.
 3. 사용자가 학습을 지시했으면 `hivemind_mf_approve_training`을 호출한다. 예산이 부족하면 서버가 거절한다.
 4. `hivemind_mf_get`으로 인스턴스 상태, 만료 시각, 비용 예약·정산, S3 영수증을 조회한다.
 5. 작업이 `evaluating`이 되면, 사용자가 지시했을 때 `hivemind_mf_dispatch_verifier`로 독립 검증기를 기동한다. 검증기는 산출물과 고정 입력의 해시를 확인하고 승인된 `releaseCheckCommand`를 실행한 뒤 결과를 직접 보고한다. 검사가 통과하면 작업이 `awaiting_release_approval`이 되고, 실패하면 `failed`가 된다.
