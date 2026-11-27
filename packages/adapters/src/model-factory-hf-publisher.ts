@@ -38,7 +38,34 @@ export function createTrustedHfReleasePublisher(config: TrustedHfReleasePublishe
   const uploadHosts = config.uploadHosts ?? HF_RELEASE_UPLOAD_HOSTS;
   const now = config.now ?? Date.now;
 
+  const hfFetch = config.fetchImpl ?? fetch;
   return {
+    /**
+     * Creates `owner/name` as a model repository with the given visibility when it does not exist. An
+     * existing repository is left as it is; its visibility is checked again right before the commit.
+     */
+    async ensureRepository(repository: string, visibility: 'private' | 'public', signal?: AbortSignal): Promise<'exists' | 'created'> {
+      const match = /^([A-Za-z0-9][A-Za-z0-9_.-]{0,95})\/([A-Za-z0-9][A-Za-z0-9_.-]{0,95})$/.exec(repository);
+      if (!match || repository.includes('..')) throw new Error('Invalid Hugging Face repository name');
+      const token = (await config.resolveHfToken(signal)).trim();
+      if (!token) throw new Error('Control Plane Hugging Face write token is empty');
+      const headers = { authorization: `Bearer ${token}`, 'user-agent': 'hivemind-release/1' };
+      const timeout = signal ? AbortSignal.any([signal, AbortSignal.timeout(20_000)]) : AbortSignal.timeout(20_000);
+      const existing = await hfFetch(`https://huggingface.co/api/models/${match[1]}/${match[2]}`, { headers, redirect: 'manual', signal: timeout });
+      if (existing.status === 200) return 'exists';
+      if (existing.status !== 404 && existing.status !== 401) throw new Error(`Hugging Face repository lookup failed with HTTP ${existing.status}`);
+      const created = await hfFetch('https://huggingface.co/api/repos/create', {
+        method: 'POST',
+        headers: { ...headers, 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'model', name: match[2], organization: match[1], private: visibility === 'private' }),
+        redirect: 'manual',
+        signal: timeout,
+      });
+      if (created.status === 409) return 'exists';
+      if (!created.ok) throw new Error(`Hugging Face repository creation failed with HTTP ${created.status}`);
+      return 'created';
+    },
+
     async publish(input: {
       job: ModelFactoryJob;
       receipt: ModelArtifactReceipt;
@@ -126,6 +153,8 @@ export function createTrustedHfReleasePublisher(config: TrustedHfReleasePublishe
         url: `https://huggingface.co/${job.releasePolicy.hfRepository}/commit/${proof.commitOid}`,
         manifestDigest: receipt.manifestDigest,
         publishedAt: new Date(now()).toISOString(),
+        // hfLfsCommit returns only after hfLfsProof compared every file on the Hub with the receipt.
+        verifiedFiles: receipt.files.length,
       };
     },
   };

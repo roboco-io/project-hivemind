@@ -33,6 +33,8 @@ export interface TrustedHfReleasePublisherPort {
     attestation: ModelReleaseAttestation;
     signal?: AbortSignal;
   }): Promise<ModelReleasePublication>;
+  /** Creates the Hugging Face repository when it does not exist yet (auto-publish only). */
+  ensureRepository?(repository: string, visibility: 'private' | 'public', signal?: AbortSignal): Promise<'exists' | 'created'>;
 }
 
 /**
@@ -654,6 +656,22 @@ export class ModelFactoryOrchestrator {
       if (job.instance?.region) activeRegions.add(job.instance.region);
       woken.push(await this.wakeJob(job.id, signal));
     }
+    // Auto-publish recovery: a verifier result that arrived while the Control Plane was being replaced, or a
+    // publication that failed, is picked up here (at most three publication attempts per job).
+    for (const job of await this.options.store.list()) {
+      if (this.options.store.isAutoPublishEligible(job)) {
+        await this.autoReleaseIfEligible(job.id, signal).catch(() => undefined);
+      } else if (
+        job.status === 'release_approved' &&
+        !job.publication &&
+        job.publication === null &&
+        job.releasePolicy.autoPublish &&
+        !this.publishing.has(job.id) &&
+        job.diagnostics.filter((d) => d.startsWith('Release publication failed')).length < 3
+      ) {
+        await this.startPublishRelease(job.id).catch(() => undefined);
+      }
+    }
     const sweeps: ExpiredSpotSweepResult[] = [];
     for (const region of activeRegions) {
       sweeps.push(await this.options.ec2.sweepExpiredSpotInstances(region, this.now(), signal));
@@ -745,6 +763,32 @@ export class ModelFactoryOrchestrator {
     return await this.startBackgroundPublish(job);
   }
 
+  /**
+   * Publishes a job whose release policy asks for it, once the independent verifier passed (issue #20).
+   * Creates the Hugging Face repository first when it is missing. Returns null when the job is not eligible.
+   */
+  async autoReleaseIfEligible(jobId: string, signal?: AbortSignal): Promise<ModelFactoryJob | null> {
+    const job = await this.options.store.get(jobId);
+    if (!this.options.store.isAutoPublishEligible(job)) return null;
+    if (job.releasePolicy.mode === 'hf_release') {
+      const publisher = this.options.hfPublisher;
+      if (!publisher) return null;
+      if (publisher.ensureRepository) {
+        try {
+          const outcome = await publisher.ensureRepository(job.releasePolicy.hfRepository!, job.releasePolicy.visibility, signal);
+          console.log(JSON.stringify({ event: 'hivemind.mf_auto_publish.repository', jobId, repository: job.releasePolicy.hfRepository, outcome }));
+        } catch (error) {
+          const reason = error instanceof Error ? error.message : String(error);
+          await this.options.notify?.('release_failed', `HIVEMIND release failed: ${job.modelId}`, `Repository ${job.releasePolicy.hfRepository} could not be prepared for job ${job.id}: ${reason.slice(0, 300)}`);
+          throw error;
+        }
+      }
+    }
+    const approved = await this.options.store.recordAutoReleaseDecision(jobId);
+    if (approved.releasePolicy.mode === 's3_artifact_only') return this.publishApproved(approved);
+    return this.startBackgroundPublish(approved);
+  }
+
   /** True while a publication for the job runs in this process. */
   isPublishing(jobId: string): boolean {
     return this.publishing.has(jobId);
@@ -795,7 +839,8 @@ export class ModelFactoryOrchestrator {
       await this.options.notify?.('release_failed', `HIVEMIND release failed: ${decided.modelId}`, `Job ${decided.id} (${decided.releasePolicy.hfRepository ?? 's3'}) could not be published: ${reason.slice(0, 500)}`);
       throw new DomainError(`Release publication failed: ${reason.slice(0, 300)}`, 502);
     }
-    const released = await this.options.store.recordReleasePublication(decided.id, publication);
+    const approvedBy = decided.releaseDecision?.reason.startsWith('Auto-publish policy') ? 'auto_publish_policy' : 'operator';
+    const released = await this.options.store.recordReleasePublication(decided.id, { ...publication, approvedBy });
     await this.options.notify?.(
       'release_published',
       `HIVEMIND released ${decided.modelId}`,

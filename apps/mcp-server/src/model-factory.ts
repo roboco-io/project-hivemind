@@ -172,6 +172,9 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
           hfRevision: z.string().min(1).max(120).optional(),
           visibility: z.enum(['private', 'public']),
           releaseCheckCommand: z.array(z.string().min(1).max(1000)).min(1).max(32),
+          // Publish without an operator once the independent verifier passes. Only for repositories under
+          // the operator's auto-publish prefixes; otherwise registration is refused.
+          autoPublish: z.literal(true).optional(),
         }),
       }),
       annotations: mutation,

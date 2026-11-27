@@ -385,6 +385,9 @@ try {
     ? new NotificationGate(createAwsSnsNotifier({ topicArn: notifyTopicArn, credentials: createEcsTaskCredentialsProvider(), redact: [operatorToken, workerToken, ...(agentToken ? [agentToken] : [])] }))
     : undefined;
   const modelFactoryOrchestratorFactory = createAwsModelFactoryOrchestratorFactory(notifications);
+  // Auto-publish (issue #20) is allowed only into these Hugging Face repository prefixes, e.g. "roboco-io/".
+  const modelFactoryAutoPublishRepoPrefixes = (process.env.HIVEMIND_MF_AUTO_PUBLISH_REPO_PREFIXES ?? '')
+    .split(',').map((p) => p.trim()).filter((p) => /^[A-Za-z0-9][A-Za-z0-9_.-]*\/$/.test(p));
   const modelFactoryBudgetCapMicros = process.env.HIVEMIND_MF_BUDGET_CAP_MICROS
     ? Number(process.env.HIVEMIND_MF_BUDGET_CAP_MICROS)
     : undefined;
@@ -533,7 +536,7 @@ try {
   };
 
   const agentCredentials = createAgentCredentialsOptions();
-  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(modelFactoryRepository ? { modelFactoryRepository } : {}),...(deliveryRepository ? { deliveryRepository } : {}),collabRepo,collabOrchestratorFactory,...(agentCredentials ? { agentCredentials } : {}),...(agentToken ? { agentToken } : {}),...(notifications ? { notifications } : {})});
+  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(modelFactoryAutoPublishRepoPrefixes.length ? { modelFactoryAutoPublishRepoPrefixes } : {}),...(modelFactoryRepository ? { modelFactoryRepository } : {}),...(deliveryRepository ? { deliveryRepository } : {}),collabRepo,collabOrchestratorFactory,...(agentCredentials ? { agentCredentials } : {}),...(agentToken ? { agentToken } : {}),...(notifications ? { notifications } : {})});
   const address = await app.listen({host,port});
   console.log(`HIVEMIND control service: ${address}`);
   for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,() => { void app!.close(); });

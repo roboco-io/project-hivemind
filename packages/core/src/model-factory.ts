@@ -325,13 +325,30 @@ export function validateModelReleasePolicy(policy: ModelReleasePolicy): ModelRel
     throw new DomainError('releasePolicy.releaseCheckCommand requires 1..32 arguments', 400);
   }
   const releaseCheckCommand = policy.releaseCheckCommand.map((arg) => text(arg, 'releaseCheckCommand arg', 1000));
+  const raw = policy as unknown as Record<string, unknown>;
+  if (raw.autoPublish !== undefined && raw.autoPublish !== true && raw.autoPublish !== false) {
+    throw new DomainError('releasePolicy.autoPublish must be a boolean', 400);
+  }
   return {
     mode: policy.mode,
     ...(hfRepository ? { hfRepository } : {}),
     ...(hfRevision ? { hfRevision } : {}),
     visibility: policy.visibility,
     releaseCheckCommand,
+    ...(raw.autoPublish === true ? { autoPublish: true as const } : {}),
   };
+}
+
+/**
+ * Whether a release policy may publish without an operator (issue #20). An S3-only release may always;
+ * a Hugging Face release only into a repository under one of the operator's prefixes (for example
+ * `roboco-io/`). An empty prefix list allows none.
+ */
+export function autoPublishAllowed(policy: ModelReleasePolicy, repoPrefixes: readonly string[]): boolean {
+  if (policy.autoPublish !== true) return false;
+  if (policy.mode === 's3_artifact_only') return true;
+  const repo = policy.hfRepository ?? '';
+  return repoPrefixes.some((prefix) => /^[A-Za-z0-9][A-Za-z0-9_.-]*\/$/.test(prefix) && repo.startsWith(prefix));
 }
 
 export function computeModelFactoryApprovalFingerprint(spec: {
@@ -372,12 +389,15 @@ export function computeModelFactoryApprovalFingerprint(spec: {
 export interface ModelFactoryStoreOptions {
   now?: () => number;
   globalBudgetCapMicros?: number;
+  /** Hugging Face repository prefixes where `autoPublish` is allowed (issue #20). Default: none. */
+  autoPublishRepoPrefixes?: readonly string[];
 }
 
 export class ModelFactoryStore {
   private readonly repository: ModelFactoryRepository;
   private readonly now: () => number;
   private readonly globalBudgetCapMicros: number;
+  private readonly autoPublishRepoPrefixes: readonly string[];
   /** Set only while the synchronous body of a repository transaction runs. */
   private activeTx: ModelFactoryTxState | null = null;
 
@@ -388,6 +408,7 @@ export class ModelFactoryStore {
   constructor(storage: string | ModelFactoryRepository = ':memory:', options: ModelFactoryStoreOptions = {}) {
     this.now = options.now ?? Date.now;
     this.globalBudgetCapMicros = options.globalBudgetCapMicros ?? DEFAULT_GLOBAL_BUDGET_CAP_MICROS;
+    this.autoPublishRepoPrefixes = [...(options.autoPublishRepoPrefixes ?? [])];
     if (!Number.isSafeInteger(this.globalBudgetCapMicros) || this.globalBudgetCapMicros < 1) {
       throw new DomainError('Invalid globalBudgetCapMicros', 400);
     }
@@ -527,6 +548,9 @@ export class ModelFactoryStore {
       }
       const compute = validateTrainingComputeSpec(input.compute, modelId);
       const releasePolicy = validateModelReleasePolicy(input.releasePolicy);
+      if (releasePolicy.autoPublish && !autoPublishAllowed(releasePolicy, this.autoPublishRepoPrefixes)) {
+        throw new DomainError('releasePolicy.autoPublish is not allowed for this repository on this Control Plane', 403);
+      }
       const approvalFingerprint = computeModelFactoryApprovalFingerprint({
         modelId,
         repository,
@@ -882,6 +906,47 @@ export class ModelFactoryStore {
     });
   }
 
+  /** True when the job may be approved by the auto-publish policy right now (issue #20). */
+  isAutoPublishEligible(job: ModelFactoryJob): boolean {
+    return (
+      job.status === 'awaiting_release_approval' &&
+      autoPublishAllowed(job.releasePolicy, this.autoPublishRepoPrefixes) &&
+      job.releaseAttestation?.attestationSource === 'independent_verifier' &&
+      job.releaseAttestation.releaseCheckPassed === true &&
+      Boolean(job.receipt) &&
+      job.releaseAttestation.manifestDigest === job.receipt!.manifestDigest
+    );
+  }
+
+  /**
+   * Approves the release on behalf of the auto-publish policy. Allowed only when the policy asked for it,
+   * the repository is under an allowed prefix (checked again now, in case the operator narrowed it), and
+   * the independent verifier passed the release check on the receipted artifacts.
+   */
+  async recordAutoReleaseDecision(id: string): Promise<ModelFactoryJob> {
+    return this.tx(() => {
+      const job = this.load(id);
+      if (!this.isAutoPublishEligible(job)) {
+        throw new DomainError(`Job ${id} is not eligible for automatic publication`, 409);
+      }
+      job.releaseDecision = {
+        decision: 'approve',
+        openedRawArtifacts: false,
+        durationMinutes: 0,
+        reason: 'Auto-publish policy: the independent verifier passed the release check',
+        decidedAt: this.timestamp(),
+      };
+      job.status = 'release_approved';
+      job.waitReason = null;
+      const saved = this.save(job);
+      this.emit(saved.id, 'model_factory.release_auto_approved', {
+        repository: job.releasePolicy.hfRepository ?? null,
+        manifestDigest: job.receipt!.manifestDigest,
+      });
+      return saved;
+    });
+  }
+
   async recordReleaseDecision(id: string, input: Omit<ModelReleaseDecision, 'decidedAt'>): Promise<ModelFactoryJob> {
     return this.tx(() => {
       const job = this.load(id);
@@ -970,6 +1035,8 @@ export class ModelFactoryStore {
         ...(publication.revision ? { revision: text(publication.revision, 'revision', 120) } : {}),
         ...(publication.commitSha ? { commitSha: text(publication.commitSha, 'commitSha', 64) } : {}),
         ...(publication.url ? { url: text(publication.url, 'url', 512) } : {}),
+        ...(Number.isSafeInteger(publication.verifiedFiles) && publication.verifiedFiles! >= 0 ? { verifiedFiles: publication.verifiedFiles } : {}),
+        ...(publication.approvedBy === 'operator' || publication.approvedBy === 'auto_publish_policy' ? { approvedBy: publication.approvedBy } : {}),
         manifestDigest: digest,
         publishedAt: text(publication.publishedAt, 'publishedAt', 64),
       };

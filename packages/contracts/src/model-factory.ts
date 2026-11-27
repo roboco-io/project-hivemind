@@ -124,6 +124,11 @@ export interface ModelReleasePolicy {
   hfRevision?: string;
   visibility: 'private' | 'public';
   releaseCheckCommand: string[];
+  /**
+   * Publish without an operator approval once the independent verifier passed the release check
+   * (issue #20). Allowed only for repositories under the operator's auto-publish prefixes.
+   */
+  autoPublish?: true;
 }
 
 export type ModelReleaseAttestationSource = 'independent_verifier' | 'operator_self_reported';
@@ -159,6 +164,10 @@ export interface ModelReleasePublication {
   url?: string;
   manifestDigest: string;
   publishedAt: string;
+  /** Files whose hash Hugging Face reported back equal to the receipt after the commit. */
+  verifiedFiles?: number;
+  /** Who approved the release: an operator, or the auto-publish policy after the independent verifier. */
+  approvedBy?: 'operator' | 'auto_publish_policy';
 }
 
 export interface ModelFactoryCostRecord {

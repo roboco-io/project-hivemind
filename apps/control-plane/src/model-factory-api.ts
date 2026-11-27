@@ -132,7 +132,17 @@ export function registerModelFactoryRoutes(app: FastifyInstance, options: ModelF
   app.post<{ Params: { id: string }; Body: SubmitModelReleaseAttestation }>(
     '/api/model-factory/jobs/:id/verifier-attestation',
     { onRequest: workerOnly, bodyLimit: 32768 },
-    async (request) => store.recordReleaseAttestation(request.params.id, request.body, 'independent_verifier'),
+    async (request) => {
+      const job = await store.recordReleaseAttestation(request.params.id, request.body, 'independent_verifier');
+      // Auto-publish (issue #20): an eligible job is published without an operator. The verifier's answer
+      // does not wait for it; a failure here is retried by the periodic wake.
+      if (orchestrator && store.isAutoPublishEligible(job)) {
+        void orchestrator.autoReleaseIfEligible(job.id, AbortSignal.timeout(60_000)).catch((error) => {
+          console.error(JSON.stringify({ event: 'hivemind.mf_auto_publish.error', jobId: job.id, message: error instanceof Error ? error.message.slice(0, 300) : String(error) }));
+        });
+      }
+      return job;
+    },
   );
 
   app.post<{ Params: { id: string }; Body: Omit<ModelReleaseDecision, 'decidedAt'> }>(
