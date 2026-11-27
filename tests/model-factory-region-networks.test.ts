@@ -232,3 +232,57 @@ test('createAwsPublicAmiResolver signs AmazonSSM.GetParameter per region and rej
   await assert.rejects(() => resolver.resolveAmiId('us-west-2', DLAMI_PARAM), /valid AMI ID/);
   assert.equal(calls.length, 2);
 });
+
+test('when every subnet has no Spot capacity the job is recorded as failed and its budget is released, however long the AWS messages are', async () => {
+  const store = new ModelFactoryStore(':memory:', { globalBudgetCapMicros: 2_000_000 });
+  // The real message of 2026-11-27 (g6.xlarge, us-east-2). Three of them joined were longer than the
+  // 1000-character limit of the failure reason; recording the failure then threw, and the job stayed
+  // `training_queued` with its budget reserved.
+  const awsMessage =
+    'AWS EC2 RunInstances failed (InsufficientInstanceCapacity): We currently do not have sufficient g6.xlarge capacity in the Availability Zone you requested (us-east-2a). ' +
+    'Our system will be working on provisioning additional capacity. You can currently get g6.xlarge capacity by not specifying an Availability Zone in your request or choosing us-east-2b, us-east-2c.';
+  const ec2 = fakeEc2({ 'us-east-2': awsMessage });
+  const details: string[] = [];
+  const orchestrator = new ModelFactoryOrchestrator({
+    store,
+    ec2: ec2.port,
+    s3: emptyS3,
+    onPlacementAttempt: (a) => void details.push(a.detail ?? ''),
+    regionNetworks: {
+      'us-east-2': { subnetIds: ['subnet-0bedc9f4179d6205f', 'subnet-0c829ce6bf93df89f', 'subnet-051b400e25bc0b9f0', 'subnet-0aaaaaaaaaaaaaaa1'], securityGroupIds: ['sg-0e3ac45935e27429c'] },
+    },
+  });
+  try {
+    const job = await store.create(jobInput({}));
+    assert.ok(awsMessage.length * 4 > 1000);
+    const result = await orchestrator.approveAndLaunchTraining(job.id, job.approvalFingerprint, 'ok');
+    assert.equal(ec2.launches.length, 4, 'every subnet was tried');
+    assert.equal(result.status, 'failed');
+    assert.equal(result.waitReason, null);
+    assert.equal(result.cost.settledMicros, 0, 'nothing ran, so nothing is charged');
+    assert.equal((await store.ledger()).totalReservedMicros, 0, 'the reservation is released');
+    // The stored reason names every attempt by place and AWS error code and fits the field.
+    assert.ok(result.failureReason!.length <= 1000);
+    assert.match(result.failureReason!, /No Spot capacity for .* in 4 placement attempt\(s\)/);
+    assert.equal(result.failureReason!.match(/InsufficientInstanceCapacity/g)!.length, 4);
+    assert.match(result.failureReason!, /us-east-2\/subnet-051b400e25bc0b9f0: InsufficientInstanceCapacity/);
+    // The full AWS text is still available in the placement log events.
+    assert.ok(details.every((d) => d.includes('provisioning additional capacity')));
+  } finally {
+    await store.close();
+  }
+});
+
+test('recording a failure never fails on its own length', async () => {
+  const store = new ModelFactoryStore(':memory:', { globalBudgetCapMicros: 2_000_000 });
+  try {
+    const job = await store.create(jobInput({}));
+    const failed = await store.fail(job.id, 'x'.repeat(5000), 'd'.repeat(5000));
+    assert.equal(failed.status, 'failed');
+    assert.equal(failed.failureReason!.length, 1000);
+    assert.ok(failed.failureReason!.endsWith('…'));
+    assert.equal(failed.diagnostics.at(-1)!.length, 1000);
+  } finally {
+    await store.close();
+  }
+});

@@ -222,7 +222,7 @@ export class ModelFactoryOrchestrator {
     try {
       this.options.onPlacementAttempt({
         ...attempt,
-        ...(attempt.detail !== undefined ? { detail: attempt.detail.slice(0, 200) } : {}),
+        ...(attempt.detail !== undefined ? { detail: attempt.detail.slice(0, 600) } : {}),
       });
     } catch {
       // An audit sink failure must never change the launch result.
@@ -411,7 +411,9 @@ export class ModelFactoryOrchestrator {
             });
           } catch (attemptError) {
             const msg = attemptError instanceof Error ? attemptError.message : String(attemptError);
-            attemptErrors.push(`${target.region}${subnetId ? `/${subnetId}` : ''}: ${msg}`);
+            // Short form for the job record: place and AWS error code. The full text goes to the log event below.
+            const code = /\(([A-Za-z.]+)\)/.exec(msg)?.[1] ?? msg.slice(0, 80);
+            attemptErrors.push(`${target.region}${subnetId ? `/${subnetId}` : ''}: ${code}`);
             // Only fail over on capacity/spot availability errors; immediately rethrow IAM/parameter/auth errors.
             const failover = /InsufficientInstanceCapacity|SpotMaxPriceTooLow|Unsupported|MaxSpotInstanceCountExceeded/i.test(msg);
             this.reportPlacementAttempt({
@@ -429,7 +431,7 @@ export class ModelFactoryOrchestrator {
         }
       }
 
-      throw new Error(`All candidate regions/subnets exhausted: ${attemptErrors.join(' | ')}`);
+      throw new Error(`No Spot capacity for ${approved.compute.instanceType} in ${attemptErrors.length} placement attempt(s): ${attemptErrors.join(' | ')}`);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       return await this.options.store.fail(approved.id, `EC2 Spot launch failed: ${msg}`);

@@ -122,3 +122,24 @@ test('hivemind_status on the default profile reports AWS-path counts and budget,
   assert.equal(refused.isError, true);
   assert.equal(refused.structuredContent, undefined);
 });
+
+test('hivemind_mf_create accepts candidate regions with a per-region AMI, so a job can leave a region without Spot capacity', async (t) => {
+  const { call } = await connect(t);
+  const compute = {
+    region: 'us-east-2', candidateRegions: ['us-east-2', 'us-east-1'], regionOverrides: { 'us-east-1': { amiId: 'ami-0bbbbbbbbbbbbbbb2' } },
+    instanceType: 'g6.xlarge', amiId: 'ami-0aaaaaaaaaaaaaaa1', maxLifetimeMs: 600_000, maxHourlyPriceUsd: 0.6, maxTotalCostMicros: 100_000,
+    s3ArtifactPrefix: 'models/smf-mcp-regions/runs/r1',
+  };
+  const created = await call('hivemind_mf_create', {
+    title: 'Candidate regions through MCP', modelId: 'smf-mcp-regions', repository: 'roboco-io/silicon-model-factory', baseCommit: 'a'.repeat(40),
+    compute, releasePolicy: { mode: 's3_artifact_only', visibility: 'private', releaseCheckCommand: ['node', 'check.mjs'] },
+  });
+  assert.ok(!created.isError, created.content[0]?.text);
+  assert.deepEqual(created.structuredContent!.job.compute.candidateRegions, ['us-east-2', 'us-east-1']);
+  assert.equal(created.structuredContent!.job.compute.regionOverrides['us-east-1'].amiId, 'ami-0bbbbbbbbbbbbbbb2');
+  const bad = await call('hivemind_mf_create', {
+    title: 'Bad override', modelId: 'smf-mcp-regions', repository: 'roboco-io/silicon-model-factory', baseCommit: 'a'.repeat(40),
+    compute: { ...compute, regionOverrides: { 'us-east-1': { amiId: 'not-an-ami' } } }, releasePolicy: { mode: 's3_artifact_only', visibility: 'private', releaseCheckCommand: ['node', 'check.mjs'] },
+  });
+  assert.equal(bad.isError, true);
+});

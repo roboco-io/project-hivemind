@@ -63,6 +63,12 @@ function normalizeRelativePath(raw: string, label: string): string {
  * A locale comparison would put `model/config.json` before `model/README.md`, and a byte-order sort on the
  * instance would then produce a different digest and the receipt would be refused.
  */
+/** Cuts a message to a stored field's limit and marks the cut. */
+function clip(value: unknown, max: number): string {
+  const str = (typeof value === 'string' ? value : String(value ?? '')).trim();
+  return str.length <= max ? str : `${str.slice(0, max - 1)}…`;
+}
+
 function byPathCodeUnits(a: { path: string }, b: { path: string }): number {
   return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
 }
@@ -920,12 +926,15 @@ export class ModelFactoryStore {
       if (TERMINAL_STATUSES.has(job.status)) {
         throw new DomainError(`Cannot fail model factory job in terminal state ${job.status}`, 409);
       }
-      const cleanReason = text(reason, 'reason', 1000);
+      // Recording a failure must not fail itself. A reason that is too long is cut, not refused: a refused
+      // reason would leave the job in its previous state with its budget still reserved.
+      const cleanReason = text(clip(reason, 1000) || 'Failed without a reason', 'reason', 1000);
       job.status = 'failed';
       job.waitReason = null;
       job.nextWakeAt = null;
       job.failureReason = cleanReason;
-      job.diagnostics.push(diagnostic ? text(diagnostic, 'diagnostic', 1000) : cleanReason);
+      const cleanDiagnostic = diagnostic ? clip(diagnostic, 1000) : '';
+      job.diagnostics.push(cleanDiagnostic ? text(cleanDiagnostic, 'diagnostic', 1000) : cleanReason);
       if (!job.instance && job.cost.settledMicros === null) {
         job.cost.settledMicros = 0;
         job.cost.instanceSeconds = 0;

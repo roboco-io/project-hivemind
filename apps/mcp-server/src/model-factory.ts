@@ -99,7 +99,7 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
     'hivemind_mf_create',
     {
       title: 'HIVEMIND 모델 팩토리 학습 작업 초안 등록',
-      description: '동적 AMI·인스턴스 타입·최대 수명·비용 상한과 공개 정책으로 학습 초안만 등록합니다.',
+      description: '동적 AMI·인스턴스 타입·최대 수명·비용 상한과 공개 정책으로 학습 초안만 등록합니다. 스팟 용량이 없을 때를 대비해 compute.candidateRegions에 다른 리전을 적을 수 있고, AMI는 리전마다 다르므로 그 리전의 AMI를 compute.regionOverrides에 적습니다.',
       inputSchema: z.strictObject({
         title: z.string().trim().min(1).max(160),
         modelId: z.string().trim().min(1).max(120),
@@ -107,6 +107,19 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
         baseCommit: hex40,
         compute: z.strictObject({
           region: z.string().min(4).max(32),
+          // Other regions the Control Plane may try, in Spot placement score order, when `region` has no capacity.
+          candidateRegions: z.array(z.string().min(4).max(32)).min(1).max(8).optional(),
+          // Per-region AMI, subnets and security groups. An AMI ID is valid in one region only.
+          regionOverrides: z
+            .record(
+              z.string().min(4).max(32),
+              z.strictObject({
+                amiId: z.string().regex(/^ami-[a-f0-9]{8,17}$/i).optional(),
+                subnetIds: z.array(z.string().regex(/^subnet-[a-f0-9]{8,17}$/i)).min(1).max(8).optional(),
+                securityGroupIds: z.array(z.string().regex(/^sg-[a-f0-9]{8,17}$/i)).min(1).max(5).optional(),
+              }),
+            )
+            .optional(),
           availabilityZoneId: z.string().min(4).max(24).optional(),
           instanceType: z.string().min(3).max(40),
           amiId: z.string().regex(/^ami-[a-f0-9]{8,17}$/i),
