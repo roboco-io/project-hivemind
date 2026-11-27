@@ -43,6 +43,7 @@ function harness() {
   const triggers = new AutonomyTriggerStore(':memory:', { now });
   const delivery = new DeliveryStore(':memory:', now, [REPO]);
   const dispatched: string[] = [];
+  const uploads: string[] = [];
   let failDispatch = false;
   const dispatcher = new AutonomyDispatcher({
     triggers,
@@ -52,11 +53,14 @@ function harness() {
       if (failDispatch) throw new Error('ECS RunTask failed');
       dispatched.push(taskId);
     },
+    uploadAcceptance: async (task) => {
+      uploads.push(task.id);
+    },
     primaryRegion: 'ap-northeast-2',
     now,
     log: () => {},
   });
-  return { triggers, delivery, dispatcher, dispatched, advance: (ms: number) => { clock += ms; }, failDispatch: (v: boolean) => { failDispatch = v; } };
+  return { triggers, delivery, dispatcher, dispatched, uploads, advance: (ms: number) => { clock += ms; }, failDispatch: (v: boolean) => { failDispatch = v; } };
 }
 
 test('a trigger is created disabled, validated, and only sends work once enabled', async () => {
@@ -78,6 +82,7 @@ test('a trigger is created disabled, validated, and only sends work once enabled
   assert.equal(task.executionPolicy?.hivemindAgentAccess, true);
   assert.deepEqual(task.routing?.allowedRegions, ['ap-northeast-2']);
   assert.deepEqual(h.dispatched, [task.id]);
+  assert.deepEqual(h.uploads, [task.id], 'the acceptance spec is uploaded before the worker starts');
   assert.equal((await h.triggers.get('smf')).lastTaskId, task.id);
 });
 

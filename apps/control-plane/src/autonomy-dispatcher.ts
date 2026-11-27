@@ -16,6 +16,8 @@ export interface AutonomyDispatcherOptions {
   prepare: (trigger: AutonomyTrigger, signal: AbortSignal) => Promise<PreparedSnapshot>;
   /** Starts the worker for an approved task (DeliveryOrchestrator.dispatchWorker). */
   dispatchWorker: (taskId: string, signal: AbortSignal) => Promise<unknown>;
+  /** Puts the task's acceptance spec where the verifier reads it (DeliveryOrchestrator.uploadAcceptanceSpec). */
+  uploadAcceptance: (task: DeliveryTask, signal: AbortSignal) => Promise<unknown>;
   /** Region the trigger's tasks run in; the agent token exists only on hub workers. */
   primaryRegion: string;
   now?: () => number;
@@ -83,6 +85,13 @@ export class AutonomyDispatcher {
       routing: { primaryRegion: this.options.primaryRegion, allowedRegions: [this.options.primaryRegion], workloadClass: 'cpu-arm-worker' },
       executionPolicy: { hivemindAgentAccess: true, maxIterationDurationMs: trigger.maxIterationDurationMs },
     });
+    // Same order as the delivery API: the verifier reads acceptance/<task>.json, so it must exist first.
+    try {
+      await this.options.uploadAcceptance(draft, signal);
+    } catch (error) {
+      await this.options.delivery.cancel(draft.id, `Acceptance spec upload failed: ${error instanceof Error ? error.message.slice(0, 300) : String(error)}`).catch(() => undefined);
+      throw error;
+    }
     // The operator approved this trigger's configuration once; each task it sends is approved by the trigger.
     await this.options.delivery.approve(draft.id, draft.approvalFingerprint, `Autonomy trigger ${trigger.id} (configured by the operator)`);
     await this.options.triggers.recordDispatch(trigger.id, draft.id, snapshot.baseCommit);
