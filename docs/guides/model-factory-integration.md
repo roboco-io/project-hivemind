@@ -221,6 +221,19 @@ Control Plane은 작업을 등록할 때 순서를 계산해 작업의 `placemen
 
 `agent` 프로필의 MCP 서버는 `~/.hivemind/aws-control-plane.json`(경로는 `HIVEMIND_CONTROL_PLANE_CONFIG_FILE`로 바꿀 수 있다)이 있으면 SSM 터널을 스스로 관리한다. 도구 호출이 연결 실패로 끝나면, 지금 실행 중인 Control Plane 작업으로 터널을 열거나 다시 열고 그 호출을 한 번 다시 시도한다. 첫 호출과 Spot 회수 뒤의 호출이 이렇게 붙는다. 이 프로필은 설정 파일의 `mode`와 관계없이 서비스의 desiredCount를 바꾸지 않는다. 서비스가 0이면 호출은 실패하고, 운영자가 서비스를 올려야 한다. 터널에 필요한 AWS 호출(`ecs:DescribeServices`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ssm:StartSession`)은 MCP 서버 프로세스가 설정 파일의 `profile`로 실행하며, 도구 결과에는 자격 증명이 들어가지 않는다. 이 호출은 에이전트의 셸 명령이 아니므로 클라이언트 훅이 막지 않는다. 그래서 설정 파일의 `profile`은 관리자 프로필 대신 위 네 권한만 가진 프로필을 쓰는 것이 좋다.
 
+Hub 스택은 이 용도의 IAM 역할 `<prefix>-mcp-tunnel-role`을 만든다(스택 출력 `McpTunnelRoleArn`). 이 역할은 Control Plane 서비스 조회, 그 클러스터의 작업 목록·조회, 그 클러스터 작업으로의 `AWS-StartPortForwardingSession` 세션 시작, 자기 세션의 종료·재개만 할 수 있다. 서비스 규모 변경(`ecs:UpdateService`), ECS Exec 셸, 비밀 조회는 할 수 없다. 신뢰 정책은 같은 계정의 주체가 맡을 수 있게 열려 있고, 실제로 맡을 수 있는 주체는 그 주체의 `sts:AssumeRole` 권한이 정한다. 최대 세션 시간은 12시간이다. AWS CLI 프로필로 이 역할을 맡게 하면, CLI가 만료 전에 자격 증명을 새로 받으므로 MCP 서버가 터널을 오래 유지할 수 있다.
+
+```ini
+# ~/.aws/config
+[profile hivemind-mcp-tunnel]
+role_arn = <McpTunnelRoleArn>
+source_profile = <운영자 프로필>
+region = ap-northeast-2
+duration_seconds = 43200
+```
+
+그다음 `~/.hivemind/aws-control-plane.json`의 `profile`을 `hivemind-mcp-tunnel`로 바꾼다. 이 역할로는 서비스를 올리거나 내릴 수 없으므로, 기본 프로필(운영자)의 MCP 서버가 서비스를 올려야 할 때는 운영자 프로필을 쓰는 별도 설정 파일(`HIVEMIND_CONTROL_PLANE_CONFIG_FILE`)이 필요하다. `source_profile`의 자격 증명은 여전히 같은 컴퓨터에 있으므로, 에이전트가 그 프로필을 직접 쓰지 못하게 막는 것은 실행 환경(훅, 별도 OS 사용자)의 몫이다.
+
 ```json
 {
   "mcpServers": {
