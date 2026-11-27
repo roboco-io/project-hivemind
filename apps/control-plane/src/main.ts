@@ -37,6 +37,8 @@ import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js
 import type { DeliveryStore } from '../../../packages/core/src/delivery.js';
 import type { ModelFactoryStore } from '../../../packages/core/src/model-factory.js';
 import type { AgentCollabService } from '../../../packages/core/src/agent-collab.js';
+import { createAwsSnsNotifier, type NotificationKind } from '../../../packages/adapters/src/aws-sns-notifier.js';
+import { NotificationGate } from './notifications-api.js';
 import { createAwsAgentCredentialIssuer } from '../../../packages/adapters/src/aws-agent-access.js';
 import { parseEnabledPurposes, validateCatalogConfig } from '../../../packages/core/src/agent-credential-purposes.js';
 
@@ -240,7 +242,7 @@ function createAgentCredentialsOptions() {
   return { catalog, issuer, region };
 }
 
-function createAwsModelFactoryOrchestratorFactory() {
+function createAwsModelFactoryOrchestratorFactory(notifications?: NotificationGate) {
   const region = process.env.HIVEMIND_AWS_REGION?.trim();
   const bucket = process.env.HIVEMIND_ARTIFACTS_BUCKET?.trim();
   if (!region || !bucket) return undefined;
@@ -319,6 +321,7 @@ function createAwsModelFactoryOrchestratorFactory() {
       ec2,
       s3,
       ...(process.env.HIVEMIND_MF_TRAINING_ROLE_ID?.trim() ? { trainingRoleId: process.env.HIVEMIND_MF_TRAINING_ROLE_ID.trim() } : {}),
+      ...(notifications ? { notify: (kind: NotificationKind, subject: string, message: string) => notifications.sendQuietly(kind, subject, message) } : {}),
       artifactsBucket: bucket,
       artifactsRegion: region,
       ...(regionNetworks ? { regionNetworks, amiResolver } : {}),
@@ -376,7 +379,12 @@ try {
     createHash('sha256').update(JSON.stringify({scope:configurationScope(config),checks})).digest('hex'),
     createCloudWorkflowPort(config,checks)) : undefined;
   const deliveryOrchestratorFactory = createAwsDeliveryOrchestratorFactory(port, [operatorToken, workerToken, ...(agentToken ? [agentToken] : [])]);
-  const modelFactoryOrchestratorFactory = createAwsModelFactoryOrchestratorFactory();
+  // SNS notifications (issue #20): enabled when the operator configured a topic.
+  const notifyTopicArn = process.env.HIVEMIND_NOTIFY_TOPIC_ARN?.trim();
+  const notifications = notifyTopicArn
+    ? new NotificationGate(createAwsSnsNotifier({ topicArn: notifyTopicArn, credentials: createEcsTaskCredentialsProvider(), redact: [operatorToken, workerToken, ...(agentToken ? [agentToken] : [])] }))
+    : undefined;
+  const modelFactoryOrchestratorFactory = createAwsModelFactoryOrchestratorFactory(notifications);
   const modelFactoryBudgetCapMicros = process.env.HIVEMIND_MF_BUDGET_CAP_MICROS
     ? Number(process.env.HIVEMIND_MF_BUDGET_CAP_MICROS)
     : undefined;
@@ -525,7 +533,7 @@ try {
   };
 
   const agentCredentials = createAgentCredentialsOptions();
-  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(modelFactoryRepository ? { modelFactoryRepository } : {}),...(deliveryRepository ? { deliveryRepository } : {}),collabRepo,collabOrchestratorFactory,...(agentCredentials ? { agentCredentials } : {}),...(agentToken ? { agentToken } : {})});
+  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(modelFactoryRepository ? { modelFactoryRepository } : {}),...(deliveryRepository ? { deliveryRepository } : {}),collabRepo,collabOrchestratorFactory,...(agentCredentials ? { agentCredentials } : {}),...(agentToken ? { agentToken } : {}),...(notifications ? { notifications } : {})});
   const address = await app.listen({host,port});
   console.log(`HIVEMIND control service: ${address}`);
   for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,() => { void app!.close(); });

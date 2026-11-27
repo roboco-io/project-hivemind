@@ -24,6 +24,7 @@ import type { CollabOrchestrator } from './collab-orchestrator.js';
 import { registerDeliveryRoutes } from './delivery-api.js';
 import { registerModelFactoryRoutes } from './model-factory-api.js';
 import { registerAgentCredentialRoutes, type AgentCredentialsApiOptions } from './agent-access-api.js';
+import { registerNotificationRoutes, type NotificationGate } from './notifications-api.js';
 import type { DeliveryOrchestrator } from './delivery-orchestrator.js';
 import type { ModelFactoryOrchestrator } from './model-factory-orchestrator.js';
 import type { CreateTask, RunResult, RepositoryPolicy, Provider, Runtime } from '../../../packages/contracts/src/index.js';
@@ -31,7 +32,7 @@ import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js
 
 import {projectTeamResponse,type CloudWorkflowControl} from '../../../packages/contracts/src/workflow.js';
 
-export interface AppOptions { /** Storage for DeliveryStore. Default: SQLite at dbPath. */ deliveryRepository?: DeliveryRepository; /** Storage for ModelFactoryStore. Default: SQLite at dbPath. */ modelFactoryRepository?: ModelFactoryRepository; autonomousCloudProxy?:AutonomousCloudProxy; localExternalService?:AutonomousExternalService; dbPath?: string; operatorToken?: string; workerToken?: string; /** Model Factory agent token; see registerModelFactoryRoutes. */ agentToken?: string; nativeReporterToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl; deliveryOrchestratorFactory?: (store: DeliveryStore) => DeliveryOrchestrator; modelFactoryOrchestratorFactory?: (store: ModelFactoryStore) => ModelFactoryOrchestrator; modelFactoryBudgetCapMicros?: number; modelFactoryWakePollMs?: number; collabRepo?: CollaborationStoragePort; collabOrchestratorFactory?: (service: AgentCollabService) => CollabOrchestrator; /** Scoped AWS credentials for agents. Absent: the routes are not registered. */ agentCredentials?: Omit<AgentCredentialsApiOptions, 'operatorToken'> }
+export interface AppOptions { /** Storage for DeliveryStore. Default: SQLite at dbPath. */ deliveryRepository?: DeliveryRepository; /** Storage for ModelFactoryStore. Default: SQLite at dbPath. */ modelFactoryRepository?: ModelFactoryRepository; autonomousCloudProxy?:AutonomousCloudProxy; localExternalService?:AutonomousExternalService; dbPath?: string; operatorToken?: string; workerToken?: string; /** Model Factory agent token; see registerModelFactoryRoutes. */ agentToken?: string; nativeReporterToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl; deliveryOrchestratorFactory?: (store: DeliveryStore) => DeliveryOrchestrator; modelFactoryOrchestratorFactory?: (store: ModelFactoryStore) => ModelFactoryOrchestrator; modelFactoryBudgetCapMicros?: number; modelFactoryWakePollMs?: number; collabRepo?: CollaborationStoragePort; collabOrchestratorFactory?: (service: AgentCollabService) => CollabOrchestrator; /** Scoped AWS credentials for agents. Absent: the routes are not registered. */ agentCredentials?: Omit<AgentCredentialsApiOptions, 'operatorToken'>; /** SNS notifications (issue #20). Absent: the route is not registered. */ notifications?: NotificationGate }
 const string = {type:'string',minLength:1,maxLength:4000};
 const credentials = {workerId:{...string,maxLength:120},leaseToken:{...string,maxLength:120}};
 const body = (properties: Record<string,unknown>, required = Object.keys(properties)) => ({body:{type:'object',additionalProperties:false,required,properties}});
@@ -94,6 +95,7 @@ export function buildApp(options: AppOptions = {}) {
   registerDeliveryRoutes(app,{store:deliveryStore,operatorToken,workerToken,orchestrator:deliveryOrchestrator});
   registerModelFactoryRoutes(app,{store:modelFactoryStore,operatorToken,workerToken,...(agentToken?{agentToken}:{}),orchestrator:modelFactoryOrchestrator});
   registerCollabRoutes(app,{service:collabService,operatorToken,workerToken,orchestrator:collabOrchestrator});
+  if (options.notifications) registerNotificationRoutes(app,{gate:options.notifications,operatorToken,...(agentToken?{agentToken}:{})});
   if (options.agentCredentials) registerAgentCredentialRoutes(app,{...options.agentCredentials,operatorToken,...(agentToken?{agentToken}:{})});
   app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});
   app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks/*',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});

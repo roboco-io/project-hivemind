@@ -158,6 +158,8 @@ export interface ModelFactoryOrchestratorOptions {
    * `staging/<role id>:<instance id>/` and the Control Plane copies checked artifacts to the job prefix.
    */
   trainingRoleId?: string;
+  /** Best-effort notification of release and budget events (issue #20). Never throws. */
+  notify?: (kind: 'release_published' | 'release_failed' | 'budget_exhausted', subject: string, message: string) => Promise<void>;
 }
 
 const MAX_INLINE_INPUT_VERIFY_BYTES = 5 * 1024 * 1024; // 5 MiB full SHA-256 preflight; larger verified via HEAD size + instance-side SHA-256
@@ -330,7 +332,15 @@ export class ModelFactoryOrchestrator {
     reason: string,
     signal?: AbortSignal,
   ): Promise<ModelFactoryJob> {
-    const approved = await this.options.store.approveTraining(jobId, approvalFingerprint, reason);
+    let approved: ModelFactoryJob;
+    try {
+      approved = await this.options.store.approveTraining(jobId, approvalFingerprint, reason);
+    } catch (error) {
+      if (error instanceof Error && /Central cost cap exceeded/.test(error.message)) {
+        await this.options.notify?.('budget_exhausted', 'HIVEMIND Model Factory budget cap reached', `Training approval for ${jobId} was refused: ${error.message.slice(0, 500)}`);
+      }
+      throw error;
+    }
     // Rank the approved regions and their AZs by Spot placement score stability with the newest feed.
     // When the feed cannot rank them now, keep the plan made at registration, if that one was ranked.
     let plan = await this.planPlacement(approved, signal);
@@ -782,8 +792,15 @@ export class ModelFactoryOrchestrator {
       const reason = error instanceof Error ? error.message : String(error);
       console.error(JSON.stringify({ event: 'hivemind.mf_release_publish.error', jobId: decided.id, message: reason.slice(0, 500) }));
       await this.options.store.recordPublicationFailure(decided.id, reason);
+      await this.options.notify?.('release_failed', `HIVEMIND release failed: ${decided.modelId}`, `Job ${decided.id} (${decided.releasePolicy.hfRepository ?? 's3'}) could not be published: ${reason.slice(0, 500)}`);
       throw new DomainError(`Release publication failed: ${reason.slice(0, 300)}`, 502);
     }
-    return await this.options.store.recordReleasePublication(decided.id, publication);
+    const released = await this.options.store.recordReleasePublication(decided.id, publication);
+    await this.options.notify?.(
+      'release_published',
+      `HIVEMIND released ${decided.modelId}`,
+      `Job ${decided.id} was published to ${publication.url ?? publication.repository ?? 'S3'} (manifest ${publication.manifestDigest.slice(0, 12)}).`,
+    );
+    return released;
   }
 }
