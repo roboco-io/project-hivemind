@@ -188,7 +188,38 @@ Control Plane은 작업을 등록할 때 순서를 계산해 작업의 `placemen
 
 감사 기록은 Control Plane 로그(CloudWatch)에 `hivemind.agent_credentials.issued`, `denied`, `failed` 이벤트로 남는다. 기록에는 목적, 대상, 정책 해시, 만료 시각, `ScopedSessionDescription`만 들어가고 자격 증명과 정책 본문은 들어가지 않는다. CloudTrail에도 `GetScopedCredentials` 이벤트가 `requestParameters.scopedSessionDescription`(`hivemind-agent <목적> <modelId>`)과 함께 남는다.
 
-한계가 있다. 이 도구는 운영자 토큰으로 Control Plane을 호출한다. 운영자 토큰은 학습 승인, 공개 승인, 취소를 포함한 모든 운영자 API를 호출할 수 있다. 따라서 에이전트가 운영자 토큰을 가진 지금 구성에서는 AWS 권한은 좁아지지만 Control Plane 안의 운영자 권한은 좁아지지 않는다. 에이전트 전용 토큰으로 운영자 동작을 나누는 일은 이 기능에 포함되지 않았다.
+### 에이전트 전용 토큰 (`agent-token`, MCP 프로필 `agent`)
+
+모델 팩토리 에이전트는 운영자 토큰 대신 에이전트 전용 토큰으로 Control Plane을 호출한다. 토큰은 Secrets Manager의 `<prefix>/agent-token`에 자동 생성되고, Control Plane만 읽는다. `npm run bootstrap`의 로컬 설정 단계가 이 값을 `~/.hivemind/aws-agent-token.json`(권한 600)에 쓴다.
+
+| 에이전트 토큰으로 할 수 있는 일 | 운영자 토큰만 할 수 있는 일 |
+|---|---|
+| Model Factory 작업 목록·조회·원장 조회 | 공개 승인·반려(`approve-release`), 다시 게시(`publish-release`) |
+| 학습 초안 등록, 학습 승인(`approve-training`) | 운영자 자체 검증 기록(`verify-release`), 영수증 직접 기록(`receipt`) |
+| 점검(`wake`), 독립 검증기 기동, 작업 취소 | 만료 인스턴스 일괄 정리(`sweep-expired`) |
+| 최소 권한 AWS 자격 증명 발급 | SW 전달, 협업 세션, 그 밖의 모든 운영자 API |
+
+학습 승인을 에이전트에 허용한 것은 사람의 결정(2026-11-27)이다. 과금은 중앙 예산 상한과 작업별 비용 상한이 막는다. Hugging Face 공개는 사람만 승인한다.
+
+에이전트의 MCP 설정은 다음과 같다. `dist/`는 HIVEMIND 저장소에서 `npm run build`로 만든다. `HIVEMIND_AGENT_TOKEN_FILE`을 주면 프로필은 반드시 `agent`여야 하고, 운영자 토큰 설정을 함께 주면 MCP 서버가 시작을 거부한다. `agent` 프로필의 도구는 상태 조회, Model Factory 도구 8개(공개 승인·다시 게시 제외), 최소 권한 자격 증명 발급으로 모두 10개다. Control Plane 기동·종료 도구는 없다.
+
+```json
+{
+  "mcpServers": {
+    "hivemind": {
+      "command": "node",
+      "args": ["<HIVEMIND 저장소>/dist/apps/mcp-server/src/main.js"],
+      "env": {
+        "HIVEMIND_MCP_PROFILE": "agent",
+        "HIVEMIND_AGENT_TOKEN_FILE": "<홈>/.hivemind/aws-agent-token.json",
+        "HIVEMIND_API_URL": "http://127.0.0.1:4311"
+      }
+    }
+  }
+}
+```
+
+**한계.** 토큰을 나눠도 같은 컴퓨터의 같은 OS 사용자로 에이전트를 실행하면, 에이전트는 운영자 토큰 파일(`~/.hivemind/aws-operator-token.json`)이나 관리자 AWS 프로필을 직접 읽을 수 있다. 이 경계가 실제로 효과를 내려면 에이전트가 운영자 토큰 파일과 관리자 AWS 자격 증명을 읽을 수 없어야 한다. 예를 들어 에이전트를 별도 OS 사용자나 컨테이너로 실행하고, 그 환경에는 에이전트 토큰 파일만 둔다. 이 분리는 실행 환경의 설정이며 HIVEMIND 코드가 강제하지 않는다.
 
 ### 학습 인스턴스의 쓰기 범위 (`staging/`)
 
