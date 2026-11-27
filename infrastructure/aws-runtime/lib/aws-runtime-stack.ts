@@ -70,6 +70,7 @@ export class AwsRuntimeStack extends Stack {
   readonly verifierRole: iam.Role;
   readonly trainingInstanceRole: iam.Role;
   readonly trainingInstanceProfile: iam.CfnInstanceProfile;
+  readonly agentCredentialsParentRole: iam.Role;
   readonly operatorTokenSecret: secretsmanager.Secret;
   readonly workerTokenSecret: secretsmanager.Secret;
   readonly modelAuthSecret: secretsmanager.Secret;
@@ -129,6 +130,8 @@ export class AwsRuntimeStack extends Stack {
       lifecycleRules: [
         { id: 'expire-bundles', prefix: 'bundles/', expiration: Duration.days(14) },
         { id: 'expire-sessions', prefix: 'sessions/', expiration: Duration.days(30) },
+        // Training instances write here; the Control Plane copies checked artifacts to models/ on receipt.
+        { id: 'expire-training-staging', prefix: 'staging/', expiration: Duration.days(14) },
       ],
     });
 
@@ -288,6 +291,7 @@ export class AwsRuntimeStack extends Stack {
     this.artifactsBucket.grantRead(this.controlPlaneRole, 'patches/*');
     this.artifactsBucket.grantRead(this.controlPlaneRole, 'attestations/*');
     this.artifactsBucket.grantReadWrite(this.controlPlaneRole, 'models/*');
+    this.artifactsBucket.grantRead(this.controlPlaneRole, 'staging/*');
     this.githubDraftPrSecret.grantRead(this.controlPlaneRole);
     this.hfReleaseTokenSecret.grantRead(this.controlPlaneRole);
     // Aurora DSQL IAM authentication for Control Plane ONLY (workers communicate strictly through Control Plane HTTP API).
@@ -395,7 +399,8 @@ export class AwsRuntimeStack extends Stack {
     this.artifactsBucket.grantRead(this.verifierRole, 'models/*');
 
     // 4. Model Factory EC2 Training Instance Role & Instance Profile:
-    // Strictly scoped to reading models/*/inputs/* and writing models/* (excluding inputs/*) + KMS key usage.
+    // Reads models/*/inputs/*; writes only staging/<role id>:<instance id>/*, so one job cannot overwrite
+    // another job's artifacts. The Control Plane copies checked artifacts to the job prefix. + KMS key usage.
     // Explicitly ZERO Secrets Manager, ZERO EC2 control, ZERO delivery bundles/patches/attestations access.
     this.trainingInstanceRole = new iam.Role(this, 'ModelFactoryTrainingInstanceRole', {
       roleName: `${prefix}-mf-training-instance-role`,
@@ -410,17 +415,18 @@ export class AwsRuntimeStack extends Stack {
     );
     this.trainingInstanceRole.addToPolicy(
       new iam.PolicyStatement({
-        sid: 'PutModelFactoryOutputsOnly',
+        sid: 'PutOwnInstanceStagingOnly',
         actions: ['s3:PutObject'],
-        resources: [this.artifactsBucket.arnForObjects('models/*')],
+        // For an EC2 instance role session aws:userid is "<role id>:<instance id>".
+        resources: [this.artifactsBucket.arnForObjects('staging/${aws:userid}/*')],
       }),
     );
     this.trainingInstanceRole.addToPolicy(
       new iam.PolicyStatement({
-        sid: 'DenyMutatingImmutableInputs',
+        sid: 'DenyWritingModelsDirectly',
         effect: iam.Effect.DENY,
         actions: ['s3:PutObject', 's3:DeleteObject'],
-        resources: [this.artifactsBucket.arnForObjects('models/*/inputs/*')],
+        resources: [this.artifactsBucket.arnForObjects('models/*')],
       }),
     );
     this.trainingInstanceRole.addToPolicy(
@@ -441,6 +447,66 @@ export class AwsRuntimeStack extends Stack {
         actions: ['iam:PassRole'],
         resources: [this.trainingInstanceRole.roleArn],
         conditions: { StringEquals: { 'iam:PassedToService': 'ec2.amazonaws.com' } },
+      }),
+    );
+
+    // 5. Parent role for agent credentials (issue #19). The Control Plane assumes it and calls
+    // GetScopedCredentials with a purpose policy, so every issued credential is the intersection of this
+    // role and that policy. This role holds only the union of the purpose templates.
+    this.agentCredentialsParentRole = new iam.Role(this, 'AgentCredentialsParentRole', {
+      roleName: `${prefix}-agent-credentials-parent-role`,
+      assumedBy: new iam.ArnPrincipal(this.controlPlaneRole.roleArn),
+      maxSessionDuration: Duration.hours(1),
+      description: 'Parent session for scoped agent credentials; never handed to an agent',
+    });
+    this.agentCredentialsParentRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'ScopeDownAtMost900Seconds',
+        actions: ['sts:GetScopedCredentials'],
+        resources: ['*'],
+        conditions: { NumericLessThanEquals: { 'sts:DurationSeconds': 900 } },
+      }),
+    );
+    this.agentCredentialsParentRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'SpotPlacementRead',
+        actions: ['ec2:GetSpotPlacementScores', 'ec2:DescribeSpotPriceHistory', 'ec2:DescribeInstanceTypeOfferings'],
+        resources: ['*'],
+      }),
+    );
+    this.agentCredentialsParentRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'ModelInputsUpload',
+        actions: ['s3:PutObject', 's3:GetObject'],
+        resources: [this.artifactsBucket.arnForObjects('models/*/inputs/*')],
+      }),
+    );
+    this.agentCredentialsParentRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'ModelArtifactsRead',
+        actions: ['s3:GetObject'],
+        resources: [this.artifactsBucket.arnForObjects('models/*/runs/*')],
+      }),
+    );
+    this.agentCredentialsParentRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'ListModelPrefixes',
+        actions: ['s3:ListBucket'],
+        resources: [this.artifactsBucket.bucketArn],
+        conditions: { StringLike: { 's3:prefix': ['models/*/inputs/*', 'models/*/runs/*'] } },
+      }),
+    );
+    this.agentCredentialsParentRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'ArtifactsKey',
+        actions: ['kms:GenerateDataKey', 'kms:Decrypt'],
+        resources: [artifactKey.keyArn],
+      }),
+    );
+    this.controlPlaneRole.addToPolicy(
+      new iam.PolicyStatement({
+        actions: ['sts:AssumeRole'],
+        resources: [this.agentCredentialsParentRole.roleArn],
       }),
     );
 
@@ -567,6 +633,10 @@ export class AwsRuntimeStack extends Stack {
         HIVEMIND_DSQL_REGION: cfg.region,
         ...(cfg.restrictedDsqlRoles ? { HIVEMIND_DSQL_USER: 'hm_control_plane', HIVEMIND_DSQL_MANAGE_SCHEMA: 'false' } : {}),
         HIVEMIND_MF_INSTANCE_PROFILE_ARN: this.trainingInstanceProfile.attrArn,
+        HIVEMIND_MF_TRAINING_ROLE_ID: this.trainingInstanceRole.roleId,
+        HIVEMIND_AGENT_CREDENTIALS_PARENT_ROLE_ARN: this.agentCredentialsParentRole.roleArn,
+        HIVEMIND_AGENT_CREDENTIAL_PURPOSES: 'spot-placement-read,model-inputs-upload,model-artifacts-read',
+        HIVEMIND_ARTIFACTS_KMS_KEY_ARN: artifactKey.keyArn,
         HIVEMIND_MF_ALLOWED_REGIONS: 'ap-northeast-2,us-east-2,us-east-1,us-west-2,ap-northeast-1',
         HIVEMIND_MF_BUDGET_CAP_MICROS: '500000000',
         ...(cfg.modelFactoryStorage === 'aurora-dsql' ? { HIVEMIND_MF_STORAGE: 'aurora-dsql' } : {}),

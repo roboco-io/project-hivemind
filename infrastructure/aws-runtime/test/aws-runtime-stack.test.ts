@@ -125,7 +125,7 @@ test('enforces strict 3-way secret separation across Control Plane, AI Worker, V
   assert.match(cpDoc, /ssmmessages:OpenDataChannel/);
   assert.doesNotMatch(cpDoc, /ModelSubscriptionAuthSecret/);
 
-  // Training instance role: reads models/*/inputs/*, writes models/* (with explicit Deny on inputs/*), uses KMS ONLY;
+  // Training instance role: reads models/*/inputs/*, writes only its own staging folder (Deny on models/*), uses KMS ONLY;
   // NEVER touches Secrets Manager, EC2 control, or delivery prefixes.
   assert.match(trainDoc, /models\/\*\/inputs\/\*/);
   assert.match(trainDoc, /"Effect":"Deny"/);
@@ -349,4 +349,66 @@ test('verifier role can read model artifacts for release verification but still 
       assert.ok(!JSON.stringify(statement.Resource).includes('/models/*'));
     }
   }
+});
+
+test('training instances write only their own staging folder and the Control Plane promotes from staging', () => {
+  const template = synth();
+  const policies = Object.values(template.findResources('AWS::IAM::Policy')) as { Properties: { Roles: unknown; PolicyDocument: { Statement: Record<string, unknown>[] } } }[];
+  const statementsOf = (marker: string) =>
+    policies.filter((p) => JSON.stringify(p.Properties.Roles).includes(marker)).flatMap((p) => p.Properties.PolicyDocument.Statement);
+  const train = statementsOf('ModelFactoryTrainingInstanceRole');
+  const put = train.find((st) => st.Sid === 'PutOwnInstanceStagingOnly');
+  assert.ok(put, 'staging put statement');
+  assert.match(JSON.stringify(put.Resource), /\/staging\/\$\{aws:userid\}\/\*/);
+  const deny = train.find((st) => st.Sid === 'DenyWritingModelsDirectly');
+  assert.equal(deny?.Effect, 'Deny');
+  assert.match(JSON.stringify(deny?.Resource), /\/models\/\*"/);
+  // No allow statement lets the instance put anywhere else.
+  for (const st of train.filter((st) => st.Effect === 'Allow')) {
+    if (JSON.stringify(st.Action).includes('s3:PutObject')) assert.equal(st.Sid, 'PutOwnInstanceStagingOnly');
+  }
+  const cp = JSON.stringify(statementsOf('ControlPlaneTaskRole'));
+  assert.match(cp, /\/staging\/\*/);
+  const env = JSON.stringify(template.findResources('AWS::ECS::TaskDefinition'));
+  assert.match(env, /HIVEMIND_MF_TRAINING_ROLE_ID/);
+  template.hasResourceProperties('AWS::S3::Bucket', {
+    LifecycleConfiguration: { Rules: Match.arrayWith([Match.objectLike({ Id: 'expire-training-staging', Prefix: 'staging/' })]) },
+  });
+});
+
+test('agent credentials parent role is separate, assumable only by the Control Plane and capped at 900 seconds', () => {
+  const template = synth();
+  const roles = template.findResources('AWS::IAM::Role') as Record<string, { Properties: { RoleName?: string; AssumeRolePolicyDocument: unknown; MaxSessionDuration?: number } }>;
+  const [parentId, parent] = Object.entries(roles).find(([, r]) => r.Properties.RoleName === 'hivemind-dev-agent-credentials-parent-role')!;
+  assert.ok(parent);
+  assert.equal(parent.Properties.MaxSessionDuration, 3600);
+  const trust = JSON.stringify(parent.Properties.AssumeRolePolicyDocument);
+  assert.match(trust, /ControlPlaneTaskRole/);
+  assert.doesNotMatch(trust, /Service/);
+
+  const policies = Object.values(template.findResources('AWS::IAM::Policy')) as { Properties: { Roles: unknown; PolicyDocument: { Statement: Record<string, unknown>[] } } }[];
+  const parentStatements = policies.filter((p) => JSON.stringify(p.Properties.Roles).includes(parentId)).flatMap((p) => p.Properties.PolicyDocument.Statement);
+  const gsc = parentStatements.find((st) => st.Sid === 'ScopeDownAtMost900Seconds');
+  assert.deepEqual(gsc?.Condition, { NumericLessThanEquals: { 'sts:DurationSeconds': 900 } });
+  const actions = new Set(parentStatements.flatMap((st) => [st.Action].flat() as string[]));
+  assert.deepEqual([...actions].sort(), [
+    'ec2:DescribeInstanceTypeOfferings',
+    'ec2:DescribeSpotPriceHistory',
+    'ec2:GetSpotPlacementScores',
+    'kms:Decrypt',
+    'kms:GenerateDataKey',
+    's3:GetObject',
+    's3:ListBucket',
+    's3:PutObject',
+    'sts:GetScopedCredentials',
+  ]);
+  const doc = JSON.stringify(parentStatements);
+  assert.doesNotMatch(doc, /iam:|secretsmanager:|ec2:RunInstances|s3:DeleteObject/);
+
+  const cp = JSON.stringify(policies.filter((p) => JSON.stringify(p.Properties.Roles).includes('ControlPlaneTaskRole')).map((p) => p.Properties.PolicyDocument));
+  assert.match(cp, /sts:AssumeRole/);
+  const env = JSON.stringify(template.findResources('AWS::ECS::TaskDefinition'));
+  assert.match(env, /HIVEMIND_AGENT_CREDENTIALS_PARENT_ROLE_ARN/);
+  assert.match(env, /spot-placement-read,model-inputs-upload,model-artifacts-read/);
+  assert.match(env, /HIVEMIND_ARTIFACTS_KMS_KEY_ARN/);
 });
