@@ -219,6 +219,8 @@ Control Plane은 작업을 등록할 때 순서를 계산해 작업의 `placemen
 
 에이전트의 MCP 설정은 다음과 같다. `dist/`는 HIVEMIND 저장소에서 `npm run build`로 만든다. `HIVEMIND_AGENT_TOKEN_FILE`을 주면 프로필은 반드시 `agent`여야 하고, 운영자 토큰 설정을 함께 주면 MCP 서버가 시작을 거부한다. `agent` 프로필의 도구는 상태 조회, Model Factory 도구 8개(공개 승인·다시 게시 제외), 최소 권한 자격 증명 발급으로 모두 10개다. Control Plane 기동·종료 도구는 없다.
 
+`agent` 프로필의 MCP 서버는 `~/.hivemind/aws-control-plane.json`(경로는 `HIVEMIND_CONTROL_PLANE_CONFIG_FILE`로 바꿀 수 있다)이 있으면 SSM 터널을 스스로 관리한다. 도구 호출이 연결 실패로 끝나면, 지금 실행 중인 Control Plane 작업으로 터널을 열거나 다시 열고 그 호출을 한 번 다시 시도한다. 첫 호출과 Spot 회수 뒤의 호출이 이렇게 붙는다. 이 프로필은 설정 파일의 `mode`와 관계없이 서비스의 desiredCount를 바꾸지 않는다. 서비스가 0이면 호출은 실패하고, 운영자가 서비스를 올려야 한다. 터널에 필요한 AWS 호출(`ecs:DescribeServices`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ssm:StartSession`)은 MCP 서버 프로세스가 설정 파일의 `profile`로 실행하며, 도구 결과에는 자격 증명이 들어가지 않는다. 이 호출은 에이전트의 셸 명령이 아니므로 클라이언트 훅이 막지 않는다. 그래서 설정 파일의 `profile`은 관리자 프로필 대신 위 네 권한만 가진 프로필을 쓰는 것이 좋다.
+
 ```json
 {
   "mcpServers": {

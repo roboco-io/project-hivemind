@@ -18,7 +18,7 @@ MCP 서버는 환경 변수 `HIVEMIND_MCP_PROFILE`로 노출할 도구 묶음을
 | `delivery` | 7개 | SW 전달 작업만 노출한다. |
 | `model-factory` | 17개: 전달 7 + Model Factory 10 | 전달과 Model Factory만 노출한다. |
 | `collab` | 10개 | 협업 세션만 노출한다. |
-| `agent` | 10개: `hivemind_status` 1 + Model Factory 8 + `hivemind_agent_credentials` 1 | 모델 팩토리 에이전트용. 에이전트 전용 토큰(`HIVEMIND_AGENT_TOKEN_FILE`)으로만 동작하고, 공개 승인·다시 게시, SW 전달, 협업, Control Plane 기동·종료 도구는 없다. |
+| `agent` | 10개: `hivemind_status` 1 + Model Factory 8 + `hivemind_agent_credentials` 1 | 모델 팩토리 에이전트용. 에이전트 전용 토큰(`HIVEMIND_AGENT_TOKEN_FILE`)으로만 동작하고, 공개 승인·다시 게시, SW 전달, 협업, Control Plane 기동·종료 도구는 없다. Control Plane 설정 파일이 있으면 터널만 열거나 다시 열고, 서비스의 desiredCount는 바꾸지 않는다. |
 | `legacy` | 22개 | 폐기된 Cloudflare 경로의 도구다. 원격 리소스가 없어 실제 실행은 되지 않는다. `cloudflare/` 아카이브와 함께 보관한다([ADR-0012](../../docs/adr/0012-cloudflare-archive-retention.md)). |
 
 2026-11-27 이전에는 `default`가 지금의 `legacy` 도구 묶음이었다. 그 묶음은 Cloudflare 경로용이라 AWS Control Plane에 연결하면 `hivemind_status`가 `configured: false`만 돌려줬다. 그래서 기본값을 AWS 경로로 바꿨다. 이 문서의 "장기 자율 작업 운영자 계약", "운영자 확인 최종 비용", "Workflow 팀 원장" 절은 `legacy` 프로필의 도구를 설명한다.
