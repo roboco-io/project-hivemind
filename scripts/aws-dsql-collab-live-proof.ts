@@ -98,14 +98,14 @@ async function main(): Promise<void> {
       recipient: 'spot-agent-b',
       kind: 'handoff',
       body: 'Uploaded dataset manifest to Seoul KMS S3 for cross-agent eval.',
-      artifactRefs: ['s3://hivemind-runtime-<AWS_ACCOUNT_ID>-ap-northeast-2-artifacts/collab/proof.json'],
+      artifactRefs: ['s3://hivemind-proof-example-artifacts/collab/proof.json'],
     });
     await apiJson(`${baseUrl}/api/collab/sessions/${session.id}/work-logs`, operatorToken, {
       subtaskId: subA.id,
       agentId: 'spot-agent-a',
       kind: 'artifact',
       summary: 'Dataset curated and hashed',
-      s3Uri: 's3://hivemind-runtime-<AWS_ACCOUNT_ID>-ap-northeast-2-artifacts/collab/proof.json',
+      s3Uri: 's3://hivemind-proof-example-artifacts/collab/proof.json',
       sha256: 'a'.repeat(64),
     });
     await apiJson(`${baseUrl}/api/collab/sessions/${session.id}/subtasks/${subA.id}/finish`, operatorToken, {

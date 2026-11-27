@@ -525,8 +525,8 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
     },
   };
 
-  const approvedProfile = 'arn:aws:iam::<AWS_ACCOUNT_ID>:instance-profile/hivemind-runtime-mf-training-instance-profile';
-  const rogueProfile = 'arn:aws:iam::<AWS_ACCOUNT_ID>:instance-profile/admin-rogue-profile';
+  const approvedProfile = 'arn:aws:iam::123456789012:instance-profile/hivemind-runtime-mf-training-instance-profile';
+  const rogueProfile = 'arn:aws:iam::123456789012:instance-profile/admin-rogue-profile';
   const orchestrator = new ModelFactoryOrchestrator({
     store,
     ec2,

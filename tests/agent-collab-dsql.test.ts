@@ -69,7 +69,7 @@ test('Embedded Control Plane orchestrator strips AWS/Control-Plane secrets, uses
               agentId: input.agentId,
               targetRegion: input.targetRegion,
             });
-            return { taskArn: `arn:aws:ecs:${input.targetRegion}:<AWS_ACCOUNT_ID>:task/spot-${input.subtaskId}`, region: input.targetRegion };
+            return { taskArn: `arn:aws:ecs:${input.targetRegion}:123456789012:task/spot-${input.subtaskId}`, region: input.targetRegion };
           },
         },
         embeddedRunner: {

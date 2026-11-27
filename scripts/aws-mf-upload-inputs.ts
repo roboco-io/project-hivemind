@@ -42,8 +42,10 @@ function walkFiles(dir: string, root: string, out: string[] = []): string[] {
 async function main(): Promise<void> {
   const profile = process.env.AWS_PROFILE ?? 'roboco';
   const region = process.env.HIVEMIND_AWS_REGION ?? 'ap-northeast-2';
+  // The Hub artifacts bucket is named after the account, so the default is read from STS, not written here.
   const bucket =
-    process.env.HIVEMIND_ARTIFACTS_BUCKET ?? 'hivemind-runtime-<AWS_ACCOUNT_ID>-ap-northeast-2-artifacts';
+    process.env.HIVEMIND_ARTIFACTS_BUCKET?.trim() ||
+    `hivemind-runtime-${execFileSync('aws', ['sts', 'get-caller-identity', '--profile', profile, '--query', 'Account', '--output', 'text'], { encoding: 'utf8' }).trim()}-${region}-artifacts`;
   const modelId = process.env.HIVEMIND_MODEL_ID?.trim();
   const inputDir = process.env.HIVEMIND_INPUT_DIR?.trim();
   const bundleId = process.env.HIVEMIND_INPUT_BUNDLE_ID?.trim() || `bundle-${Date.now()}`;
