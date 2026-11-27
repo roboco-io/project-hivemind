@@ -5,7 +5,7 @@ description: HIVEMIND의 AWS 단일 경로에서 SW 전달 작업, Model Factory
 
 # HIVEMIND 작업 관제 (AWS 단일 경로)
 
-웹을 열지 않고 프로젝트의 `hivemind` MCP 서버를 사용한다. 기본 프로필은 AWS Control Plane의 도구 28개를 한 서버로 제공한다. 상태 조회 1개, Control Plane 기동·종료 2개, SW 전달 7개, Model Factory 8개, 협업 10개다. 폐기된 Cloudflare 경로의 도구는 기본 프로필에 없다.
+웹을 열지 않고 프로젝트의 `hivemind` MCP 서버를 사용한다. 기본 프로필은 AWS Control Plane의 도구 29개를 한 서버로 제공한다. 상태 조회 1개, Control Plane 기동·종료 2개, SW 전달 7개, Model Factory 9개, 협업 10개다. 폐기된 Cloudflare 경로의 도구는 기본 프로필에 없다.
 
 도구가 보이지 않으면 [MCP 서버 안내](../../../apps/mcp-server/README.md)를 확인한다. MCP 연결을 고치려고 사용자 전역 설정이나 원격 인증을 임의로 바꾸지 않는다.
 

@@ -388,6 +388,7 @@ export class ModelFactoryOrchestrator {
                 ...(securityGroupIds ? { securityGroupIds } : {}),
                 ...(instanceProfileArn ? { instanceProfileArn } : {}),
                 ...(userDataScript !== undefined ? { userDataScript } : {}),
+                ...(approved.compute.rootVolumeGb !== undefined ? { rootVolumeGb: approved.compute.rootVolumeGb } : {}),
                 extraTags,
               },
               signal,
@@ -501,9 +502,17 @@ export class ModelFactoryOrchestrator {
     const isEnded = effectiveState === 'terminated' || effectiveState === 'shutting-down' || effectiveState === 'stopped';
     const nextWakeAt = isEnded ? null : new Date(Math.min(nowMs + this.wakeIntervalMs, expiresAtMs)).toISOString();
 
+    // The instance usually ended some time before this check noticed it. EC2 reports that time; without it
+    // the run would be counted up to now, which with a 5-minute check interval can be several times too long.
+    // The time is used only when it lies between the launch and now, and never for a forced termination.
+    const launchedMs = Date.parse(job.instance.launchedAt);
+    const reportedMs = described.stateTransitionTime ? Date.parse(described.stateTransitionTime) : Number.NaN;
+    const knownEndMs = isEnded && !forcedReason && !vanished && reportedMs >= launchedMs && reportedMs <= nowMs ? reportedMs : null;
+
     job = await this.options.store.recordWakeUpdate(job.id, {
       state: effectiveState,
       nextWakeAt,
+      ...(knownEndMs !== null ? { endedAt: new Date(knownEndMs).toISOString() } : {}),
       ...(forcedReason ? { forcedTerminationReason: forcedReason, diagnostic: forcedReason } : {}),
     });
 
@@ -517,7 +526,7 @@ export class ModelFactoryOrchestrator {
     if (isEnded && job.cost.settledMicros === null) {
       // For a vanished instance the real end time is unknown. It cannot have outlived its expiry tag by
       // more than one guard interval, so the expiry time bounds the estimate.
-      const endedMs = vanished ? Math.min(nowMs, expiresAtMs) : nowMs;
+      const endedMs = vanished ? Math.min(nowMs, expiresAtMs) : (knownEndMs ?? nowMs);
       const settlement = calculateActualCostMicros(job, endedMs);
       job = await this.options.store.settleCost(job.id, {
         ...settlement,

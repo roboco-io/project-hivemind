@@ -69,7 +69,7 @@ aws --profile roboco --region ap-northeast-2 ecs update-service \
 
 ## 3. MCP 클라이언트 연결 (Claude Code / Codex)
 
-`HIVEMIND_MCP_PROFILE=model-factory`를 지정하면 SW 전달 도구 7개 + 모델 팩토리 도구 8개(총 15개)가 노출된다. 프로필을 지정하지 않으면 협업 도구, 상태 조회, Control Plane 기동·종료까지 포함한 28개가 노출된다.
+`HIVEMIND_MCP_PROFILE=model-factory`를 지정하면 SW 전달 도구 7개 + 모델 팩토리 도구 9개(총 16개)가 노출된다. 프로필을 지정하지 않으면 협업 도구, 상태 조회, Control Plane 기동·종료까지 포함한 29개가 노출된다.
 
 ```json
 {
@@ -103,6 +103,8 @@ aws --profile roboco --region ap-northeast-2 ecs update-service \
      npx tsx scripts/aws-mf-upload-inputs.ts
    ```
    출력된 `inputs` JSON(`{ s3Prefix, digest, files: [{ path, sha256, sizeBytes }] }`)을 작업 등록의 `compute.inputs`에 그대로 넣는다. `inputs.digest`는 `approvalFingerprint`에 고정되며, Control Plane은 EC2 기동 직전 S3 입력 존재·크기(5 MiB 이하는 SHA-256)를 사전 검증한다.
+   - **정산의 실행 시간.** 실행 시간은 기동 시각부터 인스턴스가 실제로 끝난 시각까지다. 끝난 시각은 EC2가 상태 전이 사유에 적어 주는 시각(예: `User initiated (2026-11-27 02:23:56 GMT)`)을 쓴다. EC2가 시각을 주지 않거나 그 시각이 기동 전이거나 점검 시각 뒤이면, 점검이 종료를 알아챈 시각까지로 센다. 2026-11-27 이전에는 항상 알아챈 시각까지 셌고, 점검 주기가 5분이어서 약 60초 실행이 328초로 정산된 일이 있었다. 금액은 여전히 `maxHourlyPriceUsd` 기준 추정이며 실제 스팟 청구액이 아니다.
+   - **루트 볼륨 크기 (`compute.rootVolumeGb`).** 생략하면 AMI의 크기를 쓴다. AWS의 PyTorch 학습용 AMI는 30GB다. 8에서 2000 사이의 정수(GiB)를 주면 Control Plane이 AMI의 루트 장치 이름을 조회해 gp3 볼륨을 그 크기로 만들고, 인스턴스가 종료될 때 함께 지운다. 이 값은 승인 지문에 들어간다. AMI의 스냅샷보다 작은 값을 주면 EC2가 기동을 거절하고 작업은 실패로 기록된다. 볼륨 비용은 중앙 원장의 정산에 들어 있지 않다.
 2. `POST /api/model-factory/jobs`: 동적 `region`, `instanceType`, `amiId`, `maxLifetimeMs`, `maxHourlyPriceUsd`, `maxTotalCostMicros`, `s3ArtifactPrefix`(`models/<modelId>/...`, `inputs/` 제외), `inputs`, `userDataScript`, `releasePolicy` 등록 (`awaiting_training_approval`). `instanceProfileArn`을 생략하면 Control Plane이 승인된 `hivemind-runtime-mf-training-instance-profile`을 자동 부착한다(미허용 ARN 지정 시 거절).
 3. `POST /api/model-factory/jobs/:id/approve-training`: `approvalFingerprint` 검증 → 중앙 예산 예약(전역 상한 초과 시 409 거절) → 입력 사전 검증 → EC2 Spot 기동 (`training_running`). Control Plane은 EC2 태그(`hivemind:job-id`, `hivemind:artifact-bucket`, `hivemind:artifact-region`, `hivemind:artifact-prefix`, `hivemind:inputs-prefix`, `hivemind:inputs-digest`)와 `userDataScript` 선두 `export HIVEMIND_JOB_ID`, `HIVEMIND_ARTIFACTS_BUCKET`, `HIVEMIND_ARTIFACTS_REGION`, `HIVEMIND_ARTIFACT_PREFIX`, `HIVEMIND_INPUTS_PREFIX`, `HIVEMIND_INPUTS_DIGEST`, `HIVEMIND_INPUTS_MANIFEST_B64`를 자동 주입한다.
 4. 학습/평가 인스턴스는 `aws s3 cp --region "$HIVEMIND_ARTIFACTS_REGION"`으로 입력을 내려받아 SHA-256을 검증하고, 결과물과 `${HIVEMIND_ARTIFACT_PREFIX}/receipt.json`을 직접 업로드한 뒤 `shutdown -h now`로 스스로 종료한다(`InstanceInitiatedShutdownBehavior=terminate`).
@@ -115,7 +117,7 @@ aws --profile roboco --region ap-northeast-2 ecs update-service \
      ```
 
      2026-11-27 이전의 Control Plane은 `path`를 로케일 순서로 정렬했다. 파일이 여러 개이고 대소문자나 문장부호가 섞인 경로가 있으면 인스턴스가 계산한 값과 달라졌다. 경로는 ASCII로 쓰는 것을 권한다.
-5. Control Plane 주기 wake 또는 `POST /api/model-factory/jobs/:id/wake`: EC2 종료 확인 + 실사용 초 비용 정산 + S3 `receipt.json` `manifestDigest` 및 각 파일 존재/크기(`HEAD`) 검증 (`evaluating`).
+5. Control Plane 주기 wake(5분) 또는 `POST /api/model-factory/jobs/:id/wake`(MCP `hivemind_mf_wake`): EC2 종료 확인 + 실사용 초 비용 정산 + S3 `receipt.json` `manifestDigest` 및 각 파일 존재/크기(`HEAD`) 검증 (`evaluating`).
 6. **배포 전 검사 보고 및 출처 명시:**
    - 운영자/에이전트가 `POST /api/model-factory/jobs/:id/verify-release`로 보고할 경우, HIVEMIND는 응답과 저장 상태에 항상 `attestationSource: "operator_self_reported"`와 명시적 고지(`verificationDisclaimer: "이 검사 결과는 운영자/호출자가 직접 보고한 값이며, HIVEMIND가 releaseCheckCommand를 독립 격리 환경에서 실행해 검증하지 않았습니다."`)를 강제 기록한다.
    - 독립 검증기 워커(`workerToken` 인증 전용)가 `POST /api/model-factory/jobs/:id/verifier-attestation`으로 보고한 경우에만 `attestationSource: "independent_verifier"`(`verificationDisclaimer: null`)로 기록된다.

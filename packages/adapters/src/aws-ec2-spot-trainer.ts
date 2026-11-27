@@ -19,6 +19,8 @@ export interface LaunchSpotInstanceInput {
   securityGroupIds?: string[];
   instanceProfileArn?: string;
   userDataScript?: string;
+  /** Size of the root volume in GiB. Omitted: the AMI's own size. */
+  rootVolumeGb?: number;
   extraTags?: Record<string, string>;
 }
 
@@ -38,6 +40,8 @@ export interface DescribedSpotInstance {
   availabilityZone: string | null;
   launchTime: string | null;
   stateReason: string | null;
+  /** When the instance left the running state, from EC2's state transition reason. Null when EC2 gives no time. */
+  stateTransitionTime?: string | null;
   tags: Record<string, string>;
 }
 
@@ -161,6 +165,17 @@ function normalizeEc2State(raw: string | null): Ec2InstanceLifecycleState {
   }
 }
 
+/**
+ * EC2 reports when an instance stopped running only inside a text field, for example
+ * `User initiated (2026-11-27 02:23:56 GMT)`. Returns that time as ISO 8601, or null.
+ */
+export function parseStateTransitionTime(reason: string | null): string | null {
+  const match = /\((\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}) GMT\)/.exec(reason ?? '');
+  if (!match) return null;
+  const iso = `${match[1]}T${match[2]}.000Z`;
+  return Number.isNaN(Date.parse(iso)) ? null : iso;
+}
+
 function parseInstanceBlock(region: string, block: string): DescribedSpotInstance | null {
   const instanceId = firstTagValue(block, 'instanceId');
   if (!instanceId) return null;
@@ -187,6 +202,7 @@ function parseInstanceBlock(region: string, block: string): DescribedSpotInstanc
     availabilityZone,
     launchTime,
     stateReason,
+    stateTransitionTime: parseStateTransitionTime(firstTagValue(block, 'reason')),
     tags,
   };
 }
@@ -337,6 +353,17 @@ export class AwsEc2SpotTrainer implements Ec2SpotTrainerPort {
     }
     if (input.userDataScript !== undefined) {
       params.UserData = Buffer.from(input.userDataScript, 'utf8').toString('base64');
+    }
+    if (input.rootVolumeGb !== undefined) {
+      // The root device name belongs to the AMI (/dev/xvda, /dev/sda1, ...), so it is read from the AMI.
+      const imageXml = await this.callEc2Query(input.region, { Action: 'DescribeImages', 'ImageId.1': input.amiId }, signal);
+      const rootDeviceName = firstTagValue(imageXml, 'rootDeviceName');
+      if (!rootDeviceName) throw new Error(`AWS EC2 DescribeImages returned no root device for ${input.amiId} in ${input.region}`);
+      params['BlockDeviceMapping.1.DeviceName'] = rootDeviceName;
+      params['BlockDeviceMapping.1.Ebs.VolumeSize'] = String(input.rootVolumeGb);
+      params['BlockDeviceMapping.1.Ebs.VolumeType'] = 'gp3';
+      // The volume must not outlive the instance: nothing else would delete it or pay attention to it.
+      params['BlockDeviceMapping.1.Ebs.DeleteOnTermination'] = 'true';
     }
 
     const xml = await this.callEc2Query(input.region, params, signal);

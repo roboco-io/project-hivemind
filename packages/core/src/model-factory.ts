@@ -273,6 +273,9 @@ export function validateTrainingComputeSpec(
       : validateTrainingInputSpec(spec.inputs, modelId ?? s3ArtifactPrefix.split('/')[1] ?? 'model');
   const workloadClass =
     spec.workloadClass === undefined ? undefined : text(spec.workloadClass, 'compute.workloadClass', 64);
+  if (spec.rootVolumeGb !== undefined && (!Number.isSafeInteger(spec.rootVolumeGb) || spec.rootVolumeGb < 8 || spec.rootVolumeGb > 2000)) {
+    throw new DomainError('compute.rootVolumeGb must be an integer between 8 and 2000', 400);
+  }
 
   return {
     region,
@@ -289,6 +292,7 @@ export function validateTrainingComputeSpec(
     ...(securityGroupIds ? { securityGroupIds } : {}),
     ...(instanceProfileArn ? { instanceProfileArn } : {}),
     ...(userDataScript !== undefined ? { userDataScript } : {}),
+    ...(spec.rootVolumeGb !== undefined ? { rootVolumeGb: spec.rootVolumeGb } : {}),
     s3ArtifactPrefix,
     ...(inputs ? { inputs } : {}),
   };
@@ -354,6 +358,7 @@ export function computeModelFactoryApprovalFingerprint(spec: {
         maxTotalCostMicros: spec.compute.maxTotalCostMicros,
         s3ArtifactPrefix: spec.compute.s3ArtifactPrefix,
         userDataSha256: spec.compute.userDataScript ? sha256Hex(spec.compute.userDataScript) : null,
+        ...(spec.compute.rootVolumeGb !== undefined ? { rootVolumeGb: spec.compute.rootVolumeGb } : {}),
         ...(spec.compute.inputs
           ? { inputsS3Prefix: spec.compute.inputs.s3Prefix, inputsDigest: spec.compute.inputs.digest }
           : {}),
@@ -675,6 +680,8 @@ export class ModelFactoryStore {
       nextWakeAt: string | null;
       forcedTerminationReason?: string;
       diagnostic?: string;
+      /** When the instance really ended, if known. Otherwise the time of this update is recorded. */
+      endedAt?: string;
     },
   ): Promise<ModelFactoryJob> {
     return this.tx(() => {
@@ -691,7 +698,7 @@ export class ModelFactoryStore {
         job.diagnostics.push(text(update.diagnostic, 'diagnostic', 1000));
       }
       if (update.state === 'terminated' || update.state === 'shutting-down' || update.state === 'stopped') {
-        job.instance.terminatedAt = job.instance.terminatedAt ?? this.timestamp();
+        job.instance.terminatedAt = job.instance.terminatedAt ?? update.endedAt ?? this.timestamp();
         if (job.status === 'training_running') {
           job.waitReason = job.cost.settledMicros === null ? 'awaiting_cost_settlement' : null;
         }

@@ -52,6 +52,8 @@ export interface TrainingComputeSpec {
   securityGroupIds?: string[];
   instanceProfileArn?: string;
   userDataScript?: string;
+  /** Root volume size in GiB. Omitted: the AMI's own size. */
+  rootVolumeGb?: number;
   s3ArtifactPrefix: string;
   inputs?: ModelTrainingInputSpec;
 }

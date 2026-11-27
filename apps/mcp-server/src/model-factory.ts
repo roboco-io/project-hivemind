@@ -96,6 +96,18 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
   );
 
   server.registerTool(
+    'hivemind_mf_wake',
+    {
+      title: 'HIVEMIND 모델 팩토리 작업 점검',
+      description:
+        '학습 인스턴스의 현재 상태를 지금 확인합니다. 인스턴스가 끝났으면 비용을 정산하고 S3 영수증을 확인해 작업을 다음 단계로 넘깁니다. Control Plane은 5분마다 같은 점검을 스스로 하므로, 이 도구는 기다리지 않고 결과를 보려 할 때 씁니다. 최대 수명을 넘긴 인스턴스는 이 점검에서 종료됩니다.',
+      inputSchema: z.strictObject({ jobId }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async ({ jobId: id }, extra) => run(() => api(`/api/model-factory/jobs/${encodeURIComponent(id)}/wake`, extra.signal, {})),
+  );
+
+  server.registerTool(
     'hivemind_mf_create',
     {
       title: 'HIVEMIND 모델 팩토리 학습 작업 초안 등록',
@@ -131,6 +143,8 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
           securityGroupIds: z.array(z.string().regex(/^sg-[a-f0-9]{8,17}$/i)).min(1).max(5).optional(),
           instanceProfileArn: z.string().min(20).max(256).optional(),
           userDataScript: z.string().max(16_384).optional(),
+          // Root volume in GiB. Omitted: the AMI's own size, which can be too small for checkpoints.
+          rootVolumeGb: z.number().int().min(8).max(2000).optional(),
           s3ArtifactPrefix: z.string().min(1).max(512),
           inputs: z
             .strictObject({
