@@ -64,6 +64,8 @@ if [[ -z "${HIVEMIND_NOTIFY_TOPIC_ARN:-}" ]]; then
 fi
 if [[ -n "$HIVEMIND_NOTIFY_TOPIC_ARN" ]]; then export HIVEMIND_NOTIFY_TOPIC_ARN; else unset HIVEMIND_NOTIFY_TOPIC_ARN; fi
 # Model Factory 자동 공개(이슈 #20)를 허용할 Hugging Face 저장소 접두사. 빈 값이면 자동 공개를 쓸 수 없다.
+# 전달 작업 자동 병합(이슈 #20)을 허용할 저장소. 빈 값이면 자동 병합을 쓸 수 없다.
+export HIVEMIND_DELIVERY_AUTO_MERGE_REPOS="${HIVEMIND_DELIVERY_AUTO_MERGE_REPOS-roboco-io/silicon-model-factory}"
 export HIVEMIND_MF_AUTO_PUBLISH_REPO_PREFIXES="${HIVEMIND_MF_AUTO_PUBLISH_REPO_PREFIXES-roboco-io/}"
 if [[ "${HIVEMIND_DEPLOY_SPOKES_JSON:-0}" == "1" ]]; then
   HIVEMIND_AWS_SPOKES_JSON="$(python3 -c 'import json,sys; print(json.dumps(json.loads(sys.argv[1])["spokes"], separators=(",", ":")))' "$ENV_JSON")"

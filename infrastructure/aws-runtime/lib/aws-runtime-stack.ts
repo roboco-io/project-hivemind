@@ -53,6 +53,8 @@ export interface AwsRuntimeConfig {
   notifyTopicArn?: string;
   /** Comma-separated Hugging Face repository prefixes where Model Factory auto-publish is allowed (issue #20). */
   modelFactoryAutoPublishRepoPrefixes?: string;
+  /** Comma-separated repositories whose delivery tasks may auto-merge (issue #20). */
+  deliveryAutoMergeRepositories?: string;
   accountId: string;
   region: string;
   allowedRegions?: string[];
@@ -662,6 +664,7 @@ export class AwsRuntimeStack extends Stack {
         ...(cfg.deliveryStorage === 'aurora-dsql' ? { HIVEMIND_DELIVERY_STORAGE: 'aurora-dsql' } : {}),
         ...(cfg.spokesJson ? { HIVEMIND_AWS_SPOKES_JSON: cfg.spokesJson } : {}),
         ...(cfg.notifyTopicArn ? { HIVEMIND_NOTIFY_TOPIC_ARN: cfg.notifyTopicArn } : {}),
+        ...(cfg.deliveryAutoMergeRepositories ? { HIVEMIND_DELIVERY_AUTO_MERGE_REPOS: cfg.deliveryAutoMergeRepositories } : {}),
         ...(cfg.modelFactoryAutoPublishRepoPrefixes ? { HIVEMIND_MF_AUTO_PUBLISH_REPO_PREFIXES: cfg.modelFactoryAutoPublishRepoPrefixes } : {}),
         ...(cfg.modelFactoryRegionNetworksJson
           ? { HIVEMIND_MF_REGION_NETWORKS_JSON: cfg.modelFactoryRegionNetworksJson }
