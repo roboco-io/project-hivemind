@@ -69,7 +69,7 @@ aws --profile roboco --region ap-northeast-2 ecs update-service \
 
 ## 3. MCP 클라이언트 연결 (Claude Code / Codex)
 
-`HIVEMIND_MCP_PROFILE=model-factory`를 지정하면 SW 전달 도구 7개 + 모델 팩토리 도구 9개(총 16개)가 노출된다. 프로필을 지정하지 않으면 협업 도구, 상태 조회, Control Plane 기동·종료까지 포함한 29개가 노출된다.
+`HIVEMIND_MCP_PROFILE=model-factory`를 지정하면 SW 전달 도구 7개 + 모델 팩토리 도구 9개(총 16개)가 노출된다. 프로필을 지정하지 않으면 협업 도구, 상태 조회, Control Plane 기동·종료, 최소 권한 자격 증명 발급까지 포함한 30개가 노출된다.
 
 ```json
 {
@@ -169,6 +169,32 @@ Control Plane은 작업을 등록할 때 순서를 계산해 작업의 `placemen
 리전 안에서 Control Plane은 서브넷의 AZ ID를 `ec2:DescribeSubnets`로 조회해, 계획한 AZ 순서대로 서브넷을 시도한다. AZ 이름(`us-east-2a`)은 계정마다 다른 물리 AZ를 가리키므로 AZ ID(`use2-az1`)로 비교한다. 서브넷 조회가 실패하면 서브넷은 적힌 순서대로 시도한다. 작업이 `compute.availabilityZoneId`를 적었으면 `compute.region`에서는 그 AZ를 먼저 시도한다.
 
 피드는 인스턴스 유형을 풀(pool) 단위로 다룬다. Control Plane은 `compute.workloadClass`가 있으면 그 풀을 쓰고, 없으면 인스턴스 유형과 이름이 같은 풀이나 구성원에 그 유형이 들어 있는 풀을 쓴다. 2026-11-27 기준 피드는 `p5.48xlarge`, `g6e.12xlarge`, `g6e.24xlarge`, `g6e.48xlarge`와 범용 CPU 풀만 다룬다. 피드에 없는 유형은 추세 없이 현재 점수만으로 순서를 정하고, `note`에 피드가 그 유형을 다루지 않는다고 적는다. 현재 점수 조회도 실패하면 `placementPlan.status`가 `type_not_in_feed`, `feed_stale`(24시간보다 오래된 피드), `feed_unavailable`(피드 조회 실패) 중 하나가 되고 리전은 적힌 순서대로 시도한다. 현재 점수 조회에는 Control Plane 역할의 `ec2:GetSpotPlacementScores` 권한이 필요하며, 조회 요청은 작업의 `compute.region` 엔드포인트로 보낸다.
+
+### 에이전트의 최소 권한 AWS 자격 증명 (`hivemind_agent_credentials`)
+
+모델 팩토리 에이전트는 관리자 프로필 대신 이 도구로 받은 단기 자격 증명으로 AWS를 호출한다. 에이전트는 목적(purpose)과 대상만 보내고 정책 본문은 보내지 않는다. Control Plane은 목적마다 코드에 고정된 정책 틀에 대상을 채운다. 그다음 전용 부모 역할(`<prefix>-agent-credentials-parent-role`)을 맡아 리전 STS 엔드포인트에서 `GetScopedCredentials`를 호출한다. 받은 자격 증명의 권한은 부모 역할과 목적 정책의 교집합이다.
+
+| 목적 | 허용 동작 | 범위 |
+|---|---|---|
+| `spot-placement-read` | `ec2:GetSpotPlacementScores`, `ec2:DescribeSpotPriceHistory`, `ec2:DescribeInstanceTypeOfferings` | `HIVEMIND_MF_ALLOWED_REGIONS`의 리전 |
+| `model-inputs-upload` | `s3:PutObject`, `s3:GetObject`, `s3:ListBucket`, KMS `GenerateDataKey`·`Decrypt` | `models/<modelId>/inputs/` |
+| `model-artifacts-read` | `s3:GetObject`, `s3:ListBucket`, KMS `Decrypt` | `models/<modelId>/runs/` |
+
+사용 방법은 다음과 같다. 에이전트가 `hivemind_agent_credentials`를 `{"purpose":"model-inputs-upload","modelId":"verilog-embed-base"}`처럼 호출한다. MCP 서버는 자격 증명을 `~/.hivemind/agent-credentials/<profile>.ini`(권한 600)에 쓰고, 도구 결과에는 파일 경로, 프로필 이름, 만료 시각만 넣는다. 에이전트는 `AWS_SHARED_CREDENTIALS_FILE=<파일> AWS_PROFILE=<프로필> aws s3 cp ...`처럼 실행한다. 수명은 60-900초이고 기본값은 900초다. 만료되면 다시 호출한다. 발급된 자격 증명은 일반 임시 자격 증명이므로 에이전트 쪽 AWS CLI 버전에는 제약이 없다. `GetScopedCredentials`는 Control Plane이 직접 서명해 호출하므로 Control Plane 이미지에도 AWS CLI가 필요하지 않다.
+
+목적 목록에 없는 요청, 형식이 틀린 `modelId`, 범위를 넘는 수명은 400으로 거절한다. Control Plane 설정(`HIVEMIND_AGENT_CREDENTIAL_PURPOSES`)에서 꺼진 목적은 403으로 거절한다. STS 호출이 실패하면 502를 돌려주고, 부모 세션의 자격 증명은 어떤 경우에도 돌려주지 않는다. 목적 목록과 정책 틀은 CDK와 코드로만 바꿀 수 있고, 이를 바꾸는 API는 없다. 부모 역할의 `sts:GetScopedCredentials`에는 `sts:DurationSeconds` 900초 이하 조건이 걸려 있다.
+
+감사 기록은 Control Plane 로그(CloudWatch)에 `hivemind.agent_credentials.issued`, `denied`, `failed` 이벤트로 남는다. 기록에는 목적, 대상, 정책 해시, 만료 시각, `ScopedSessionDescription`만 들어가고 자격 증명과 정책 본문은 들어가지 않는다. CloudTrail에도 `GetScopedCredentials` 이벤트가 `requestParameters.scopedSessionDescription`(`hivemind-agent <목적> <modelId>`)과 함께 남는다.
+
+한계가 있다. 이 도구는 운영자 토큰으로 Control Plane을 호출한다. 운영자 토큰은 학습 승인, 공개 승인, 취소를 포함한 모든 운영자 API를 호출할 수 있다. 따라서 에이전트가 운영자 토큰을 가진 지금 구성에서는 AWS 권한은 좁아지지만 Control Plane 안의 운영자 권한은 좁아지지 않는다. 에이전트 전용 토큰으로 운영자 동작을 나누는 일은 이 기능에 포함되지 않았다.
+
+### 학습 인스턴스의 쓰기 범위 (`staging/`)
+
+학습 인스턴스 역할은 `staging/${aws:userid}/*`에만 쓸 수 있다. EC2 인스턴스 역할 세션의 `aws:userid`는 `<역할 ID>:<인스턴스 ID>`이므로, 인스턴스마다 자기 폴더에만 쓸 수 있다. `models/*`에 대한 쓰기와 삭제는 명시적으로 거부한다. 그래서 한 작업의 학습 코드나 부트스트랩이 다른 작업의 산출물이나 `inputs/`를 덮어쓸 수 없다.
+
+Control Plane은 부트스트랩에서 IMDSv2로 인스턴스 ID를 읽어 `HIVEMIND_ARTIFACT_PREFIX`를 `staging/<역할 ID>:<인스턴스 ID>`로 정한다. 작업 접두사는 `HIVEMIND_JOB_ARTIFACT_PREFIX`로 따로 넘긴다. 학습 스크립트는 지금처럼 `HIVEMIND_ARTIFACT_PREFIX`에 산출물과 `receipt.json`을 올리면 된다. 영수증의 `s3Prefix`도 이 값이어야 한다. Control Plane은 점검(wake) 때 자기가 띄운 인스턴스 ID로 스테이징 폴더를 계산해 영수증을 읽는다. 영수증의 작업 ID와 접두사가 맞으면 파일을 작업 접두사로 서버 측 복사하고, 접두사를 작업 접두사로 바꾼 영수증을 기록한다. 스테이징 폴더는 14일 뒤 수명 주기 규칙으로 지워진다. 한 파일의 서버 측 복사는 5 GiB까지만 된다.
+
+이 방식은 학습 코드와 부트스트랩을 모두 막는다. 이슈 #19에서 제안한 학습 프로세스용 `GetScopedCredentials`는 쓰지 않았다. 학습 프로세스를 root가 아닌 사용자로 바꾸고 자격 증명 갱신 장치를 두어야 해서 SMF 스크립트를 바꿔야 하기 때문이다. 스테이징 도입 전에 기동한 작업은 작업 접두사에 직접 올린 영수증도 그대로 인정한다.
 
 ### 원장 저장소와 TTL Guard 정산 (`HIVEMIND_MF_STORAGE`)
 

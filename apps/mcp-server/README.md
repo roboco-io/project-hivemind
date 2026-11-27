@@ -14,7 +14,7 @@ MCP 서버는 환경 변수 `HIVEMIND_MCP_PROFILE`로 노출할 도구 묶음을
 
 | 프로필 | 도구 | 용도 |
 |---|---|---|
-| `default` (별칭 `aws`) | 29개: `hivemind_status` 1 + `hivemind_control_plane_*` 2 + `hivemind_delivery_*` 7 + `hivemind_mf_*` 9 + `hivemind_collab_*` 10 | AWS 단일 경로 전체. 일상 사용의 기본값이다. |
+| `default` (별칭 `aws`) | 30개: `hivemind_status` 1 + `hivemind_control_plane_*` 2 + `hivemind_delivery_*` 7 + `hivemind_mf_*` 9 + `hivemind_collab_*` 10 + `hivemind_agent_credentials` 1 | AWS 단일 경로 전체. 일상 사용의 기본값이다. |
 | `delivery` | 7개 | SW 전달 작업만 노출한다. |
 | `model-factory` | 16개: 전달 7 + Model Factory 9 | 전달과 Model Factory만 노출한다. |
 | `collab` | 10개 | 협업 세션만 노출한다. |
