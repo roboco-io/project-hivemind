@@ -58,7 +58,7 @@
 
 ## 5. 실증 중 발견해 고친 문제
 
-**워커 준비 단계 실패 시 하위 작업이 `running`으로 남았다.** 첫 실행(세션 `ses-f3eb21f7-1ad1-43e8-8444-24e42deacbd5`, 제공자 `claude`)에서 워커 2대가 모두 `ModelSubscriptionAuthSecret is missing claude credentials` 오류로 종료했다. 워커는 모델 인증을 읽는 단계에서 예외가 나면 Control Plane에 실패를 보고하지 않고 끝났기 때문에, 두 하위 작업이 `running`으로 남아 병렬 워커 자리를 계속 차지했다. 커밋 `339821e`에서 준비 단계가 실패하면 하위 작업을 `failed`로 보고한 뒤 종료하도록 고쳤고(`apps/worker/src/collab-worker-setup.ts`), 워커 이미지를 다시 푸시했다. 이 수정은 단위 테스트로만 확인했고, 실 AWS에서 준비 실패를 다시 일으켜 확인하지는 않았다.
+**워커 준비 단계 실패 시 하위 작업이 `running`으로 남았다.** 첫 실행(세션 `ses-f3eb21f7-1ad1-43e8-8444-24e42deacbd5`, 제공자 `claude`)에서 워커 2대가 모두 `ModelSubscriptionAuthSecret is missing claude credentials` 오류로 종료했다. 워커는 모델 인증을 읽는 단계에서 예외가 나면 Control Plane에 실패를 보고하지 않고 끝났기 때문에, 두 하위 작업이 `running`으로 남아 병렬 워커 자리를 계속 차지했다. 커밋 `f8d3674`에서 준비 단계가 실패하면 하위 작업을 `failed`로 보고한 뒤 종료하도록 고쳤고(`apps/worker/src/collab-worker-setup.ts`), 워커 이미지를 다시 푸시했다. 이 수정은 단위 테스트로만 확인했고, 실 AWS에서 준비 실패를 다시 일으켜 확인하지는 않았다.
 
 **SSM 터널 프로세스가 스크립트 종료 뒤에도 남았다.** `aws ssm start-session`은 `session-manager-plugin`을 자식 프로세스로 띄우는데, 스크립트가 `aws` 프로세스만 종료해 플러그인이 남았다. 터널을 별도 프로세스 그룹으로 띄우고 그룹 전체를 종료하도록 두 실증 스크립트를 고쳤다. 남아 있던 플러그인 프로세스는 이 실증이 띄운 것임을 포트 번호로 확인한 뒤 종료했다.
 
