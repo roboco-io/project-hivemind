@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -418,4 +418,71 @@ test('always-on MCP server: a call after a Spot replacement reopens the tunnel a
   assert.ok(down.isError);
   assert.equal(w.desired, 0);
   assert.equal(w.awsCalls.filter((c) => c.startsWith('ecs update-service')).length, 0);
+});
+
+test('agent profile: the server keeps the tunnel to the running task but never changes the desired count', async (t) => {
+  const { w, system, fetchImpl } = world({ desired: 1, tasksReadyAfterPolls: 0 });
+  // Even an on-demand settings file cannot make the agent profile raise or lower the service.
+  const server = createHivemindMcpServer({ apiUrl: 'http://127.0.0.1:4311', operatorToken: TOKEN, profile: 'agent', controlPlanePower: { ...CONFIG, mode: 'on-demand' }, powerSystem: system, fetchImpl });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: 'agent-tunnel', version: '0.1.0' });
+  await client.connect(clientTransport);
+  let closed = false;
+  t.after(async () => { if (!closed) { await client.close(); await server.close(); } });
+  type Result = { isError?: boolean; content: { text: string }[]; structuredContent?: Record<string, any> };
+  const call = async (name: string) => (await client.callTool({ name, arguments: {} })) as Result;
+
+  const names = (await client.listTools()).tools.map((tool) => tool.name);
+  assert.ok(!names.includes('hivemind_control_plane_start') && !names.includes('hivemind_control_plane_stop'));
+  // First call: no tunnel yet, so it opens one to the running task and succeeds.
+  const first = await call('hivemind_status');
+  assert.ok(!first.isError);
+  assert.equal(first.structuredContent!.principal, 'agent');
+  assert.equal(w.tunnelsOpened, 1);
+  // A Spot replacement drops the tunnel; the next call reopens it.
+  w.tunnelOpen = false;
+  assert.ok(!(await call('hivemind_mf_list')).isError);
+  assert.equal(w.tunnelsOpened, 2);
+  // A service at 0 stays at 0: the call fails and nothing is raised.
+  w.desired = 0;
+  w.tunnelOpen = false;
+  assert.ok((await call('hivemind_mf_list')).isError);
+  assert.equal(w.desired, 0);
+  assert.equal(w.awsCalls.filter((c) => c.startsWith('ecs update-service')).length, 0, 'the agent profile never changes the desired count');
+  // No result carries an AWS credential or the token.
+  assert.doesNotMatch(JSON.stringify(first), new RegExp(TOKEN));
+  // Closing the server closes the tunnel and leaves the service alone.
+  w.desired = 1;
+  await client.close();
+  await server.close();
+  closed = true;
+  assert.equal(w.desired, 1);
+});
+
+test('agent profile: tunnel-only power refuses to start a stopped service or to stop one', async () => {
+  const { w, system, fetchImpl } = world({ desired: 0 });
+  const p = new ControlPlanePower({ apiUrl: 'http://127.0.0.1:4311/', operatorToken: TOKEN, config: { ...CONFIG, mode: 'on-demand' }, system, fetchImpl, tunnelOnly: true, pollMs: 1_000 });
+  const started = await p.start();
+  assert.equal(started.state, 'stopped');
+  assert.match(String(started.reason), /에이전트 프로필은 서비스를 올리지 않습니다/);
+  w.desired = 1;
+  assert.equal((await p.stop(true)).stopped, false);
+  assert.equal(w.desired, 1);
+  assert.equal(w.awsCalls.filter((c) => c.startsWith('ecs update-service')).length, 0);
+});
+
+test('agent profile settings pick up the Control Plane settings file', () => {
+  const home = mkdtempSync(join(tmpdir(), 'hm-agent-home-'));
+  try {
+    mkdirSync(join(home, '.hivemind'), { recursive: true });
+    writeFileSync(join(home, '.hivemind', 'aws-control-plane.json'), JSON.stringify({ region: 'ap-northeast-2', cluster: 'hm-cluster', service: 'hm-cp', profile: 'ops' }));
+    const tokenFile = join(home, '.hivemind', 'aws-agent-token.json');
+    writeFileSync(tokenFile, JSON.stringify({ AGENT_TOKEN: TOKEN }), { mode: 0o600 });
+    const settings = loadMcpSettings({ HOME: home, HIVEMIND_MCP_PROFILE: 'agent', HIVEMIND_AGENT_TOKEN_FILE: tokenFile });
+    assert.equal(settings.profile, 'agent');
+    assert.deepEqual(settings.controlPlanePower, { region: 'ap-northeast-2', cluster: 'hm-cluster', service: 'hm-cp', profile: 'ops' });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });

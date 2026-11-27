@@ -49,11 +49,14 @@ export function loadMcpSettings(env: NodeJS.ProcessEnv = process.env): McpSettin
         return value[key] as string;
       } finally { closeSync(descriptor); }
     };
+    // Optional, non-secret: how to reach the Control Plane through an SSM tunnel. Written by `npm run bootstrap`.
+    const powerFile = env.HIVEMIND_CONTROL_PLANE_CONFIG_FILE ?? (env.HOME ? join(env.HOME, '.hivemind', 'aws-control-plane.json') : undefined);
+    const controlPlanePower = powerFile ? loadControlPlanePowerConfig(powerFile) : undefined;
     // The agent profile runs with the Model Factory agent token only. Mixing it with an operator token is refused.
     if (env.HIVEMIND_AGENT_TOKEN_FILE !== undefined) {
       if (env.HIVEMIND_MCP_PROFILE !== 'agent' || env.HIVEMIND_OPERATOR_TOKEN !== undefined || env.HIVEMIND_OPERATOR_TOKEN_FILE !== undefined) throw configurationError();
       const apiUrl = env.HIVEMIND_API_URL ?? 'http://127.0.0.1:4310';
-      return { ...validateSettings({ apiUrl, operatorToken: readTokenFile(env.HIVEMIND_AGENT_TOKEN_FILE, 'AGENT_TOKEN') }), profile: 'agent' };
+      return { ...validateSettings({ apiUrl, operatorToken: readTokenFile(env.HIVEMIND_AGENT_TOKEN_FILE, 'AGENT_TOKEN') }), profile: 'agent', ...(controlPlanePower ? { controlPlanePower } : {}) };
     }
     if (env.HIVEMIND_MCP_PROFILE === 'agent') throw configurationError();
     if (env.HIVEMIND_OPERATOR_TOKEN !== undefined && env.HIVEMIND_OPERATOR_TOKEN_FILE !== undefined) throw configurationError();
@@ -64,9 +67,6 @@ export function loadMcpSettings(env: NodeJS.ProcessEnv = process.env): McpSettin
     if (rawProfile !== undefined && rawProfile !== 'default' && rawProfile !== 'aws' && rawProfile !== 'delivery' && rawProfile !== 'model-factory' && rawProfile !== 'collab' && rawProfile !== 'legacy') throw configurationError();
     const collabLocalAuthFile = env.HIVEMIND_COLLAB_LOCAL_AUTH_FILE;
     if (collabLocalAuthFile !== undefined && (collabLocalAuthFile.length === 0 || collabLocalAuthFile.length > 4096 || /[\0\r\n]/.test(collabLocalAuthFile))) throw configurationError();
-    // Optional, non-secret: how to start the dormant Control Plane. Written by `npm run bootstrap`.
-    const powerFile = env.HIVEMIND_CONTROL_PLANE_CONFIG_FILE ?? (env.HOME ? join(env.HOME, '.hivemind', 'aws-control-plane.json') : undefined);
-    const controlPlanePower = powerFile ? loadControlPlanePowerConfig(powerFile) : undefined;
     return { ...validateSettings({ apiUrl, operatorToken: operatorToken ?? developmentToken }), ...(rawProfile ? { profile: rawProfile } : {}), ...(collabLocalAuthFile ? { collabLocalAuthFile } : {}), ...(controlPlanePower ? { controlPlanePower } : {}) };
   } catch { throw configurationError(); }
 }
@@ -118,9 +118,27 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
   if (options.profile === 'agent') {
     // Model Factory agent: reads, drafts, training approval, wake, verifier, cancel and scoped AWS credentials.
     // Release approval and publication stay with the operator and are not registered here.
-    registerAwsStatusTool(server, { ...settings, fetchImpl, redact, scope: 'agent' });
-    registerModelFactoryOperatorTools(server, { ...settings, fetchImpl, redact, agent: true });
-    registerAgentCredentialTools(server, { ...settings, fetchImpl, ...(options.agentCredentialsDir ? { credentialsDir: options.agentCredentialsDir } : {}) });
+    // With the Control Plane settings file the server keeps the SSM tunnel open, as the MCP server process
+    // and with that file's AWS profile, but never changes the service's desired count.
+    let agentFetch = fetchImpl;
+    if (options.controlPlanePower) {
+      const tunnel = new ControlPlanePower({ ...settings, fetchImpl, config: options.controlPlanePower, tunnelOnly: true, ...(options.powerSystem ? { system: options.powerSystem } : {}) });
+      agentFetch = async (input, init) => {
+        try {
+          return await fetchImpl(input, init);
+        } catch (error) {
+          if (init?.signal?.aborted) throw error;
+          const reopened = await tunnel.reconnect(60_000).catch(() => null);
+          if (reopened?.state !== 'running') throw error;
+          return fetchImpl(input, init);
+        }
+      };
+      const closeServer = server.close.bind(server);
+      server.close = async () => { await tunnel.shutdown(); await closeServer(); };
+    }
+    registerAwsStatusTool(server, { ...settings, fetchImpl: agentFetch, redact, scope: 'agent' });
+    registerModelFactoryOperatorTools(server, { ...settings, fetchImpl: agentFetch, redact, agent: true });
+    registerAgentCredentialTools(server, { ...settings, fetchImpl: agentFetch, ...(options.agentCredentialsDir ? { credentialsDir: options.agentCredentialsDir } : {}) });
     return server;
   }
   if (options.profile === 'model-factory') {

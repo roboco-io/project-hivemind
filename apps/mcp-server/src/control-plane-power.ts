@@ -48,6 +48,11 @@ export interface ControlPlanePowerOptions {
   startTimeoutMs?: number;
   tunnelTimeoutMs?: number;
   pollMs?: number;
+  /**
+   * Agent profile: open or reopen the tunnel to a running task and nothing else. The service's desired
+   * count is never changed, whatever the configuration or the call.
+   */
+  tunnelOnly?: boolean;
 }
 
 export type PowerState = 'not_configured' | 'stopped' | 'starting' | 'running' | 'unknown';
@@ -173,7 +178,7 @@ export class ControlPlanePower {
   }
   /** True unless the configuration asks for the on-demand mode. */
   get alwaysOn(): boolean {
-    return this.config?.mode !== 'on-demand';
+    return this.options.tunnelOnly === true || this.config?.mode !== 'on-demand';
   }
 
   get configured(): boolean {
@@ -220,6 +225,7 @@ export class ControlPlanePower {
   }
 
   private async setDesiredCount(count: 0 | 1): Promise<void> {
+    if (this.options.tunnelOnly) throw new Error('tunnel-only: the desired count is never changed');
     await this.system!.aws(['ecs', 'update-service', '--cluster', this.config!.cluster, '--service', this.config!.service, '--desired-count', String(count)]);
   }
 
@@ -299,6 +305,9 @@ export class ControlPlanePower {
     const desired = await this.desiredCount();
     if (desired === null) return { state: 'unknown', started: false, reason: 'ECS 서비스 상태를 조회하지 못했습니다. AWS CLI 설치, 프로필과 로그인 상태를 확인하세요.' };
     let raisedByThisCall = false;
+    if (desired === 0 && this.options.tunnelOnly) {
+      return { state: 'stopped', started: false, reason: 'Control Plane 서비스가 0이라 터널을 열 수 없습니다. 에이전트 프로필은 서비스를 올리지 않습니다. 운영자에게 알리세요.' };
+    }
     if (desired === 0) {
       try {
         await this.setDesiredCount(1);
@@ -395,6 +404,9 @@ export class ControlPlanePower {
 
   async stop(force = false): Promise<StopResult> {
     if (!this.configured) return { stopped: false, reason: NOT_CONFIGURED };
+    if (this.options.tunnelOnly) {
+      return { stopped: false, reason: '에이전트 프로필은 Control Plane을 내리지 않습니다.' };
+    }
     if (this.alwaysOn && !force) {
       return { stopped: false, reason: 'Control Plane은 Fargate Spot에서 상시 운영 중입니다. 그래도 내리려면 force: true 로 호출하세요. 내린 서비스는 hivemind_control_plane_start 로 다시 올립니다.' };
     }
