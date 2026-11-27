@@ -301,7 +301,7 @@ export class AwsRuntimeStack extends Stack {
     // TerminateInstances is strictly conditioned on hivemind:managed-by=hivemind-model-factory.
     this.controlPlaneRole.addToPolicy(
       new iam.PolicyStatement({
-        actions: ['ec2:DescribeInstances', 'ec2:DescribeImages', 'ec2:RunInstances', 'ec2:CreateTags'],
+        actions: ['ec2:DescribeInstances', 'ec2:DescribeImages', 'ec2:DescribeSubnets', 'ec2:RunInstances', 'ec2:CreateTags'],
         resources: ['*'],
       }),
     );

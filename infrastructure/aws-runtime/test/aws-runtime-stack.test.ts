@@ -115,6 +115,8 @@ test('enforces strict 3-way secret separation across Control Plane, AI Worker, V
   assert.match(cpDoc, /ecs:RunTask/);
   assert.match(cpDoc, /ecs:TagResource/);
   assert.match(cpDoc, /ec2:TerminateInstances/);
+  // Subnet AZ IDs order the subnets by the planned AZ order at launch.
+  assert.match(cpDoc, /ec2:DescribeSubnets/);
   assert.match(cpDoc, /hivemind-model-factory/);
   assert.match(cpDoc, /ec2\.amazonaws\.com/);
   assert.match(cpDoc, /ModelFactoryTrainingInstanceRole/);
