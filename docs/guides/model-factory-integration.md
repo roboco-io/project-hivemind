@@ -83,7 +83,7 @@ AWS가 용량을 회수하면 Control Plane 작업은 2분 전에 SIGTERM을 받
 
 ## 3. MCP 클라이언트 연결 (Claude Code / Codex)
 
-`HIVEMIND_MCP_PROFILE=model-factory`를 지정하면 SW 전달 도구 7개 + 모델 팩토리 도구 10개(총 17개)가 노출된다. 프로필을 지정하지 않으면 협업 도구, 상태 조회, Control Plane 기동·종료, 최소 권한 자격 증명 발급까지 포함한 31개가 노출된다.
+`HIVEMIND_MCP_PROFILE=model-factory`를 지정하면 SW 전달 도구 7개 + 모델 팩토리 도구 10개(총 17개)가 노출된다. 프로필을 지정하지 않으면 협업 도구, 상태 조회, Control Plane 기동·종료, 최소 권한 자격 증명 발급까지 포함한 31개와 자율 트리거 도구 4개, 모두 35개가 노출된다.
 
 ```json
 {
@@ -217,7 +217,7 @@ Control Plane은 작업을 등록할 때 순서를 계산해 작업의 `placemen
 
 학습 승인을 에이전트에 허용한 것은 사람의 결정(2026-11-27)이다. 과금은 중앙 예산 상한과 작업별 비용 상한이 막는다. Hugging Face 공개는 사람만 승인한다.
 
-에이전트의 MCP 설정은 다음과 같다. `dist/`는 HIVEMIND 저장소에서 `npm run build`로 만든다. `HIVEMIND_AGENT_TOKEN_FILE`을 주면 프로필은 반드시 `agent`여야 하고, 운영자 토큰 설정을 함께 주면 MCP 서버가 시작을 거부한다. `agent` 프로필의 도구는 상태 조회, Model Factory 도구 8개(공개 승인·다시 게시 제외), 최소 권한 자격 증명 발급으로 모두 10개다. Control Plane 기동·종료 도구는 없다.
+에이전트의 MCP 설정은 다음과 같다. `dist/`는 HIVEMIND 저장소에서 `npm run build`로 만든다. `HIVEMIND_AGENT_TOKEN_FILE`을 주면 프로필은 반드시 `agent`여야 하고, 운영자 토큰 설정을 함께 주면 MCP 서버가 시작을 거부한다. `agent` 프로필의 도구는 상태 조회, Model Factory 도구 8개(공개 승인·다시 게시 제외), 최소 권한 자격 증명 발급, 자율 트리거 조회로 모두 11개다. Control Plane 기동·종료 도구는 없다.
 
 `agent` 프로필의 MCP 서버는 `~/.hivemind/aws-control-plane.json`(경로는 `HIVEMIND_CONTROL_PLANE_CONFIG_FILE`로 바꿀 수 있다)이 있으면 SSM 터널을 스스로 관리한다. 도구 호출이 연결 실패로 끝나면, 지금 실행 중인 Control Plane 작업으로 터널을 열거나 다시 열고 그 호출을 한 번 다시 시도한다. 첫 호출과 Spot 회수 뒤의 호출이 이렇게 붙는다. 이 프로필은 설정 파일의 `mode`와 관계없이 서비스의 desiredCount를 바꾸지 않는다. 서비스가 0이면 호출은 실패하고, 운영자가 서비스를 올려야 한다. 터널에 필요한 AWS 호출(`ecs:DescribeServices`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ssm:StartSession`)은 MCP 서버 프로세스가 설정 파일의 `profile`로 실행하며, 도구 결과에는 자격 증명이 들어가지 않는다. 이 호출은 에이전트의 셸 명령이 아니므로 클라이언트 훅이 막지 않는다. 그래서 설정 파일의 `profile`은 관리자 프로필 대신 위 네 권한만 가진 프로필을 쓰는 것이 좋다.
 
@@ -259,6 +259,20 @@ duration_seconds = 43200
 Control Plane은 부트스트랩에서 IMDSv2로 인스턴스 ID를 읽어 `HIVEMIND_ARTIFACT_PREFIX`를 `staging/<역할 ID>:<인스턴스 ID>`로 정한다. 작업 접두사는 `HIVEMIND_JOB_ARTIFACT_PREFIX`로 따로 넘긴다. 학습 스크립트는 지금처럼 `HIVEMIND_ARTIFACT_PREFIX`에 산출물과 `receipt.json`을 올리면 된다. 영수증의 `s3Prefix`도 이 값이어야 한다. Control Plane은 점검(wake) 때 자기가 띄운 인스턴스 ID로 스테이징 폴더를 계산해 영수증을 읽는다. 영수증의 작업 ID와 접두사가 맞으면 파일을 작업 접두사로 서버 측 복사하고, 접두사를 작업 접두사로 바꾼 영수증을 기록한다. 스테이징 폴더는 14일 뒤 수명 주기 규칙으로 지워진다. 한 파일의 서버 측 복사는 5 GiB까지만 된다.
 
 이 방식은 학습 코드와 부트스트랩을 모두 막는다. 이슈 #19에서 제안한 학습 프로세스용 `GetScopedCredentials`는 쓰지 않았다. 학습 프로세스를 root가 아닌 사용자로 바꾸고 자격 증명 갱신 장치를 두어야 해서 SMF 스크립트를 바꿔야 하기 때문이다. 스테이징 도입 전에 기동한 작업은 작업 접두사에 직접 올린 영수증도 그대로 인정한다.
+
+### 자율 반복을 위한 플랫폼 기능 (이슈 #20)
+
+Silicon Model Factory(SMF)는 과제 조사부터 Hugging Face 공개까지를 사람 개입 없이 반복한다(2026-11-28 사람의 결정, SMF `plans/autonomy-loop.md`). 반복의 정책은 SMF가 정하고, HIVEMIND는 아래 다섯 기능으로 실행·권한·감사를 맡는다. 각 기능은 운영자 설정으로 허용한 저장소에만 동작한다.
+
+**1. 주기 트리거.** 트리거는 저장소, 기준 브랜치, 에이전트 브랜치 접두사, 작업 지시, 간격(5분 이상), 보호 경로, 검사 명령을 가진다. 운영자가 `hivemind_autonomy_trigger_configure`(또는 `PUT /api/autonomy/triggers/<id>`)로 만들면 꺼진 상태로 생기고, `hivemind_autonomy_trigger_enable`로 켠다. 켜진 트리거는 간격마다 다음을 한다. 같은 저장소·접두사의 전달 작업이 `awaiting_approval`, `queued`, `running`, `verified`, `draft_pr_published` 중 하나면 보내지 않고 이유를 기록한다. 아니면 GitHub App 토큰으로 기준 브랜치를 복제해 머리 커밋의 번들을 S3에 올리고, 보호 경로 아래의 파일을 수용 파일로 고정하고, 자동 병합과 에이전트 접근을 가진 전달 작업을 등록·승인한 뒤 서울 워커를 띄운다. 워커 기동이 실패하면 그 작업을 취소해 다음 간격에 다시 보낸다. 켜기·끄기·설정은 운영자 토큰만 할 수 있고, 에이전트 토큰은 `hivemind_autonomy_triggers`로 조회만 한다. 모든 변경과 발송은 트리거 이벤트로 남는다. 상태는 전달 작업과 같은 Aurora DSQL에 있다.
+
+**2. 자동 공개.** 학습 작업의 `releasePolicy.autoPublish: true`는 독립 검증기가 영수증과 같은 산출물로 공개 검사를 통과시키면 운영자 승인 없이 공개한다. Control Plane은 Hugging Face 저장소가 없으면 정책의 공개 범위로 만들고, 승인을 `Auto-publish policy`로 기록한 뒤 게시한다. 게시 기록에는 Hub가 영수증과 같다고 확인한 파일 수(`verifiedFiles`)와 승인 주체(`approvedBy: auto_publish_policy`)가 남는다. 운영자의 자체 검증 기록(`verify-release`)으로는 자동 공개되지 않는다. 등록할 때 저장소가 운영자 접두사(`HIVEMIND_MF_AUTO_PUBLISH_REPO_PREFIXES`, 배포 기본값 `roboco-io/`) 아래에 있어야 하고, 공개 직전에도 다시 확인한다. 검증 결과를 놓쳤거나 게시가 실패한 작업은 5분 주기 점검이 다시 처리한다(게시는 작업당 3회까지).
+
+**3. 워커 도구.** 워커 이미지에는 Python 3.12(uv로 설치)와 AWS CLI가 있다. 전달 작업의 `executionPolicy.hivemindAgentAccess: true`(운영자 목록의 저장소만)는 모델에 `HIVEMIND_API_URL`과 에이전트 토큰(`HIVEMIND_AGENT_TOKEN`)을 준다. 모델은 이 토큰으로 `POST /api/agent-credentials`의 최소 권한 자격 증명을 받아 입력 번들을 올리고, Model Factory 작업을 만들고 학습을 승인할 수 있다. 토큰은 출력에서 가려지고, 토큰이 들어간 패치는 올리지 않는다. 에이전트 토큰은 서울 워커에만 있으므로 트리거의 작업은 서울에서만 실행된다. CPU를 오래 쓰는 데이터 구축은 Fargate 워커(작업당 최대 2시간, 임시 저장소 21-200 GiB)보다 CPU 인스턴스 유형의 Model Factory 작업(예: `c7i.2xlarge` 스팟)으로 하기를 권한다. 비용이 중앙 원장에 기록되고, 시간 제한과 디스크를 작업마다 정할 수 있기 때문이다.
+
+**4. 자동 병합.** 전달 정책의 `autoMerge: true`는 `protectedPaths`(`dir/` 접두사, 정확한 파일, 구간마다 `*` 하나)와 함께 써야 하고, 저장소가 운영자 목록(`HIVEMIND_DELIVERY_AUTO_MERGE_REPOS`, 배포 기본값 `roboco-io/silicon-model-factory`)에 있어야 한다. 검증기가 검사 명령을 통과시키고 Draft PR이 열리면, Control Plane은 검증된 패치의 경로(이름 변경 포함)를 보호 경로와 비교한다. 겹치지 않으면 PR을 준비 상태로 바꾸고 검증한 머리 커밋에 고정해 squash 병합한다. 겹치거나, 머리 커밋이 바뀌었거나, 병합이 실패하면 병합하지 않고, 작업에 이유를 기록하고, 긴급 알림을 보내고, 그 저장소의 트리거를 끈다. 트리거가 보내는 작업은 보호 경로 아래 파일을 수용 파일로 고정하므로 검증기도 그 변경을 실패로 판정한다.
+
+**5. 알림.** Control Plane은 SNS 주제(`HIVEMIND_NOTIFY_TOPIC_ARN`, 배포 스크립트가 us-east-2의 `smf-budget`을 찾는다)로 공개 성공·실패, 예산 상한에 걸린 학습 승인, 자동 병합 거절을 보낸다. 운영자와 에이전트는 `POST /api/notifications`(`kind`: `task_finished`, `loop_stopped`, `budget_exhausted` 등)로 과제 종료와 반복 정지를 보낸다. 메시지 속성 `channel`은 긴급(`budget_exhausted`, `loop_stopped`, `auto_merge_refused`)이면 `urgent`, 나머지는 `email`이다. 문자 구독에 필터 정책 `{"channel":["urgent"]}`을 두면 문자는 긴급 알림만 받는다. 보내는 양은 시간당 30건으로 제한한다.
 
 ### 원장 저장소와 TTL Guard 정산 (`HIVEMIND_MF_STORAGE`)
 
