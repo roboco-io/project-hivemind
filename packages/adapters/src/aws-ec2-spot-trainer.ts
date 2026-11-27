@@ -63,6 +63,39 @@ export interface Ec2SpotTrainerPort {
   sweepExpiredSpotInstances(region: string, nowMs?: number, signal?: AbortSignal): Promise<ExpiredSpotSweepResult>;
   /** Maps each subnet to its AZ ID (for example `use2-az1`). Optional: without it subnets keep their listed order. */
   describeSubnetAzIds?(region: string, subnetIds: string[], signal?: AbortSignal): Promise<Record<string, string>>;
+  /**
+   * Current Spot placement scores for one instance type, per region (`azId` null) or per AZ.
+   * Optional: without it the plan uses the feed only.
+   */
+  getSpotPlacementScores?(input: SpotPlacementScoreQuery, signal?: AbortSignal): Promise<LiveSpotPlacementScore[]>;
+}
+
+export interface SpotPlacementScoreQuery {
+  /** Region whose EC2 endpoint answers; the scores cover `regions`. */
+  endpointRegion: string;
+  instanceType: string;
+  regions: string[];
+  singleAvailabilityZone: boolean;
+}
+
+export interface LiveSpotPlacementScore {
+  region: string;
+  azId: string | null;
+  score: number;
+}
+
+/** Reads scores from an EC2 GetSpotPlacementScores response. */
+export function parseSpotPlacementScores(xml: string): LiveSpotPlacementScore[] {
+  const result: LiveSpotPlacementScore[] = [];
+  for (const setBlock of extractTagBlocks(xml, 'spotPlacementScoreSet')) {
+    for (const item of extractTagBlocks(setBlock, 'item')) {
+      const region = firstTagValue(item, 'region');
+      const score = Number(firstTagValue(item, 'score'));
+      if (!region || !Number.isInteger(score) || score < 1 || score > 10) continue;
+      result.push({ region, azId: firstTagValue(item, 'availabilityZoneId'), score });
+    }
+  }
+  return result;
 }
 
 /** Reads subnet ID to AZ ID pairs from an EC2 DescribeSubnets response. */
@@ -407,6 +440,23 @@ export class AwsEc2SpotTrainer implements Ec2SpotTrainerPort {
       params[`SubnetId.${index + 1}`] = id;
     });
     return parseSubnetAzIds(await this.callEc2Query(region, params, signal));
+  }
+
+  async getSpotPlacementScores(input: SpotPlacementScoreQuery, signal?: AbortSignal): Promise<LiveSpotPlacementScore[]> {
+    if (!/^[a-z0-9][a-z0-9.-]{2,39}$/.test(input.instanceType)) throw new Error(`Invalid instance type: ${input.instanceType}`);
+    if (input.regions.length === 0 || input.regions.length > 10) throw new Error('GetSpotPlacementScores needs 1..10 regions');
+    const params: Record<string, string> = {
+      Action: 'GetSpotPlacementScores',
+      'InstanceType.1': input.instanceType,
+      TargetCapacity: '1',
+      SingleAvailabilityZone: input.singleAvailabilityZone ? 'true' : 'false',
+    };
+    input.regions.forEach((region, index) => {
+      if (!/^[a-z]{2}-[a-z]+-\d+$/.test(region)) throw new Error(`Invalid region: ${region}`);
+      params[`RegionName.${index + 1}`] = region;
+    });
+    const scores = parseSpotPlacementScores(await this.callEc2Query(input.endpointRegion, params, signal));
+    return input.singleAvailabilityZone ? scores.filter((s) => s.azId) : scores.map((s) => ({ ...s, azId: null }));
   }
 
   async describeInstance(region: string, instanceId: string, signal?: AbortSignal): Promise<DescribedSpotInstance> {

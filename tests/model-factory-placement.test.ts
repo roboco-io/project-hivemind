@@ -3,7 +3,12 @@ import test from 'node:test';
 import Fastify from 'fastify';
 import { registerModelFactoryRoutes } from '../apps/control-plane/src/model-factory-api.js';
 import { ModelFactoryOrchestrator } from '../apps/control-plane/src/model-factory-orchestrator.js';
-import { parseSubnetAzIds, type Ec2SpotTrainerPort } from '../packages/adapters/src/aws-ec2-spot-trainer.js';
+import {
+  parseSpotPlacementScores,
+  parseSubnetAzIds,
+  type Ec2SpotTrainerPort,
+  type SpotPlacementScoreQuery,
+} from '../packages/adapters/src/aws-ec2-spot-trainer.js';
 import type { S3ObjectPort } from '../packages/adapters/src/aws-s3-artifacts.js';
 import type { SpotPlacementFeedPort } from '../packages/adapters/src/spot-placement-feed.js';
 import type { CreateModelFactoryJob, ModelFactoryJob } from '../packages/contracts/src/model-factory.js';
@@ -155,7 +160,12 @@ const SUBNET_AZ: Record<string, string> = {
   'subnet-0ccccccccccccccc3': 'use2-az2',
 };
 
-function harness(feed: SpotMarketSnapshot | null, failSubnets: string[] = []) {
+function harness(
+  feed: SpotMarketSnapshot | null,
+  failSubnets: string[] = [],
+  live?: (query: SpotPlacementScoreQuery) => { region: string; azId: string | null; score: number }[],
+) {
+  const liveQueries: SpotPlacementScoreQuery[] = [];
   const store = new ModelFactoryStore(':memory:', { globalBudgetCapMicros: 5_000_000 });
   const launches: Launch[] = [];
   const ec2: Ec2SpotTrainerPort = {
@@ -185,6 +195,14 @@ function harness(feed: SpotMarketSnapshot | null, failSubnets: string[] = []) {
     async describeSubnetAzIds(_region, subnetIds) {
       return Object.fromEntries(subnetIds.map((id) => [id, SUBNET_AZ[id]!]));
     },
+    ...(live
+      ? {
+          async getSpotPlacementScores(query: SpotPlacementScoreQuery) {
+            liveQueries.push(query);
+            return live(query);
+          },
+        }
+      : {}),
   };
   const s3: S3ObjectPort = {
     async putObject() {
@@ -206,7 +224,7 @@ function harness(feed: SpotMarketSnapshot | null, failSubnets: string[] = []) {
       'us-east-1': { subnetIds: ['subnet-0ddddddddddddddd4'], amiId: 'ami-0eeeeeeeeeeeeeee1' },
     },
   });
-  return { store, orchestrator, launches };
+  return { store, orchestrator, launches, liveQueries };
 }
 
 function jobInput(): CreateModelFactoryJob {
@@ -287,4 +305,77 @@ test('without any feed the job region is tried first, as before', async () => {
   assert.equal(job.placementPlan?.status, 'feed_unavailable');
   await orchestrator.approveAndLaunchTraining(job.id, job.approvalFingerprint, 'ok');
   assert.equal(launches[0]!.region, 'us-east-1');
+});
+
+test('live scores are added to the feed trend as the newest sample', () => {
+  // Live says us-east-2 dropped to 2 now; us-east-1 is still behind on its window minimum of 2, so the
+  // average decides: us-east-1 (6.71) now beats us-east-2 (6.29).
+  const plan = planTrainingPlacement(snapshot(), COMPUTE, NOW, null, {
+    at: '2026-11-27T03:29:00.000Z',
+    scores: [
+      { region: 'us-east-2', azId: null, score: 2 },
+      { region: 'us-east-1', azId: null, score: 9 },
+      { region: 'us-east-2', azId: 'use2-az2', score: 1 },
+    ],
+  });
+  assert.equal(plan.liveScoredAt, '2026-11-27T03:29:00.000Z');
+  assert.deepEqual(plan.regions.map((r) => [r.region, r.trend?.min, r.trend?.latest]), [
+    ['us-east-1', 2, 9],
+    ['us-east-2', 2, 2],
+    ['ap-northeast-2', undefined, undefined],
+  ]);
+  const use2 = plan.regions.find((r) => r.region === 'us-east-2')!;
+  assert.deepEqual(use2.azs.map((az) => az.azId), ['use2-az1', 'use2-az2', 'use2-az3']);
+  assert.match(plan.note, /feed pool 'g6e\.12xlarge' over 72 hours and live scores of g6e\.12xlarge/);
+});
+
+test('a type the feed does not cover is ranked by live scores alone', () => {
+  const plan = planTrainingPlacement(snapshot(), { ...COMPUTE, instanceType: 'g4dn.xlarge' }, NOW, null, {
+    at: '2026-11-27T03:29:00.000Z',
+    scores: [
+      { region: 'us-east-1', azId: null, score: 1 },
+      { region: 'us-east-2', azId: null, score: 9 },
+      { region: 'us-east-2', azId: 'use2-az1', score: 9 },
+      { region: 'us-east-2', azId: 'use2-az3', score: 3 },
+      { region: 'us-east-2', azId: 'use2-az9', score: 99 },
+    ],
+  });
+  assert.equal(plan.status, 'ranked');
+  assert.equal(plan.feedPool, null);
+  assert.match(plan.note, /^Feed does not cover g4dn\.xlarge\. Ranked by .* live scores of g4dn\.xlarge/);
+  assert.deepEqual(plan.regions.map((r) => r.region), ['us-east-2', 'us-east-1', 'ap-northeast-2']);
+  // AZs come from the live answer too; an out-of-range score is ignored.
+  assert.deepEqual(plan.regions[0]!.azs.map((az) => az.azId), ['use2-az1', 'use2-az3']);
+});
+
+test('GetSpotPlacementScores XML is read into regional and per-AZ scores', () => {
+  const xml = `<GetSpotPlacementScoresResponse><requestId>r</requestId><spotPlacementScoreSet>
+    <item><availabilityZoneId>use1-az6</availabilityZoneId><region>us-east-1</region><score>1</score></item>
+    <item><region>us-east-2</region><score>9</score></item>
+    <item><region>us-west-2</region><score>11</score></item>
+  </spotPlacementScoreSet></GetSpotPlacementScoresResponse>`;
+  assert.deepEqual(parseSpotPlacementScores(xml), [
+    { region: 'us-east-1', azId: 'use1-az6', score: 1 },
+    { region: 'us-east-2', azId: null, score: 9 },
+  ]);
+});
+
+test('registration asks EC2 for regional and per-AZ live scores of the job type and keeps going when it fails', async () => {
+  const { store, orchestrator, liveQueries } = harness(snapshot(), [], (query) => {
+    if (query.singleAvailabilityZone) throw new Error('AWS EC2 GetSpotPlacementScores failed with HTTP 403');
+    return [
+      { region: 'us-east-1', azId: null, score: 9 },
+      { region: 'us-east-2', azId: null, score: 9 },
+    ];
+  });
+  const job = await orchestrator.planAtRegistration(await store.create({ ...jobInput(), compute: { ...jobInput().compute, instanceType: 'g4dn.xlarge' } }));
+  assert.deepEqual(
+    liveQueries.map((q) => [q.endpointRegion, q.instanceType, q.regions.join(','), q.singleAvailabilityZone]).sort(),
+    [
+      ['us-east-1', 'g4dn.xlarge', 'us-east-1,us-east-2', false],
+      ['us-east-1', 'g4dn.xlarge', 'us-east-1,us-east-2', true],
+    ],
+  );
+  assert.equal(job.placementPlan?.status, 'ranked');
+  assert.deepEqual(job.placementPlan?.regions.map((r) => r.region), ['us-east-1', 'us-east-2']);
 });

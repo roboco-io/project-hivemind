@@ -58,7 +58,10 @@ export interface TrainingComputeSpec {
   inputs?: ModelTrainingInputSpec;
 }
 
-/** Spot Placement Score summary of one region or AZ over the trend window. Scores are 1 (low) to 10 (high). */
+/**
+ * Spot Placement Score summary of one region or AZ: the feed samples in the trend window plus the live score.
+ * Scores are 1 (low) to 10 (high).
+ */
 export interface PlacementScoreTrend {
   latest: number;
   min: number;
@@ -92,6 +95,8 @@ export interface TrainingPlacementPlan {
   feedPool: string | null;
   /** Instance types the feed pool covers. */
   feedPoolMembers: string[];
+  /** When live EC2 GetSpotPlacementScores results were added as the newest sample. Null when none were. */
+  liveScoredAt: string | null;
   trendWindowHours: number;
   regions: PlannedPlacementRegion[];
   plannedAt: string;

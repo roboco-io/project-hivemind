@@ -39,8 +39,8 @@ export function resolveFeedPool(
   return null;
 }
 
-function trendOf(series: readonly SpotTimeSeriesPoint[] | undefined, cutoffMs: number): PlacementScoreTrend | null {
-  if (!Array.isArray(series)) return null;
+function windowValues(series: readonly SpotTimeSeriesPoint[] | undefined, cutoffMs: number): number[] {
+  if (!Array.isArray(series)) return [];
   const values: number[] = [];
   for (const point of series) {
     if (!Array.isArray(point)) continue;
@@ -48,6 +48,10 @@ function trendOf(series: readonly SpotTimeSeriesPoint[] | undefined, cutoffMs: n
     const value = point[1];
     if (Number.isFinite(at) && at >= cutoffMs && typeof value === 'number' && Number.isFinite(value)) values.push(value);
   }
+  return values;
+}
+
+function trendOf(values: number[]): PlacementScoreTrend | null {
   if (values.length === 0) return null;
   const avgOf = (list: number[]) => list.reduce((a, b) => a + b, 0) / list.length;
   const mid = Math.floor(values.length / 2);
@@ -78,70 +82,71 @@ function compareStability(a: PlacementScoreTrend, b: PlacementScoreTrend): numbe
   return b.min - a.min || b.avg - a.avg || b.latest - a.latest;
 }
 
+/** Current scores read from EC2 GetSpotPlacementScores for the job's own instance type. */
+export interface LivePlacementScores {
+  at: string;
+  /** `azId` null: a regional score. */
+  scores: { region: string; azId: string | null; score: number }[];
+}
+
 /**
  * Orders the job's regions, and the AZs inside each region, by Spot Placement Score stability.
- * Regions without scores keep their listed order after the scored ones. The plan never adds or removes a
- * region, so it stays inside what the human approved.
+ * The feed gives the trend; live scores, when present, are added as the newest sample. Regions without
+ * scores keep their listed order after the scored ones. The plan never adds or removes a region, so it
+ * stays inside what the human approved.
  */
 export function planTrainingPlacement(
   snapshot: SpotMarketSnapshot | null,
   compute: Pick<TrainingComputeSpec, 'region' | 'candidateRegions' | 'instanceType' | 'workloadClass'>,
   nowMs: number,
   feedUrl: string | null = null,
+  live: LivePlacementScores | null = null,
 ): TrainingPlacementPlan {
   const regions = trainingCandidateRegions(compute);
-  const base = {
-    feedUrl,
-    feedGeneratedAt: snapshot?.generated ?? null,
-    trendWindowHours: PLACEMENT_TREND_WINDOW_HOURS,
-    plannedAt: new Date(nowMs).toISOString(),
-  };
-  const unranked = (status: TrainingPlacementPlan['status'], note: string, feedPool: string | null = null): TrainingPlacementPlan => ({
-    ...base,
-    status,
-    note,
-    feedPool,
-    feedPoolMembers: feedPool && snapshot ? [...(snapshot.typeMeta[feedPool]?.members ?? [])] : [],
-    regions: regions.map((region) => ({ region, trend: null, priceUsd: null, azs: [] })),
-  });
+  const liveScores = live?.scores.filter((s) => Number.isInteger(s.score) && s.score >= 1 && s.score <= 10) ?? [];
 
-  if (!snapshot) return unranked('feed_unavailable', 'Spot placement score feed is unavailable; regions keep their listed order.');
-  if (!Number.isFinite(snapshot.generatedAtMs) || nowMs - snapshot.generatedAtMs > PLACEMENT_MAX_FEED_AGE_HOURS * 3_600_000) {
-    return unranked(
-      'feed_stale',
-      `Spot placement score feed (${snapshot.generated}) is older than ${PLACEMENT_MAX_FEED_AGE_HOURS} hours; regions keep their listed order.`,
-    );
+  let feedProblem: { status: TrainingPlacementPlan['status']; note: string } | null = null;
+  let pool: string | null = null;
+  if (!snapshot) {
+    feedProblem = { status: 'feed_unavailable', note: 'Spot placement score feed is unavailable.' };
+  } else if (!Number.isFinite(snapshot.generatedAtMs) || nowMs - snapshot.generatedAtMs > PLACEMENT_MAX_FEED_AGE_HOURS * 3_600_000) {
+    feedProblem = {
+      status: 'feed_stale',
+      note: `Spot placement score feed (${snapshot.generated}) is older than ${PLACEMENT_MAX_FEED_AGE_HOURS} hours.`,
+    };
+  } else {
+    pool = resolveFeedPool(snapshot, compute);
+    if (!pool) {
+      feedProblem = {
+        status: 'type_not_in_feed',
+        note: compute.workloadClass
+          ? `Feed has no pool '${compute.workloadClass}'.`
+          : `Feed does not cover ${compute.instanceType}.`,
+      };
+    }
   }
-  const pool = resolveFeedPool(snapshot, compute);
-  if (!pool) {
-    return unranked(
-      'type_not_in_feed',
-      compute.workloadClass
-        ? `Feed has no pool '${compute.workloadClass}'; regions keep their listed order.`
-        : `Feed does not cover ${compute.instanceType}; regions keep their listed order. Set compute.workloadClass to a feed pool to rank by a similar pool.`,
-    );
-  }
-
-  const cutoffMs = snapshot.generatedAtMs - PLACEMENT_TREND_WINDOW_HOURS * 3_600_000;
-  const regionScores = snapshot.scores[pool] ?? {};
-  const regionPrices = snapshot.prices[pool] ?? {};
-  const azScores = snapshot.azScores[pool] ?? {};
-  const noPool = new Set(snapshot.noPool[pool] ?? []);
+  const feed = pool && snapshot ? snapshot : null;
+  const cutoffMs = (feed?.generatedAtMs ?? nowMs) - PLACEMENT_TREND_WINDOW_HOURS * 3_600_000;
+  const regionScores = feed ? (feed.scores[pool!] ?? {}) : {};
+  const regionPrices = feed ? (feed.prices[pool!] ?? {}) : {};
+  const azScores = feed ? (feed.azScores[pool!] ?? {}) : {};
+  const noPool = new Set(feed ? (feed.noPool[pool!] ?? []) : []);
 
   const planned: PlannedPlacementRegion[] = regions.map((region) => {
+    const azIds = new Set<string>();
+    if (feed) for (const [azId, meta] of Object.entries(feed.azMeta)) if (meta?.region === region) azIds.add(azId);
+    for (const s of liveScores) if (s.region === region && s.azId) azIds.add(s.azId);
     const azs: { azId: string; trend: PlacementScoreTrend }[] = [];
-    for (const [azId, meta] of Object.entries(snapshot.azMeta)) {
-      if (meta?.region !== region) continue;
-      const trend = trendOf(azScores[azId], cutoffMs);
+    for (const azId of azIds) {
+      const values = noPool.has(region) ? [] : windowValues(azScores[azId], cutoffMs);
+      for (const s of liveScores) if (s.azId === azId) values.push(s.score);
+      const trend = trendOf(values);
       if (trend) azs.push({ azId, trend });
     }
     azs.sort((a, b) => compareStability(a.trend, b.trend) || a.azId.localeCompare(b.azId));
-    return {
-      region,
-      trend: noPool.has(region) ? null : trendOf(regionScores[region], cutoffMs),
-      priceUsd: latestPrice(regionPrices[region]),
-      azs: noPool.has(region) ? [] : azs,
-    };
+    const values = noPool.has(region) ? [] : windowValues(regionScores[region], cutoffMs);
+    for (const s of liveScores) if (s.region === region && s.azId === null) values.push(s.score);
+    return { region, trend: trendOf(values), priceUsd: latestPrice(regionPrices[region]), azs };
   });
 
   const order = new Map(regions.map((region, index) => [region, index]));
@@ -159,17 +164,26 @@ export function planTrainingPlacement(
   });
 
   const first = planned[0]!;
-  const note = first.trend
-    ? `Ranked by the lowest, average and latest Spot placement score of '${pool}' over ${PLACEMENT_TREND_WINDOW_HOURS} hours. ` +
-      `First: ${first.region}${first.azs[0] ? ` (${first.azs[0].azId})` : ''}, min ${first.trend.min}, avg ${first.trend.avg}, latest ${first.trend.latest}.`
-    : `Feed pool '${pool}' has no scores for these regions; regions keep their listed order.`;
+  const sources = [feed ? `the feed pool '${pool}' over ${PLACEMENT_TREND_WINDOW_HOURS} hours` : null, liveScores.length ? `live scores of ${compute.instanceType}` : null]
+    .filter(Boolean)
+    .join(' and ');
+  const ranked = first.trend !== null;
+  const note = ranked
+    ? `${feedProblem ? `${feedProblem.note} ` : ''}Ranked by the lowest, average and latest Spot placement score from ${sources}. ` +
+      `First: ${first.region}${first.azs[0] ? ` (${first.azs[0].azId})` : ''}, min ${first.trend!.min}, avg ${first.trend!.avg}, latest ${first.trend!.latest}.`
+    : `${feedProblem?.note ?? `Feed pool '${pool}' has no scores for these regions.`} No live scores. Regions keep their listed order.` +
+      (feedProblem?.status === 'type_not_in_feed' && !compute.workloadClass ? ' Set compute.workloadClass to a feed pool to rank by a similar pool.' : '');
   return {
-    ...base,
-    status: first.trend ? 'ranked' : 'type_not_in_feed',
+    status: ranked ? 'ranked' : (feedProblem?.status ?? 'type_not_in_feed'),
     note,
+    feedUrl,
+    feedGeneratedAt: snapshot?.generated ?? null,
     feedPool: pool,
-    feedPoolMembers: [...(snapshot.typeMeta[pool]?.members ?? [])],
+    feedPoolMembers: pool && snapshot ? [...(snapshot.typeMeta[pool]?.members ?? [])] : [],
+    liveScoredAt: liveScores.length ? live!.at : null,
+    trendWindowHours: PLACEMENT_TREND_WINDOW_HOURS,
     regions: planned,
+    plannedAt: new Date(nowMs).toISOString(),
   };
 }
 

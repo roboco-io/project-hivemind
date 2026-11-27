@@ -18,7 +18,12 @@ import {
 import type { SpotPlacementFeedPort } from '../../../packages/adapters/src/spot-placement-feed.js';
 import type { ModelFactoryStore } from '../../../packages/core/src/model-factory.js';
 import { calculateActualCostMicros } from '../../../packages/core/src/model-factory-guard-settlement.js';
-import { orderSubnetsByPlannedAzs, planTrainingPlacement } from '../../../packages/core/src/model-factory-placement.js';
+import {
+  type LivePlacementScores,
+  orderSubnetsByPlannedAzs,
+  planTrainingPlacement,
+  trainingCandidateRegions,
+} from '../../../packages/core/src/model-factory-placement.js';
 
 export interface TrustedHfReleasePublisherPort {
   publish(input: {
@@ -249,11 +254,35 @@ export class ModelFactoryOrchestrator {
     }
   }
 
-  /** Plans the region and AZ order from the Spot placement score feed. Never throws. */
+  /**
+   * Plans the region and AZ order from the Spot placement score feed trend and the live EC2 scores of the
+   * job's instance type. Either source may be missing. Never throws.
+   */
   async planPlacement(job: ModelFactoryJob, signal?: AbortSignal): Promise<TrainingPlacementPlan> {
     const feed = this.options.spotFeed;
-    const snapshot = feed ? await feed.getSnapshot(signal).catch(() => null) : null;
-    return planTrainingPlacement(snapshot, job.compute, this.now(), feed?.feedUrl ?? null);
+    const [snapshot, live] = await Promise.all([
+      feed ? feed.getSnapshot(signal).catch(() => null) : Promise.resolve(null),
+      this.liveScores(job, signal),
+    ]);
+    return planTrainingPlacement(snapshot, job.compute, this.now(), feed?.feedUrl ?? null, live);
+  }
+
+  private async liveScores(job: ModelFactoryJob, signal?: AbortSignal): Promise<LivePlacementScores | null> {
+    const ec2 = this.options.ec2;
+    if (!ec2.getSpotPlacementScores) return null;
+    const query = {
+      endpointRegion: job.compute.region,
+      instanceType: job.compute.instanceType,
+      regions: trainingCandidateRegions(job.compute).slice(0, 10),
+    };
+    const at = new Date(this.now()).toISOString();
+    // Regional and per-AZ scores are separate EC2 answers; keep whichever one succeeds.
+    const [regional, perAz] = await Promise.all([
+      ec2.getSpotPlacementScores({ ...query, singleAvailabilityZone: false }, signal).catch(() => []),
+      ec2.getSpotPlacementScores({ ...query, singleAvailabilityZone: true }, signal).catch(() => []),
+    ]);
+    const scores = [...regional, ...perAz];
+    return scores.length ? { at, scores } : null;
   }
 
   /** Plans the placement for a newly registered job and stores it. Returns the job unchanged when that fails. */
