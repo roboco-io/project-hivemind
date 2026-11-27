@@ -144,6 +144,15 @@ test('enforces strict 3-way secret separation across Control Plane, AI Worker, V
   assert.match(cpExecDoc, /WorkerTokenSecret/);
   assert.match(wkExecDoc, /WorkerTokenSecret/);
   assert.doesNotMatch(wkExecDoc, /OperatorTokenSecret/);
+  // Only the Control Plane reads the Model Factory agent token.
+  assert.match(cpExecDoc, /AgentTokenSecret/);
+  assert.doesNotMatch(wkExecDoc, /AgentTokenSecret/);
+  assert.doesNotMatch(workerDoc, /AgentTokenSecret/);
+  assert.doesNotMatch(verifierDoc, /AgentTokenSecret/);
+  template.hasResourceProperties('AWS::SecretsManager::Secret', {
+    Name: 'hivemind-dev/agent-token',
+    GenerateSecretString: Match.objectLike({ PasswordLength: 40, ExcludePunctuation: true }),
+  });
 
   // AI worker can read model subscription auth & write patches/sessions, never GitHub/HF/DSQL secrets, operator token, or ECS RunTask.
   assert.match(workerDoc, /ModelSubscriptionAuthSecret/);

@@ -73,6 +73,7 @@ export class AwsRuntimeStack extends Stack {
   readonly agentCredentialsParentRole: iam.Role;
   readonly operatorTokenSecret: secretsmanager.Secret;
   readonly workerTokenSecret: secretsmanager.Secret;
+  readonly agentTokenSecret: secretsmanager.Secret;
   readonly modelAuthSecret: secretsmanager.Secret;
   readonly githubDraftPrSecret: secretsmanager.Secret;
   readonly hfReleaseTokenSecret: secretsmanager.Secret;
@@ -203,6 +204,16 @@ export class AwsRuntimeStack extends Stack {
       description: 'HIVEMIND worker Bearer token (distinct from operator token)',
     });
 
+    // Model Factory agent token: Model Factory reads, drafts, training approval, wake, verifier, cancel and
+    // scoped AWS credentials only. Release approval and publication need the operator token.
+    this.agentTokenSecret = new secretsmanager.Secret(this, 'AgentTokenSecret', {
+      secretName: `${prefix}/agent-token`,
+      encryptionKey: artifactKey,
+      removalPolicy: RemovalPolicy.RETAIN,
+      generateSecretString: { passwordLength: 40, excludePunctuation: true },
+      description: 'HIVEMIND Model Factory agent Bearer token (distinct from operator and worker tokens)',
+    });
+
     // Separate external secrets enforce 3-way trust boundary: AI worker never sees GitHub secret; Verifier sees neither.
     this.modelAuthSecret = new secretsmanager.Secret(this, 'ModelSubscriptionAuthSecret', {
       secretName: `${prefix}/model-subscription-auth`,
@@ -265,6 +276,7 @@ export class AwsRuntimeStack extends Stack {
       ],
     });
     this.operatorTokenSecret.grantRead(controlPlaneExecRole);
+    this.agentTokenSecret.grantRead(controlPlaneExecRole);
     this.workerTokenSecret.grantRead(controlPlaneExecRole);
 
     const workerExecRole = new iam.Role(this, 'WorkerExecutionRole', {
@@ -649,6 +661,7 @@ export class AwsRuntimeStack extends Stack {
       },
       secrets: {
         HIVEMIND_OPERATOR_TOKEN: ecs.Secret.fromSecretsManager(this.operatorTokenSecret),
+        HIVEMIND_AGENT_TOKEN: ecs.Secret.fromSecretsManager(this.agentTokenSecret),
         HIVEMIND_WORKER_TOKEN: ecs.Secret.fromSecretsManager(this.workerTokenSecret),
       },
       readonlyRootFilesystem: false,
@@ -742,6 +755,7 @@ export class AwsRuntimeStack extends Stack {
     new CfnOutput(this, 'ControlPlaneSecurityGroupId', { value: controlPlaneSg.securityGroupId });
     new CfnOutput(this, 'WorkerSecurityGroupId', { value: workerSg.securityGroupId });
     new CfnOutput(this, 'OperatorTokenSecretArn', { value: this.operatorTokenSecret.secretArn });
+    new CfnOutput(this, 'AgentTokenSecretArn', { value: this.agentTokenSecret.secretArn });
     new CfnOutput(this, 'ModelAuthSecretArn', { value: this.modelAuthSecret.secretArn });
     new CfnOutput(this, 'GithubDraftPrSecretArn', { value: this.githubDraftPrSecret.secretArn });
     new CfnOutput(this, 'HfReleaseTokenSecretArn', { value: this.hfReleaseTokenSecret.secretArn });
