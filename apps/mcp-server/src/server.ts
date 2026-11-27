@@ -132,7 +132,19 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
     // Default profile: the whole AWS single path in one server.
     const power = new ControlPlanePower({ ...settings, fetchImpl, ...(options.controlPlanePower ? { config: options.controlPlanePower } : {}), ...(options.powerSystem ? { system: options.powerSystem } : {}) });
     // Operator tool calls restart the idle period. The power module's own checks use the raw fetch and do not.
-    const activeFetch: typeof fetch = (input, init) => { power.markActivity(); return fetchImpl(input, init); };
+    // In the always-on mode a Spot replacement or a dropped tunnel closes the local port. One failed
+    // connection reopens the tunnel to the current task and retries the call once.
+    const activeFetch: typeof fetch = async (input, init) => {
+      power.markActivity();
+      try {
+        return await fetchImpl(input, init);
+      } catch (error) {
+        if (!power.configured || !power.alwaysOn || init?.signal?.aborted) throw error;
+        const reopened = await power.reconnect(60_000).catch(() => null);
+        if (reopened?.state !== 'running') throw error;
+        return fetchImpl(input, init);
+      }
+    };
     registerAwsStatusTool(server, { ...settings, fetchImpl: activeFetch, redact, power });
     registerControlPlanePowerTools(server, power);
     registerDeliveryOperatorTools(server, { ...settings, fetchImpl: activeFetch, redact });

@@ -21,6 +21,12 @@ export interface ControlPlanePowerConfig {
   service: string;
   profile?: string;
   idleMinutes?: number;
+  /**
+   * 'always-on' (default): the service runs all day on Fargate Spot. Start only opens or reopens the tunnel,
+   * nothing is lowered on idle or on server exit, and stop needs force. 'on-demand': the earlier
+   * behaviour, where a service this server raised is lowered after idleMinutes.
+   */
+  mode?: 'always-on' | 'on-demand';
 }
 
 export interface PowerSystem {
@@ -87,12 +93,13 @@ export function loadControlPlanePowerConfig(path: string): ControlPlanePowerConf
     if (!info.isFile() || info.size > 4096) return undefined;
     const value = JSON.parse(readFileSync(descriptor, 'utf8')) as Record<string, unknown>;
     if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-    const { region, cluster, service, profile, idleMinutes } = value;
+    const { region, cluster, service, profile, idleMinutes, mode } = value;
     if (typeof region !== 'string' || typeof cluster !== 'string' || typeof service !== 'string') return undefined;
     if (![region, cluster, service].every((name) => NAME.test(name))) return undefined;
     if (profile !== undefined && (typeof profile !== 'string' || !NAME.test(profile))) return undefined;
     if (idleMinutes !== undefined && (typeof idleMinutes !== 'number' || !Number.isInteger(idleMinutes) || idleMinutes < 1 || idleMinutes > 720)) return undefined;
-    return { region, cluster, service, ...(profile ? { profile } : {}), ...(idleMinutes ? { idleMinutes } : {}) };
+    if (mode !== undefined && mode !== 'always-on' && mode !== 'on-demand') return undefined;
+    return { region, cluster, service, ...(profile ? { profile } : {}), ...(idleMinutes ? { idleMinutes } : {}), ...(mode ? { mode } : {}) };
   } catch {
     return undefined;
   } finally {
@@ -164,6 +171,11 @@ export class ControlPlanePower {
   get idleMinutes(): number {
     return this.config?.idleMinutes ?? DEFAULT_IDLE_MINUTES;
   }
+  /** True unless the configuration asks for the on-demand mode. */
+  get alwaysOn(): boolean {
+    return this.config?.mode !== 'on-demand';
+  }
+
   get configured(): boolean {
     return Boolean(this.config && this.system && this.port);
   }
@@ -294,7 +306,7 @@ export class ControlPlanePower {
         return { state: 'stopped', started: false, reason: 'ECS 서비스를 올리지 못했습니다. AWS 권한과 로그인 상태를 확인하세요.' };
       }
       raisedByThisCall = true;
-      this.owned = true;
+      this.owned = !this.alwaysOn;
     }
     const undo = async (reason: string): Promise<StartResult> => {
       this.closeTunnel();
@@ -315,7 +327,8 @@ export class ControlPlanePower {
     }
     this.closeTunnel();
     this.tunnel = system.openTunnel(target, this.port!);
-    this.owned = true;
+    // In the always-on mode nobody owns the service: it is never lowered on idle or on exit.
+    this.owned = !this.alwaysOn;
     const tunnelDeadline = system.now() + (this.options.tunnelTimeoutMs ?? 90_000);
     while (!(await this.reachable())) {
       if (system.now() >= tunnelDeadline) return undo('터널을 열었지만 Control Plane API가 응답하지 않았습니다. session-manager-plugin 설치와 로컬 포트 사용 여부를 확인하세요.');
@@ -323,7 +336,7 @@ export class ControlPlanePower {
     }
     this.markActivity();
     this.armIdleTimer();
-    return { state: 'running', started: true, startedInSeconds: Math.round((system.now() - startedAt) / 1000), idleStopAfterMinutes: this.idleMinutes };
+    return { state: 'running', started: true, startedInSeconds: Math.round((system.now() - startedAt) / 1000), ...(this.owned ? { idleStopAfterMinutes: this.idleMinutes } : {}) };
   }
 
   /**
@@ -369,8 +382,22 @@ export class ControlPlanePower {
     return { deliveryTasks, modelFactoryJobs, collabSubtasks, ...(blockingIds.length ? { blockingIds } : {}), ...(unverifiable.length ? { unverifiable } : {}) };
   }
 
+  /**
+   * Always-on mode only: reopens the tunnel to the current task after a Spot replacement or a dropped
+   * tunnel. It never raises a service that is at 0; that takes hivemind_control_plane_start.
+   */
+  async reconnect(waitMs = 60_000): Promise<StartResult | null> {
+    if (!this.configured || !this.alwaysOn) return null;
+    const desired = await this.desiredCount();
+    if (desired === null || desired < 1) return null;
+    return this.start(waitMs);
+  }
+
   async stop(force = false): Promise<StopResult> {
     if (!this.configured) return { stopped: false, reason: NOT_CONFIGURED };
+    if (this.alwaysOn && !force) {
+      return { stopped: false, reason: 'Control Plane은 Fargate Spot에서 상시 운영 중입니다. 그래도 내리려면 force: true 로 호출하세요. 내린 서비스는 hivemind_control_plane_start 로 다시 올립니다.' };
+    }
     if (this.starting) await this.starting.catch(() => undefined);
     this.unclaimedStart = null;
     const up = await this.reachable();

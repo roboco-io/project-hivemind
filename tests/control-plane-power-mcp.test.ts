@@ -9,7 +9,7 @@ import { ControlPlanePower, loadControlPlanePowerConfig, type ControlPlanePowerC
 import { createHivemindMcpServer, loadMcpSettings } from '../apps/mcp-server/src/server.js';
 
 const TOKEN = 'operator-power-token-0123456789';
-const CONFIG: ControlPlanePowerConfig = { profile: 'ops', region: 'ap-northeast-2', cluster: 'hm-cluster', service: 'hm-cp' };
+const CONFIG: ControlPlanePowerConfig = { profile: 'ops', region: 'ap-northeast-2', cluster: 'hm-cluster', service: 'hm-cp', mode: 'on-demand' };
 
 /** A fake AWS account and Control Plane. The API answers only while a task runs AND a tunnel is open. */
 function world(initial: { desired?: number; tasksReadyAfterPolls?: number; realSleepMs?: number } = {}) {
@@ -343,4 +343,79 @@ test('MCP tools: status explains the dormant state, start and stop work end to e
   assert.equal(w.desired, 0);
   assert.equal(w.tunnelOpen, false);
   for (const text of [JSON.stringify(dormant), JSON.stringify(started), JSON.stringify(refused)]) assert.ok(!text.includes(TOKEN));
+});
+
+test('always-on mode: start only opens the tunnel, nothing is lowered on idle or exit, and stop needs force', async () => {
+  const { w, power } = world({ desired: 1, tasksReadyAfterPolls: 0 });
+  const p = power({ ...CONFIG, mode: 'always-on' });
+  assert.ok(p.alwaysOn);
+  const started = await p.start();
+  assert.deepEqual({ state: started.state, idle: started.idleStopAfterMinutes }, { state: 'running', idle: undefined });
+  assert.equal(w.tunnelsOpened, 1);
+  assert.ok(!p.ownsControlPlane);
+  w.now += 3 * 60 * 60_000;
+  assert.equal(await p.checkIdle(), 'not_owned');
+  const refused = await p.stop();
+  assert.equal(refused.stopped, false);
+  assert.match(String(refused.reason), /상시 운영/);
+  assert.equal(await p.shutdown(), 'not_owned');
+  assert.equal(w.desired, 1, 'an always-on service is never lowered by the MCP server');
+  assert.equal(w.awsCalls.filter((c) => c.startsWith('ecs update-service')).length, 0);
+});
+
+test('always-on mode: a missing mode means always-on, and a replaced task gets a new tunnel on the next start', async () => {
+  const { w, power } = world({ desired: 1, tasksReadyAfterPolls: 0 });
+  const p = power({ profile: 'ops', region: 'ap-northeast-2', cluster: 'hm-cluster', service: 'hm-cp' });
+  assert.ok(p.alwaysOn);
+  await p.start();
+  // A Spot interruption ends the task; its tunnel closes with it.
+  w.tunnelOpen = false;
+  const again = await p.start();
+  assert.equal(again.state, 'running');
+  assert.equal(w.tunnelsOpened, 2);
+  // Even when the always-on service was found at 0 (for example lowered with force), start raises it and still does not own it.
+  w.desired = 0;
+  w.tunnelOpen = false;
+  w.taskReadyIn = 0;
+  const raised = await p.start();
+  assert.equal(raised.state, 'running');
+  assert.equal(w.desired, 1);
+  assert.ok(!p.ownsControlPlane);
+});
+
+test('always-on mode: stop with force lowers the service', async () => {
+  const { w, power } = world({ desired: 1, tasksReadyAfterPolls: 0 });
+  const p = power({ ...CONFIG, mode: 'always-on' });
+  await p.start();
+  assert.equal((await p.stop(true)).stopped, true);
+  assert.equal(w.desired, 0);
+});
+
+test('always-on MCP server: a call after a Spot replacement reopens the tunnel and succeeds, but never raises a service at 0', async (t) => {
+  const { w, system, fetchImpl } = world({ desired: 1, tasksReadyAfterPolls: 0 });
+  const server = createHivemindMcpServer({ apiUrl: 'http://127.0.0.1:4311', operatorToken: TOKEN, controlPlanePower: { ...CONFIG, mode: 'always-on' }, powerSystem: system, fetchImpl });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: 'always-on', version: '0.1.0' });
+  await client.connect(clientTransport);
+  t.after(async () => { await client.close(); await server.close(); });
+  type Result = { isError?: boolean; structuredContent?: Record<string, any> };
+  const call = async (name: string) => (await client.callTool({ name, arguments: {} })) as Result;
+
+  // No tunnel yet: the first call opens it and returns live data.
+  const first = await call('hivemind_mf_list');
+  assert.ok(!first.isError);
+  assert.equal(w.tunnelsOpened, 1);
+  // A Spot interruption replaces the task; the next call reconnects by itself.
+  w.tunnelOpen = false;
+  const second = await call('hivemind_mf_list');
+  assert.ok(!second.isError);
+  assert.equal(w.tunnelsOpened, 2);
+  // A service someone lowered with force stays down: calls fail, nothing is raised.
+  w.desired = 0;
+  w.tunnelOpen = false;
+  const down = await call('hivemind_mf_list');
+  assert.ok(down.isError);
+  assert.equal(w.desired, 0);
+  assert.equal(w.awsCalls.filter((c) => c.startsWith('ecs update-service')).length, 0);
 });
