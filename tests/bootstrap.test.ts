@@ -167,7 +167,7 @@ test('bootstrap on an empty account creates resources in the safe order and repo
   assert.ok(!JSON.stringify(commands).includes('agent-token-value'));
   // The start settings for the MCP server name the service to raise; they hold no secret.
   const power = written['/home/op/.hivemind/aws-control-plane.json']!;
-  assert.deepEqual(JSON.parse(power), { profile: 'ops', region: 'ap-northeast-2', cluster: 'hm-cluster', service: 'hm-control-plane' });
+  assert.deepEqual(JSON.parse(power), { profile: 'ops', region: 'ap-northeast-2', cluster: 'hm-cluster', service: 'hm-control-plane', mode: 'always-on' });
   assert.ok(!power.includes('operator-token-value'));
   assert.equal(verifyCalls(), 1);
 

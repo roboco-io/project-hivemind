@@ -158,13 +158,27 @@ export class ControlPlane {
     this.tunnelPid = undefined;
   }
 
+  /** Desired count found by `start()`; `stop()` returns the service to it. */
+  private initialDesired: number | undefined;
+
+  /** The desired count the service had before `start()`; a proof checks that the service is back to it. */
+  get initialDesiredCount(): number | undefined {
+    return this.initialDesired;
+  }
+
   async start(): Promise<void> {
-    this.setDesired(1);
+    this.initialDesired = this.desiredCount();
+    if (this.initialDesired < 1) this.setDesired(1);
     await this.openTunnel();
   }
 
+  /**
+   * Closes the tunnel and leaves the service as `start()` found it. The Control Plane normally runs all
+   * day, so a proof that found it running does not stop it; one that raised it from 0 lowers it again.
+   */
   async stop(): Promise<void> {
     this.closeTunnel();
+    if (this.initialDesired === undefined || this.initialDesired >= 1) return;
     this.setDesired(0);
     const deadline = Date.now() + 240_000;
     while (Date.now() < deadline && this.runningTaskCount() > 0) await sleep(8_000);

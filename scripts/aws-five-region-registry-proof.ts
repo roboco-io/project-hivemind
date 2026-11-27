@@ -191,8 +191,8 @@ async function main(): Promise<void> {
     }
     throw error;
   } finally {
-    controlPlane.closeTunnel();
-    aws(PRIMARY_REGION, ['ecs', 'update-service', '--cluster', cluster, '--service', service, '--desired-count', '0', '--query', 'service.desiredCount', '--output', 'text']);
+    // Leaves the Control Plane as it was found: running all day, or at 0 if the proof raised it.
+    await controlPlane.stop();
   }
 
   // Wait until the cancelled instance leaves pending/running, then count managed instances in all 5 regions.
@@ -207,7 +207,7 @@ async function main(): Promise<void> {
     summary.subnetFromRegistry === true &&
     summary.securityGroupFromRegistry === true &&
     summary.failoverObserved === true &&
-    desiredCount === 0 &&
+    desiredCount === (controlPlane.initialDesiredCount ?? 0) &&
     Object.values(running).every((n) => n === 0);
   console.log(JSON.stringify({ phase: 'summary', ok, ...summary, controlPlaneDesiredCount: desiredCount, runningManagedInstances: running }, null, 2));
   if (!ok) process.exitCode = 1;

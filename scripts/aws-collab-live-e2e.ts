@@ -173,7 +173,8 @@ async function main(): Promise<void> {
         // already stopped
       }
     }
-    aws(PRIMARY_REGION, ['ecs', 'update-service', '--cluster', cluster, '--service', service, '--desired-count', '0', '--query', 'service.desiredCount', '--output', 'text']);
+    // Leaves the Control Plane as it was found: running all day, or at 0 if the proof raised it.
+    await controlPlane.stop();
   }
 
   const desiredCount = Number(
@@ -212,7 +213,7 @@ async function main(): Promise<void> {
       2,
     ),
   );
-  if (!workersOk || desiredCount !== 0) process.exitCode = 1;
+  if (!workersOk || desiredCount !== (controlPlane.initialDesiredCount ?? 0)) process.exitCode = 1;
 }
 
 main().catch((error) => {

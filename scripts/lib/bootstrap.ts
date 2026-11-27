@@ -334,12 +334,12 @@ export async function runBootstrap(options: BootstrapOptions, system: BootstrapS
         agentWritten = true;
       }
     }
-    // Lets the MCP tools hivemind_control_plane_start/stop raise the service and open the tunnel. No secret in it.
+    // Lets the MCP server open (and reopen) the tunnel to the always-on Control Plane. No secret in it.
     const outputs = stackOutputs(system, options.primaryRegion, HUB_STACK);
     if (!outputs.ClusterName || !outputs.ControlPlaneServiceName) throw new Error('Hub 스택 출력에 ClusterName 또는 ControlPlaneServiceName 이 없습니다.');
     system.writeSecretFile(
       options.controlPlaneConfigFile,
-      `${JSON.stringify({ ...(options.profile ? { profile: options.profile } : {}), region: options.primaryRegion, cluster: outputs.ClusterName, service: outputs.ControlPlaneServiceName }, null, 2)}\n`,
+      `${JSON.stringify({ ...(options.profile ? { profile: options.profile } : {}), region: options.primaryRegion, cluster: outputs.ClusterName, service: outputs.ControlPlaneServiceName, mode: 'always-on' }, null, 2)}\n`,
     );
     const written = system.configureClients({ projectRoot: options.projectRoot, apiUrl, operatorTokenFile: options.operatorTokenFile });
     return { status: 'done', detail: `운영자 토큰 파일(권한 600)${agentWritten ? ', 에이전트 토큰 파일(권한 600)' : ''}, Control Plane 기동 설정 파일과 ${written.join(', ')} 작성. 클라이언트를 다시 시작해야 반영됩니다.` };
@@ -347,11 +347,11 @@ export async function runBootstrap(options: BootstrapOptions, system: BootstrapS
 
   await step('verify', '동작 확인', async () => {
     if (options.skipVerify) return { status: 'skipped', detail: '--skip-verify' };
-    if (dry) return { status: 'would_run', detail: 'Control Plane을 잠깐 켜서 세 저장소의 응답을 확인하고 다시 내림' };
+    if (dry) return { status: 'would_run', detail: 'Control Plane에 연결해 세 저장소의 응답을 확인하고, 확인 전 desiredCount로 되돌림' };
     const backends = await system.verifyControlPlane();
     const summary = Object.entries(backends).map(([store, backend]) => `${store}=${backend ?? '응답 없음'}`).join(', ');
     if (Object.values(backends).some((backend) => backend === null)) throw new Error(`일부 저장소가 응답하지 않았습니다: ${summary}`);
-    return { status: 'done', detail: `${summary}. Control Plane은 다시 desiredCount 0` };
+    return { status: 'done', detail: `${summary}. Control Plane은 확인 전 desiredCount로 되돌림` };
   });
 
   return results;
