@@ -1,4 +1,5 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
+import { runInOwnProcessGroup } from './lib/process-group.js';
 
 const profile = process.env.AWS_PROFILE ?? 'roboco';
 const region = process.env.HIVEMIND_AWS_REGION ?? 'ap-northeast-2';
@@ -44,23 +45,19 @@ if (!taskId || !runtimeId) {
 const target = `ecs:${cluster}_${taskId}_${runtimeId}`;
 console.log(`Opening AWS SSM port-forward tunnel: http://127.0.0.1:${localPort} -> ${target}:4310`);
 
-const child = spawn(
-  'aws',
-  [
-    '--profile',
-    profile,
-    '--region',
-    region,
-    'ssm',
-    'start-session',
-    '--target',
-    target,
-    '--document-name',
-    'AWS-StartPortForwardingSession',
-    '--parameters',
-    JSON.stringify({ portNumber: ['4310'], localPortNumber: [localPort] }),
-  ],
-  { stdio: 'inherit' },
-);
-
-child.on('exit', (code) => process.exit(code ?? 0));
+// The tunnel runs in its own process group so that stopping this script also stops session-manager-plugin,
+// which is the process that holds the local port.
+runInOwnProcessGroup('aws', [
+  '--profile',
+  profile,
+  '--region',
+  region,
+  'ssm',
+  'start-session',
+  '--target',
+  target,
+  '--document-name',
+  'AWS-StartPortForwardingSession',
+  '--parameters',
+  JSON.stringify({ portNumber: ['4310'], localPortNumber: [localPort] }),
+]);
