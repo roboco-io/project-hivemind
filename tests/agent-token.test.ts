@@ -133,6 +133,7 @@ test('the MCP agent profile exposes no release, delivery, collaboration or Contr
   const names = (await client.listTools()).tools.map((tool) => tool.name).sort();
   assert.deepEqual(names, [
     'hivemind_agent_credentials',
+    'hivemind_autonomy_triggers',
     'hivemind_mf_approve_training',
     'hivemind_mf_cancel',
     'hivemind_mf_create',

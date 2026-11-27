@@ -12,6 +12,7 @@ import {registerModelFactoryOperatorTools} from './model-factory.js';
 import {registerCollabOperatorTools} from './collab.js';
 import {registerAwsStatusTool} from './aws-status.js';
 import { registerAgentCredentialTools } from './agent-access.js';
+import { registerAutonomyTools } from './autonomy.js';
 import {ControlPlanePower,loadControlPlanePowerConfig,registerControlPlanePowerTools,type ControlPlanePowerConfig,type PowerSystem} from './control-plane-power.js';
 import { join } from 'node:path';
 
@@ -139,6 +140,7 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
     registerAwsStatusTool(server, { ...settings, fetchImpl: agentFetch, redact, scope: 'agent' });
     registerModelFactoryOperatorTools(server, { ...settings, fetchImpl: agentFetch, redact, agent: true });
     registerAgentCredentialTools(server, { ...settings, fetchImpl: agentFetch, ...(options.agentCredentialsDir ? { credentialsDir: options.agentCredentialsDir } : {}) });
+    registerAutonomyTools(server, { ...settings, fetchImpl: agentFetch, readOnly: true });
     return server;
   }
   if (options.profile === 'model-factory') {
@@ -169,6 +171,7 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
     registerModelFactoryOperatorTools(server, { ...settings, fetchImpl: activeFetch, redact });
     registerCollabOperatorTools(server, { ...settings, ...(options.collabLocalAuthFile ? { localAuthFile: options.collabLocalAuthFile } : {}), fetchImpl: activeFetch, redact });
     registerAgentCredentialTools(server, { ...settings, fetchImpl: activeFetch, ...(options.agentCredentialsDir ? { credentialsDir: options.agentCredentialsDir } : {}) });
+    registerAutonomyTools(server, { ...settings, fetchImpl: activeFetch });
     // The idle timer ends with this server, so a Control Plane it started is lowered when the server closes.
     const closeServer = server.close.bind(server);
     server.close = async () => { if ((await power.shutdown()) === 'left_running') process.stderr.write('HIVEMIND Control Plane was left running: work is in progress or its state could not be read.\n'); await closeServer(); };

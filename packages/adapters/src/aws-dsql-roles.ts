@@ -23,11 +23,12 @@ export const TTL_GUARD_DB_ROLE = 'hm_ttl_guard';
 const COLLAB_TABLES = ['hm_collab_sessions', 'hm_collab_subtasks', 'hm_collab_messages', 'hm_collab_work_logs'];
 const MODEL_FACTORY_TABLES = ['hm_mf_jobs', 'hm_mf_events', 'hm_mf_meta'];
 const DELIVERY_TABLES = ['hm_delivery_jobs', 'hm_delivery_events', 'hm_delivery_meta'];
+const AUTONOMY_TABLES = ['hm_trig_jobs', 'hm_trig_events', 'hm_trig_meta'];
 
 /** Table privileges per role. No role gets DELETE, TRUNCATE or any DDL right. */
 export const DSQL_ROLE_GRANTS: Record<string, Record<string, string[]>> = {
   [CONTROL_PLANE_DB_ROLE]: Object.fromEntries(
-    [...COLLAB_TABLES, ...MODEL_FACTORY_TABLES, ...DELIVERY_TABLES].map((table) => [table, ['SELECT', 'INSERT', 'UPDATE']]),
+    [...COLLAB_TABLES, ...MODEL_FACTORY_TABLES, ...DELIVERY_TABLES, ...AUTONOMY_TABLES].map((table) => [table, ['SELECT', 'INSERT', 'UPDATE']]),
   ),
   // The guard settles Model Factory jobs only: it reads and upserts jobs and the sequence row, and appends
   // events. It has no access to collaboration or delivery tables.
@@ -61,6 +62,7 @@ export function buildDsqlAccessPlan(input: { controlPlaneIamRoleArn: string; ttl
     ...DSQL_COLLAB_SCHEMA_STATEMENTS,
     ...documentSchemaStatements('hm_mf', 'job_id'),
     ...documentSchemaStatements('hm_delivery', 'task_id'),
+    ...documentSchemaStatements('hm_trig', 'trigger_id'),
   ].map((sql) => ({ sql }));
   const mappings: [string, string][] = [
     [CONTROL_PLANE_DB_ROLE, input.controlPlaneIamRoleArn],

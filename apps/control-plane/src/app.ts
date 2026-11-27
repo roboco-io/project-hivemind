@@ -25,6 +25,10 @@ import { registerDeliveryRoutes } from './delivery-api.js';
 import { registerModelFactoryRoutes } from './model-factory-api.js';
 import { registerAgentCredentialRoutes, type AgentCredentialsApiOptions } from './agent-access-api.js';
 import { registerNotificationRoutes, type NotificationGate } from './notifications-api.js';
+import { registerAutonomyRoutes } from './autonomy-api.js';
+import type { AutonomyDispatcher } from './autonomy-dispatcher.js';
+import { AutonomyTriggerStore, type AutonomyTriggerRepository } from '../../../packages/core/src/autonomy-trigger.js';
+import type { DeliveryTask } from '../../../packages/contracts/src/delivery.js';
 import type { DeliveryOrchestrator } from './delivery-orchestrator.js';
 import type { ModelFactoryOrchestrator } from './model-factory-orchestrator.js';
 import type { CreateTask, RunResult, RepositoryPolicy, Provider, Runtime } from '../../../packages/contracts/src/index.js';
@@ -32,7 +36,7 @@ import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js
 
 import {projectTeamResponse,type CloudWorkflowControl} from '../../../packages/contracts/src/workflow.js';
 
-export interface AppOptions { /** Storage for DeliveryStore. Default: SQLite at dbPath. */ deliveryRepository?: DeliveryRepository; /** Storage for ModelFactoryStore. Default: SQLite at dbPath. */ modelFactoryRepository?: ModelFactoryRepository; autonomousCloudProxy?:AutonomousCloudProxy; localExternalService?:AutonomousExternalService; dbPath?: string; operatorToken?: string; workerToken?: string; /** Model Factory agent token; see registerModelFactoryRoutes. */ agentToken?: string; nativeReporterToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl; deliveryOrchestratorFactory?: (store: DeliveryStore) => DeliveryOrchestrator; modelFactoryOrchestratorFactory?: (store: ModelFactoryStore) => ModelFactoryOrchestrator; modelFactoryBudgetCapMicros?: number; /** Repositories whose delivery tasks may auto-merge (issue #20). */ deliveryAutoMergeRepositories?: string[]; /** Hugging Face repository prefixes where releasePolicy.autoPublish is allowed (issue #20). */ modelFactoryAutoPublishRepoPrefixes?: string[]; modelFactoryWakePollMs?: number; collabRepo?: CollaborationStoragePort; collabOrchestratorFactory?: (service: AgentCollabService) => CollabOrchestrator; /** Scoped AWS credentials for agents. Absent: the routes are not registered. */ agentCredentials?: Omit<AgentCredentialsApiOptions, 'operatorToken'>; /** SNS notifications (issue #20). Absent: the route is not registered. */ notifications?: NotificationGate }
+export interface AppOptions { /** Storage for DeliveryStore. Default: SQLite at dbPath. */ deliveryRepository?: DeliveryRepository; /** Storage for ModelFactoryStore. Default: SQLite at dbPath. */ modelFactoryRepository?: ModelFactoryRepository; autonomousCloudProxy?:AutonomousCloudProxy; localExternalService?:AutonomousExternalService; dbPath?: string; operatorToken?: string; workerToken?: string; /** Model Factory agent token; see registerModelFactoryRoutes. */ agentToken?: string; nativeReporterToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl; deliveryOrchestratorFactory?: (store: DeliveryStore) => DeliveryOrchestrator; modelFactoryOrchestratorFactory?: (store: ModelFactoryStore) => ModelFactoryOrchestrator; modelFactoryBudgetCapMicros?: number; /** Repositories whose delivery tasks may auto-merge (issue #20). */ deliveryAutoMergeRepositories?: string[]; /** Hugging Face repository prefixes where releasePolicy.autoPublish is allowed (issue #20). */ modelFactoryAutoPublishRepoPrefixes?: string[]; modelFactoryWakePollMs?: number; collabRepo?: CollaborationStoragePort; collabOrchestratorFactory?: (service: AgentCollabService) => CollabOrchestrator; /** Scoped AWS credentials for agents. Absent: the routes are not registered. */ agentCredentials?: Omit<AgentCredentialsApiOptions, 'operatorToken'>; /** SNS notifications (issue #20). Absent: the route is not registered. */ notifications?: NotificationGate; /** Periodic autonomy triggers (issue #20). Storage defaults to SQLite at dbPath. */ autonomy?: { repository?: AutonomyTriggerRepository; dispatcherFactory?: (store: AutonomyTriggerStore, delivery: DeliveryStore, orchestrator?: DeliveryOrchestrator) => AutonomyDispatcher | undefined; tickMs?: number; hooks?: { onAutoMergeRefused?: (task: DeliveryTask, reason: string) => Promise<void> } } }
 const string = {type:'string',minLength:1,maxLength:4000};
 const credentials = {workerId:{...string,maxLength:120},leaseToken:{...string,maxLength:120}};
 const body = (properties: Record<string,unknown>, required = Object.keys(properties)) => ({body:{type:'object',additionalProperties:false,required,properties}});
@@ -74,6 +78,25 @@ export function buildApp(options: AppOptions = {}) {
   const collabRepo = options.collabRepo ?? new SqliteCollaborationRepository(options.dbPath ?? ':memory:');
   const collabService = new AgentCollabService(collabRepo, { now: options.now, redactSecrets: [operatorToken, workerToken, ...(agentToken ? [agentToken] : [])] });
   const collabOrchestrator = options.collabOrchestratorFactory?.(collabService);
+  const autonomyStore = new AutonomyTriggerStore(options.autonomy?.repository ?? options.dbPath ?? ':memory:', { now: options.now });
+  const autonomyDispatcher = options.autonomy?.dispatcherFactory?.(autonomyStore, deliveryStore, deliveryOrchestrator);
+  if (autonomyDispatcher && options.autonomy?.hooks) {
+    // An auto-merge refused because a change touched a protected path stops the trigger that sent it.
+    options.autonomy.hooks.onAutoMergeRefused = async (task, reason) => {
+      const stopped = await autonomyDispatcher.stopForRefusedMerge(task, reason);
+      console.log(JSON.stringify({ event: 'hivemind.autonomy_trigger.stopped', taskId: task.id, stopped }));
+    };
+  }
+  let autonomyTimer: ReturnType<typeof setInterval> | undefined;
+  const autonomyTickMs = options.autonomy?.tickMs ?? 0;
+  if (autonomyDispatcher && autonomyTickMs >= 1000) {
+    autonomyTimer = setInterval(() => {
+      void autonomyDispatcher.tick(AbortSignal.timeout(Math.max(60_000, autonomyTickMs * 4))).catch((err) => {
+        console.error(JSON.stringify({ event: 'hivemind.autonomy_trigger.tick_error', message: err instanceof Error ? err.message.slice(0, 300) : String(err) }));
+      });
+    }, autonomyTickMs);
+    autonomyTimer.unref();
+  }
   let mfWakeTimer: ReturnType<typeof setInterval> | undefined;
   if (modelFactoryOrchestrator && options.modelFactoryWakePollMs && options.modelFactoryWakePollMs >= 1000) {
     let wakeInFlight = false;
@@ -91,10 +114,11 @@ export function buildApp(options: AppOptions = {}) {
     }, options.modelFactoryWakePollMs);
     mfWakeTimer.unref();
   }
-  app.addHook('onClose',async()=>{if(mfWakeTimer)clearInterval(mfWakeTimer);await collabService.close();await deliveryStore.close();await modelFactoryStore.close();autonomousStore.close();toolAuditDb.close();});
+  app.addHook('onClose',async()=>{if(mfWakeTimer)clearInterval(mfWakeTimer);if(autonomyTimer)clearInterval(autonomyTimer);await autonomyStore.close();await collabService.close();await deliveryStore.close();await modelFactoryStore.close();autonomousStore.close();toolAuditDb.close();});
   registerDeliveryRoutes(app,{store:deliveryStore,operatorToken,workerToken,orchestrator:deliveryOrchestrator});
   registerModelFactoryRoutes(app,{store:modelFactoryStore,operatorToken,workerToken,...(agentToken?{agentToken}:{}),orchestrator:modelFactoryOrchestrator});
   registerCollabRoutes(app,{service:collabService,operatorToken,workerToken,orchestrator:collabOrchestrator});
+  registerAutonomyRoutes(app,{store:autonomyStore,...(autonomyDispatcher?{dispatcher:autonomyDispatcher}:{}),operatorToken,...(agentToken?{agentToken}:{})});
   if (options.notifications) registerNotificationRoutes(app,{gate:options.notifications,operatorToken,...(agentToken?{agentToken}:{})});
   if (options.agentCredentials) registerAgentCredentialRoutes(app,{...options.agentCredentials,operatorToken,...(agentToken?{agentToken}:{})});
   app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});

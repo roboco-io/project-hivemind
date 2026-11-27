@@ -39,6 +39,10 @@ import type { ModelFactoryStore } from '../../../packages/core/src/model-factory
 import type { AgentCollabService } from '../../../packages/core/src/agent-collab.js';
 import { createAwsSnsNotifier, type NotificationKind } from '../../../packages/adapters/src/aws-sns-notifier.js';
 import { NotificationGate } from './notifications-api.js';
+import { AutonomyDispatcher } from './autonomy-dispatcher.js';
+import { createGitSnapshotPreparer } from './autonomy-snapshot.js';
+import { DsqlAutonomyTriggerRepository } from '../../../packages/adapters/src/aws-dsql-autonomy.js';
+import type { AutonomyTriggerStore } from '../../../packages/core/src/autonomy-trigger.js';
 import { createAwsAgentCredentialIssuer } from '../../../packages/adapters/src/aws-agent-access.js';
 import { parseEnabledPurposes, validateCatalogConfig } from '../../../packages/core/src/agent-credential-purposes.js';
 
@@ -63,6 +67,28 @@ function detectPrivateVpcIpv4(): string | null {
 
 /** Late-bound autonomy hooks: the periodic trigger registers itself here once it exists (issue #20). */
 const autonomyHooks: { onAutoMergeRefused?: (task: import('../../../packages/contracts/src/delivery.js').DeliveryTask, reason: string) => Promise<void> } = {};
+
+/**
+ * Periodic autonomy triggers (issue #20) on AWS: snapshots come from the live repository through the
+ * GitHub App and go to S3; workers start through the delivery orchestrator. Undefined outside AWS mode.
+ */
+function createAwsAutonomyDispatcherFactory() {
+  const region = process.env.HIVEMIND_AWS_REGION?.trim();
+  const bucket = process.env.HIVEMIND_ARTIFACTS_BUCKET?.trim();
+  const githubSecretArn = process.env.HIVEMIND_GITHUB_SECRET_ARN?.trim();
+  if (!region || !bucket || !githubSecretArn) return undefined;
+  const credentials = createEcsTaskCredentialsProvider();
+  const s3 = createAwsS3ArtifactsPort({ region, allowedRegions: [region], bucket, credentials });
+  const secretsManager = createAwsSecretsManagerPort({ region, allowedRegions: [region], credentials });
+  const prepare = createGitSnapshotPreparer({
+    s3,
+    resolveToken: async (repository, signal) => (await resolveGithubCredentialForRepo(await secretsManager.getSecretString(githubSecretArn, signal), repository, { signal })).token,
+  });
+  return (triggers: AutonomyTriggerStore, delivery: DeliveryStore, orchestrator?: DeliveryOrchestrator) =>
+    orchestrator
+      ? new AutonomyDispatcher({ triggers, delivery, prepare, dispatchWorker: (taskId, signal) => orchestrator.dispatchWorker(taskId, signal), primaryRegion: region })
+      : undefined;
+}
 
 function createAwsDeliveryOrchestratorFactory(port: number, extraRedactSecrets: string[], notifications?: NotificationGate) {
   const region = process.env.HIVEMIND_AWS_REGION?.trim();
@@ -455,6 +481,15 @@ try {
   }
 
   // Same switch for the SW delivery task store: HIVEMIND_DELIVERY_STORAGE=aurora-dsql.
+  // Autonomy triggers (issue #20) keep their state in Aurora DSQL whenever delivery tasks do, so a Spot
+  // replacement neither forgets a disabled trigger nor sends a second task.
+  let autonomyRepository: DsqlAutonomyTriggerRepository | undefined;
+  if (process.env.HIVEMIND_DELIVERY_STORAGE?.trim() === 'aurora-dsql' && dsqlEndpoint) {
+    autonomyRepository = new DsqlAutonomyTriggerRepository({ endpoint: dsqlEndpoint, region: dsqlRegion, allowedRegions: [dsqlRegion], credentials: createEcsTaskCredentialsProvider(), ...dsqlAccess });
+  }
+  const autonomyDispatcherFactory = createAwsAutonomyDispatcherFactory();
+  const autonomyTickMs = Number(process.env.HIVEMIND_AUTONOMY_TICK_MS ?? '60000');
+
   let deliveryRepository: DsqlDeliveryRepository | undefined;
   const deliveryStorage = process.env.HIVEMIND_DELIVERY_STORAGE?.trim();
   if (deliveryStorage !== undefined && deliveryStorage !== 'sqlite' && deliveryStorage !== 'aurora-dsql') {
@@ -544,7 +579,7 @@ try {
   };
 
   const agentCredentials = createAgentCredentialsOptions();
-  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(deliveryAutoMergeRepositories.length ? { deliveryAutoMergeRepositories } : {}),...(modelFactoryAutoPublishRepoPrefixes.length ? { modelFactoryAutoPublishRepoPrefixes } : {}),...(modelFactoryRepository ? { modelFactoryRepository } : {}),...(deliveryRepository ? { deliveryRepository } : {}),collabRepo,collabOrchestratorFactory,...(agentCredentials ? { agentCredentials } : {}),...(agentToken ? { agentToken } : {}),...(notifications ? { notifications } : {})});
+  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(deliveryAutoMergeRepositories.length ? { deliveryAutoMergeRepositories } : {}),...(modelFactoryAutoPublishRepoPrefixes.length ? { modelFactoryAutoPublishRepoPrefixes } : {}),...(modelFactoryRepository ? { modelFactoryRepository } : {}),...(deliveryRepository ? { deliveryRepository } : {}),collabRepo,collabOrchestratorFactory,...(agentCredentials ? { agentCredentials } : {}),...(agentToken ? { agentToken } : {}),...(notifications ? { notifications } : {}),autonomy:{...(autonomyRepository ? { repository: autonomyRepository } : {}),...(autonomyDispatcherFactory ? { dispatcherFactory: autonomyDispatcherFactory, tickMs: autonomyTickMs } : {}),hooks:autonomyHooks}});
   const address = await app.listen({host,port});
   console.log(`HIVEMIND control service: ${address}`);
   for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,() => { void app!.close(); });
