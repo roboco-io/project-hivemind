@@ -47,6 +47,17 @@ export interface RunAwsWorkerOptions {
   spotSignal?: AbortSignal;
   spotFlushTimeoutMs?: number;
   workRoot?: string;
+  /** Secret values that must never appear in an uploaded patch or checkpoint (tokens given to the model). */
+  forbiddenPatchValues?: string[];
+}
+
+/** Refuses a patch that carries a secret the model could see; it would end up in a pull request. */
+export function assertPatchHasNoSecrets(patch: string, secrets: readonly string[]): void {
+  for (const secret of secrets) {
+    if (secret && secret.length >= 8 && patch.includes(secret)) {
+      throw new Error('The worker patch contains a secret value given to the model; it was not uploaded');
+    }
+  }
 }
 
 export type AwsWorkerOutcome =
@@ -171,7 +182,12 @@ export async function runAwsWorkerOnce(options: RunAwsWorkerOptions): Promise<Aw
     if (spotInterrupted) {
       // Flush checkpoint + partial diff within Fargate Spot 120s SIGTERM window using a fresh bounded signal.
       const flushSignal = AbortSignal.timeout(flushTimeoutMs);
-      const partialPatch = await collectCleanPatch(repoDir, options.baseCommit, homeDir, flushSignal).catch(() => '');
+      let partialPatch = await collectCleanPatch(repoDir, options.baseCommit, homeDir, flushSignal).catch(() => '');
+      try {
+        assertPatchHasNoSecrets(partialPatch, options.forbiddenPatchValues ?? []);
+      } catch {
+        partialPatch = '';
+      }
       const checkpointPayload = JSON.stringify({
         version: 1,
         taskId: options.taskId,
@@ -199,6 +215,7 @@ export async function runAwsWorkerOnce(options: RunAwsWorkerOptions): Promise<Aw
     }
 
     const patch = await collectCleanPatch(repoDir, options.baseCommit, homeDir, AbortSignal.timeout(60_000));
+    assertPatchHasNoSecrets(patch, options.forbiddenPatchValues ?? []);
     const patchBytes = Buffer.from(patch, 'utf8');
     const patchS3Key = `patches/${options.taskId}/${options.runId}.patch`;
     const uploaded = await options.s3.putObject(patchS3Key, patchBytes, 'text/x-diff', AbortSignal.timeout(60_000));

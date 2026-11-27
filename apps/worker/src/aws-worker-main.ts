@@ -8,6 +8,7 @@ import { createAwsSecretsManagerPort } from '../../../packages/adapters/src/aws-
 import { processEnvironment, runProcess } from '../../../packages/adapters/src/process.js';
 import { materializeProviderAuth, redactWorkerOutput } from './aws-worker-auth.js';
 import {
+  buildAgentAccessEnv,
   buildWorkerCliCommand,
   buildWorkerPrompt,
   runWorkerPreflight,
@@ -102,6 +103,8 @@ async function runCollabWorkerMode(): Promise<void> {
   const region = process.env.HIVEMIND_AWS_REGION ?? 'ap-northeast-2';
   const controlApiUrl = requiredEnv('HIVEMIND_CONTROL_API_URL');
   const workerToken = requiredEnv('HIVEMIND_WORKER_TOKEN');
+  /** Model Factory agent token (issue #20); given to the model only when the task opted in. Empty when not configured. */
+  const agentToken = process.env.HIVEMIND_AGENT_TOKEN?.trim() ?? '';
   const sessionId = requiredEnv('HIVEMIND_COLLAB_SESSION_ID');
   const subtaskId = requiredEnv('HIVEMIND_COLLAB_SUBTASK_ID');
   const agentId = requiredEnv('HIVEMIND_COLLAB_AGENT_ID');
@@ -206,7 +209,7 @@ async function runCollabWorkerMode(): Promise<void> {
     });
 
     if (res.status !== 'passed') {
-      const safeErr = redactWorkerOutput(`${res.stderr}\n${res.stdout}`, [...auth.redactSecrets, workerToken]).slice(-2000);
+      const safeErr = redactWorkerOutput(`${res.stderr}\n${res.stdout}`, [...auth.redactSecrets, workerToken, agentToken]).slice(-2000);
       await postCollab(`/api/collab/sessions/${encodeURIComponent(sessionId)}/subtasks/${encodeURIComponent(subtaskId)}/finish`, {
         agentId,
         status: 'failed',
@@ -226,7 +229,7 @@ async function runCollabWorkerMode(): Promise<void> {
       const last = await readFile(lastMessageFile, 'utf8').catch(() => '');
       if (last.trim()) summary = last.trim();
     }
-    const cleanSummary = redactWorkerOutput(summary || `Completed subtask ${subtask.title}`, [...auth.redactSecrets, workerToken]).slice(0, 8000);
+    const cleanSummary = redactWorkerOutput(summary || `Completed subtask ${subtask.title}`, [...auth.redactSecrets, workerToken, agentToken]).slice(0, 8000);
 
     await postCollab(`/api/collab/sessions/${encodeURIComponent(sessionId)}/work-logs`, {
       subtaskId,
@@ -259,6 +262,8 @@ async function main(): Promise<void> {
   const bucket = requiredEnv('HIVEMIND_ARTIFACTS_BUCKET');
   const controlApiUrl = requiredEnv('HIVEMIND_CONTROL_API_URL');
   const workerToken = requiredEnv('HIVEMIND_WORKER_TOKEN');
+  /** Model Factory agent token (issue #20); given to the model only when the task opted in. Empty when not configured. */
+  const agentToken = process.env.HIVEMIND_AGENT_TOKEN?.trim() ?? '';
   const taskId = requiredEnv('HIVEMIND_TASK_ID');
   const runId = requiredEnv('HIVEMIND_RUN_ID');
   const iteration = Number(requiredEnv('HIVEMIND_ITERATION'));
@@ -291,6 +296,7 @@ async function main(): Promise<void> {
 
   try {
     const outcome = await runAwsWorkerOnce({
+      forbiddenPatchValues: [workerToken, agentToken, ...auth.redactSecrets].filter(Boolean),
       taskId,
       runId,
       iteration,
@@ -344,7 +350,10 @@ async function main(): Promise<void> {
             sandboxMode: process.env.HIVEMIND_CODEX_SANDBOX_MODE ?? 'danger-full-access',
             executionPolicy: spec.executionPolicy,
           });
-          const env: NodeJS.ProcessEnv = { ...baseEnv, ...auth.env, ...extraEnv };
+          // Issue #20: a task that opted in gets the Model Factory agent token, so the model can create training
+          // jobs and ask for scoped AWS credentials through the Control Plane. Nothing else gets it.
+          const agentAccess = buildAgentAccessEnv(spec.executionPolicy, agentToken, controlApiUrl);
+          const env: NodeJS.ProcessEnv = { ...baseEnv, ...auth.env, ...extraEnv, ...agentAccess };
 
           // Run CLI/auth/git pre-flight BEFORE invoking the model (Lesson #3).
           const preflight = await runWorkerPreflight({
@@ -376,7 +385,7 @@ async function main(): Promise<void> {
           });
           if (res.status !== 'passed') {
             const combined = [res.stderr, res.stdout].filter(Boolean).join('\n--- stdout ---\n');
-            const safeErr = redactWorkerOutput(combined, [...auth.redactSecrets, workerToken]).slice(-2500);
+            const safeErr = redactWorkerOutput(combined, [...auth.redactSecrets, workerToken, agentToken]).slice(-2500);
             throw new Error(`${spec.provider} CLI failed (${res.status}, exit ${res.exitCode ?? 'null'}): ${safeErr}`);
           }
           let summary = `${spec.provider} iteration ${ctx.iteration} completed.`;
@@ -387,7 +396,7 @@ async function main(): Promise<void> {
             summary = res.stdout.trim();
           }
           return {
-            summary: redactWorkerOutput(summary, [...auth.redactSecrets, workerToken]).slice(0, 4000),
+            summary: redactWorkerOutput(summary, [...auth.redactSecrets, workerToken, agentToken]).slice(0, 4000),
           };
         },
       },

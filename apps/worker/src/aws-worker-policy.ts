@@ -91,6 +91,15 @@ export function buildWorkerPrompt(spec: WorkerPromptSpec, restoredCheckpointPatc
   return lines.join('\n') + '\n';
 }
 
+/**
+ * Environment that lets the model call the Control Plane as the Model Factory agent (issue #20). Only for
+ * a task whose executionPolicy opted in, and only when the worker has the agent token.
+ */
+export function buildAgentAccessEnv(executionPolicy: WorkerExecutionPolicy | undefined, agentToken: string, controlApiUrl: string): Record<string, string> {
+  if (executionPolicy?.hivemindAgentAccess !== true || !agentToken) return {};
+  return { HIVEMIND_API_URL: controlApiUrl, HIVEMIND_AGENT_TOKEN: agentToken };
+}
+
 export function buildWorkerCliCommand(options: {
   provider: DeliveryProvider;
   cliBin: string;

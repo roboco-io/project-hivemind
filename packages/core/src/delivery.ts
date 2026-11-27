@@ -295,12 +295,16 @@ export function validateWorkerExecutionPolicy(input: unknown): WorkerExecutionPo
   if (verificationKind !== 'code' && verificationKind !== 'document_format') {
     throw new DomainError('verificationKind must be code or document_format', 400);
   }
+  if (raw.hivemindAgentAccess !== undefined && typeof raw.hivemindAgentAccess !== 'boolean') {
+    throw new DomainError('hivemindAgentAccess must be a boolean', 400);
+  }
   return {
     allowedWebHosts,
     allowSubagents,
     maxIterationDurationMs,
     preserveWorkspaceOnRetry,
     verificationKind,
+    ...(raw.hivemindAgentAccess === true ? { hivemindAgentAccess: true } : {}),
   };
 }
 
@@ -321,6 +325,7 @@ export function computeDeliveryApprovalFingerprint(spec: {
       !spec.executionPolicy.allowSubagents &&
       (spec.executionPolicy.maxIterationDurationMs ?? 600_000) === 600_000 &&
       !spec.executionPolicy.preserveWorkspaceOnRetry &&
+      !spec.executionPolicy.hivemindAgentAccess &&
       (spec.executionPolicy.verificationKind ?? 'code') === 'code');
   return sha256Hex(
     JSON.stringify({
@@ -492,6 +497,9 @@ export class DeliveryStore {
       const delivery = validateDeliveryPolicy(input.delivery);
       if (delivery.autoMerge && !this.autoMergeRepositories.includes(delivery.repository)) {
         throw new DomainError('delivery.autoMerge is not allowed for this repository on this Control Plane', 403);
+      }
+      if ((input.executionPolicy as { hivemindAgentAccess?: unknown } | undefined)?.hivemindAgentAccess === true && !this.autoMergeRepositories.includes(delivery.repository)) {
+        throw new DomainError('executionPolicy.hivemindAgentAccess is not allowed for this repository on this Control Plane', 403);
       }
       const bundle = input.bundle === undefined ? undefined : validateBundleManifest(input.bundle, acceptance.baseCommit);
       const spot = validateSpotPolicy(input.spot);

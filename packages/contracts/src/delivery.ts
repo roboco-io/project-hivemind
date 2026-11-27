@@ -44,6 +44,12 @@ export interface SpotInterruptionPolicy {
 export type VerificationKind = 'code' | 'document_format';
 
 export interface WorkerExecutionPolicy {
+  /**
+   * Gives the model the Control Plane URL and the Model Factory agent token (HIVEMIND_API_URL,
+   * HIVEMIND_AGENT_TOKEN), so it can create training jobs and ask for scoped AWS credentials (issue #20).
+   * Allowed only for operator-listed repositories.
+   */
+  hivemindAgentAccess?: boolean;
   /** Explicit allowlist of read-only web hosts the research/coding worker may fetch (e.g. huggingface.co, arxiv.org). */
   allowedWebHosts?: string[];
   /** Allows the primary worker session to invoke subagents (e.g. Claude Agent tool with a secondary model). */
