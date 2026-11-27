@@ -192,6 +192,7 @@ export async function runBootstrap(options: BootstrapOptions, system: BootstrapS
     return { status: 'done', detail: `${why} (DSQL은 admin 접속 설정)` };
   });
 
+  let controlPlaneImagePushed = false;
   await step('images', '컨테이너 이미지', () => {
     const registry = `${account}.dkr.ecr.${options.primaryRegion}.amazonaws.com`;
     const missing = IMAGES.filter((image) => {
@@ -213,6 +214,7 @@ export async function runBootstrap(options: BootstrapOptions, system: BootstrapS
       system.run('docker', ['build', '--platform', 'linux/arm64', '-f', image.dockerfile, '-t', tag, '.']);
       system.run('docker', ['push', tag]);
     }
+    controlPlaneImagePushed = missing.some((image) => image.name === 'control-plane');
     return { status: 'done', detail: `${names} 빌드 후 ECR 푸시` };
   });
 
@@ -237,6 +239,17 @@ export async function runBootstrap(options: BootstrapOptions, system: BootstrapS
     const detail = `제한된 DSQL 역할, Spoke ${targetSpokes.length > 0 ? targetSpokes.join(', ') : '없음'}`;
     if (dry) return { status: 'would_run', detail: `${detail} (변경이 없으면 CloudFormation이 아무것도 바꾸지 않음)` };
     system.run('bash', ['scripts/aws-deploy-hub.sh', 'deploy'], { env: hubEnv(true, targetSpokes) });
+    // The always-on Control Plane keeps running the image it started with when the task definition did not
+    // change ('latest' tag). After a new image is pushed, restart it so it runs the new code.
+    if (controlPlaneImagePushed) {
+      const outputs = stackOutputs(system, options.primaryRegion, HUB_STACK);
+      const desired = Number(system.aws(options.primaryRegion, ['ecs', 'describe-services', '--cluster', outputs.ClusterName!, '--services', outputs.ControlPlaneServiceName!, '--query', 'services[0].desiredCount', '--output', 'text']));
+      if (desired > 0) {
+        system.aws(options.primaryRegion, ['ecs', 'update-service', '--cluster', outputs.ClusterName!, '--service', outputs.ControlPlaneServiceName!, '--force-new-deployment', '--query', 'service.serviceName', '--output', 'text']);
+        system.aws(options.primaryRegion, ['ecs', 'wait', 'services-stable', '--cluster', outputs.ClusterName!, '--services', outputs.ControlPlaneServiceName!]);
+        return { status: 'done', detail: `${detail}. 새 Control Plane 이미지로 실행 중인 작업을 교체` };
+      }
+    }
     return { status: 'done', detail };
   });
 

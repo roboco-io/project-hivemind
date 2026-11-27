@@ -21,6 +21,8 @@ interface World {
   files: Record<string, string>;
   failOn?: (command: string, args: string[]) => string | undefined;
   verify: Record<string, string | null>;
+  controlPlaneDesired?: number;
+  ecsCalls?: string[];
 }
 
 function freshAccount(): World {
@@ -65,6 +67,11 @@ function makeSystem(world: World) {
         return 'sha256:abc';
       }
       if (service === 'ecr' && action === 'get-login-password') return 'ecr-password';
+      if (service === 'ecs' && action === 'describe-services') return String(world.controlPlaneDesired ?? 1);
+      if (service === 'ecs' && (action === 'update-service' || action === 'wait')) {
+        (world.ecsCalls ??= []).push(`${action} ${args.includes('--force-new-deployment') ? 'force' : args[2] ?? ''}`);
+        return 'hm-control-plane';
+      }
       if (service === 'secretsmanager' && action === 'get-secret-value') return world.secrets[arg('--secret-id')] ?? '';
       if (service === 'secretsmanager' && action === 'put-secret-value') {
         world.secrets[arg('--secret-id')] = world.files[arg('--secret-string').replace('file://', '')]!;
@@ -169,6 +176,8 @@ test('bootstrap on an empty account creates resources in the safe order and repo
   const power = written['/home/op/.hivemind/aws-control-plane.json']!;
   assert.deepEqual(JSON.parse(power), { profile: 'ops', region: 'ap-northeast-2', cluster: 'hm-cluster', service: 'hm-control-plane', mode: 'always-on' });
   assert.ok(!power.includes('operator-token-value'));
+  // A new Control Plane image replaces the running always-on task (its task definition did not change).
+  assert.deepEqual(world.ecsCalls, ['update-service force', 'wait services-stable']);
   assert.equal(verifyCalls(), 1);
 
   const report = formatBootstrapReport(results);
