@@ -144,6 +144,9 @@ export class ControlPlanePower {
   /** True when this server raised the service or opened the tunnel. Only then does it stop on idle. */
   private owned = false;
   private starting: Promise<StartResult> | null = null;
+  /** Result of a start whose caller stopped waiting. The next start call receives it once. */
+  private unclaimedStart: StartResult | null = null;
+  private startWaiters = 0;
   private lastActivityAt = 0;
   private nextIdleCheckAt = 0;
   private idleTimer: NodeJS.Timeout | null = null;
@@ -244,17 +247,29 @@ export class ControlPlanePower {
     if (!this.configured) return { state: 'not_configured', started: false, reason: NOT_CONFIGURED };
     this.markActivity();
     if (!this.starting) {
-      this.starting = this.doStart().finally(() => {
+      if (this.unclaimedStart) {
+        // The start this caller was told to ask about again has finished in the meantime.
+        const finished = this.unclaimedStart;
+        this.unclaimedStart = null;
+        return finished;
+      }
+      const run: Promise<StartResult> = this.doStart().then((result) => {
+        if (this.startWaiters === 0) this.unclaimedStart = result;
+        return result;
+      }).finally(() => {
         this.starting = null;
       });
-      this.starting.catch(() => undefined);
+      this.starting = run;
+      run.catch(() => undefined);
     }
     const pending = this.starting;
+    this.startWaiters += 1;
     const timedOut = Symbol('timeout');
     // Wall-clock bound of this call only. It is not `system.sleep`: the start keeps its own pace.
     let timer: NodeJS.Timeout | undefined;
     const outcome = await Promise.race([pending, new Promise<typeof timedOut>((resolve) => { timer = setTimeout(() => resolve(timedOut), waitMs); timer.unref(); })]);
     clearTimeout(timer);
+    this.startWaiters -= 1;
     if (outcome === timedOut) {
       return { state: 'starting', started: false, reason: '기동 중입니다. 보통 1-2분 걸립니다. 잠시 뒤 hivemind_control_plane_start 를 다시 호출하면 결과를 받습니다.' };
     }
@@ -357,6 +372,7 @@ export class ControlPlanePower {
   async stop(force = false): Promise<StopResult> {
     if (!this.configured) return { stopped: false, reason: NOT_CONFIGURED };
     if (this.starting) await this.starting.catch(() => undefined);
+    this.unclaimedStart = null;
     const up = await this.reachable();
     if (!up) {
       const desired = await this.desiredCount();

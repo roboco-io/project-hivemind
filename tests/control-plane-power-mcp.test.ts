@@ -110,6 +110,18 @@ test('a start that outlasts the call returns "starting", and the next call retur
   assert.equal(w.awsCalls.filter((c) => c === 'ecs update-service 1').length, 1, 'the second call joined the first start');
 });
 
+test('a start that finishes after its caller stopped waiting is reported once to the next call as "started"', async () => {
+  const { w, power } = world({ tasksReadyAfterPolls: 10, realSleepMs: 5 });
+  const p = power();
+  assert.equal((await p.start(10)).state, 'starting');
+  for (let i = 0; i < 200 && (await p.state()) !== 'running'; i += 1) await new Promise((r) => setTimeout(r, 10));
+  const next = await p.start();
+  assert.deepEqual({ state: next.state, started: next.started }, { state: 'running', started: true }, 'not "already running": this server started it');
+  const later = await p.start();
+  assert.deepEqual({ started: later.started, already: later.alreadyRunning }, { started: false, already: true });
+  assert.equal(w.awsCalls.filter((c) => c === 'ecs update-service 1').length, 1);
+});
+
 test('a start that cannot finish lowers the service it raised, and leaves a service it did not raise alone', async () => {
   const stuck = world({ tasksReadyAfterPolls: 100_000 });
   const failed = await stuck.power().start(10_000_000);

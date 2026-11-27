@@ -10,7 +10,7 @@ AWS Control Plane은 평소 `desiredCount 0`으로 꺼져 있고, API는 SSM 포
 
 ## 2. 자동 검증
 
-`npm run check`는 1,291건이 모두 통과했다. `tests/control-plane-power-mcp.test.ts`(10건)는 AWS와 Control Plane을 가짜로 바꿔 다음을 확인한다.
+`npm run check`는 1,292건이 모두 통과했다. `tests/control-plane-power-mcp.test.ts`(11건)는 AWS와 Control Plane을 가짜로 바꿔 다음을 확인한다.
 
 - 기동은 서비스를 올리고, 작업을 기다리고, 터널을 연다. 다시 호출해도 서비스 변경과 터널이 한 번만 일어난다.
 - 기동이 호출보다 오래 걸리면 `starting`을 돌려주고, 다음 호출이 같은 기동의 결과를 받는다.
@@ -38,9 +38,23 @@ MCP 서버 코드를 로컬에서 직접 띄워 도구를 호출했다. 이 세�
 
 이 실행에서 Control Plane이 켜진 채 남았으므로 AWS CLI로 직접 `desiredCount 0`으로 내렸다. 그리고 거절 응답이 막고 있는 기록을 알려 주도록 고쳤다. 응답에 `blockingIds`(진행 중으로 센 기록의 ID)와 `unverifiable`(근거가 없어 정리하지 못한 기록과 그 이유)을 넣었다. 이 수정은 단위 테스트로 확인했고, 실 AWS에서 다시 실행하지는 않았다.
 
+### 오래된 작업 취소 후 재확인
+
+사용자의 지시로 위 전달 작업을 취소하고 같은 날 다시 확인했다.
+
+| 단계 | 결과 |
+|---|---|
+| `hivemind_control_plane_stop` (취소 전) | 거절. `blockingIds`와 `unverifiable`에 `dlv-a3cbdbd7-…`과 이유 `no ECS task recorded; cancel the task if its worker is gone` |
+| `hivemind_delivery_cancel` | 작업이 `cancelled`로 바뀜 |
+| `hivemind_control_plane_stop` (취소 후) | `stopped: true`. AWS CLI로 확인한 `desiredCount`는 0 |
+| 유휴 자동 종료 (유휴 시간을 1분으로 줄인 설정) | 기동 후 도구를 호출하지 않았고, 64초 뒤 `desiredCount`가 0이 됨 |
+| 종료 후 | 로컬 포트 4311 닫힘, 남은 `session-manager-plugin` 프로세스 0개 |
+
+이 실행에서 결함 하나가 드러나 고쳤다. 기동이 호출 대기 시간(50초)을 넘긴 뒤 끝나면, 다음 `start` 호출이 `started: true` 대신 `alreadyRunning: true`를 돌려줬다. 이제 그런 기동의 결과를 다음 호출에 한 번 전달한다. 이 수정은 단위 테스트로 확인했다.
+
 ## 4. 한계와 미검증 항목
 
-- **종료 성공 경로와 유휴 자동 종료는 실 AWS에서 확인하지 못했다.** 위의 오래된 작업이 종료를 막기 때문이다. 이 작업을 취소한 뒤 다시 확인해야 한다. 두 경로는 단위 테스트로만 확인했다.
+- **유휴 자동 종료는 유휴 시간 1분 설정으로 확인했다.** 기본값 15분으로는 기다려 보지 않았다. 진행 중인 작업이 있을 때 자동 종료가 미뤄지는 것은 단위 테스트로만 확인했다.
 - **근거 없는 `running` 기록은 자동 종료를 계속 막는다.** 운영자가 취소해야 풀린다. 이 상태에서는 Control Plane이 켜진 채 남을 수 있다.
 - **이 서버가 켠 Control Plane을 다른 클라이언트가 함께 쓰는 경우**, 이 서버는 그 사용을 알지 못해 유휴로 판단하고 내릴 수 있다.
 - **클라이언트가 MCP 서버를 강제 종료하면** 종료 처리가 실행되지 않아 Control Plane이 켜진 채 남는다.
