@@ -69,7 +69,7 @@ aws --profile roboco --region ap-northeast-2 ecs update-service \
 
 ## 3. MCP 클라이언트 연결 (Claude Code / Codex)
 
-`HIVEMIND_MCP_PROFILE=model-factory`를 지정하면 SW 전달 도구 7개 + 모델 팩토리 도구 9개(총 16개)가 노출된다. 프로필을 지정하지 않으면 협업 도구, 상태 조회, Control Plane 기동·종료, 최소 권한 자격 증명 발급까지 포함한 30개가 노출된다.
+`HIVEMIND_MCP_PROFILE=model-factory`를 지정하면 SW 전달 도구 7개 + 모델 팩토리 도구 10개(총 17개)가 노출된다. 프로필을 지정하지 않으면 협업 도구, 상태 조회, Control Plane 기동·종료, 최소 권한 자격 증명 발급까지 포함한 31개가 노출된다.
 
 ```json
 {
@@ -124,7 +124,9 @@ aws --profile roboco --region ap-northeast-2 ecs update-service \
    - 독립 검증기는 `POST /api/model-factory/jobs/:id/dispatch-verifier`(MCP `hivemind_mf_dispatch_verifier`)로 기동한다. 작업이 `evaluating`이고 S3 영수증이 확인된 경우에만 기동된다. 검증기는 모델·GitHub·Hugging Face 비밀이 없는 Fargate Spot 작업이며, 다음 순서로 동작한다. S3의 `receipt.json`이 이 작업의 것이고 그 `manifestDigest`가 Control Plane이 기록한 값과 같은지 확인한다. 산출물 파일을 모두 내려받아 SHA-256을 영수증과 비교한다. 고정 입력(`compute.inputs`)을 내려받아 SHA-256을 승인된 명세와 비교한다. 그다음 고정 입력 디렉터리에서 `releaseCheckCommand`를 실행하고, 산출물 디렉터리는 환경 변수 `HIVEMIND_ARTIFACT_DIR`로 전달한다. 명령의 종료 코드가 0이면 통과다. 표준 출력의 마지막 줄이 JSON 객체이면 그 값을 지표로 기록한다.
    - 따라서 검사 스크립트는 고정 입력에 넣어 두어야 한다. 검증기는 저장소 소스를 받지 않는다. 해시가 맞지 않으면 검증기는 증명을 보고하지 않고 실패로 끝나며, 작업은 `evaluating`에 남는다. 검증기가 내려받는 산출물은 합계 4GiB까지다.
    - 격리의 한계: 검사 명령은 셸 없이, 작업의 자격 증명 환경 변수 없이, 새 홈 디렉터리에서 실행된다. 샌드박스는 아니다. 명령은 검증기 컨테이너와 그 네트워크를 공유한다.
-7. `POST /api/model-factory/jobs/:id/approve-release`: 운영자 명시 승인 → Control Plane이 `hivemind-runtime/hf-release-token`으로 S3 검증 산출물을 Hugging Face에 직접 게시 (`released`).
+7. `POST /api/model-factory/jobs/:id/approve-release`: 운영자 명시 승인 → Control Plane이 `hivemind-runtime/hf-release-token`으로 S3 검증 산출물을 Hugging Face에 직접 게시 (`released`). 업로드는 수 분이 걸릴 수 있어 Control Plane이 백그라운드에서 최대 30분 동안 진행하고, 응답은 승인 직후의 `release_approved` 작업이다. 결과는 작업 조회(`hivemind_mf_get`)로 확인한다. 게시에 성공하면 `released`와 `publication`이 기록된다. 실패하면 작업은 `release_approved`에 남고, 실패 사유가 `diagnostics`와 `model_factory.release_publish_failed` 이벤트, Control Plane 로그에 남는다. 파일은 S3에서 스트림으로 읽어 올리며, 끝까지 읽은 뒤 크기와 SHA-256이 영수증과 다르면 커밋하지 않는다.
+   - `POST /api/model-factory/jobs/:id/publish-release`(MCP `hivemind_mf_publish_release`): 승인됐지만 게시에 실패한 작업을 같은 승인으로 다시 게시한다. `release_approved`이고 `publication`이 없을 때만 허용하며, 같은 작업의 게시가 진행 중이면 409로 거절한다.
+   - 2026-11-27 이전에는 `visibility: "private"` 게시가 항상 거절됐다. 게시기가 비공개 저장소에도 공개 대형 게시 확인 값(`allowPublicLarge: false`)을 넘겼고, LFS 검사는 이 값이 있으면 공개 저장소가 아닌 한 거절하기 때문이다. 지금은 공개 저장소에만 이 값을 넘긴다.
 8. **Hugging Face 저장소 공개 범위(`releasePolicy.visibility`) 동작 규칙 (fail-closed):**
    - HIVEMIND의 게시 단계(`assertHfVisibility` / `hfLfsCommit`)는 **비공개 저장소를 공개로 변경하지 않으며, 저장소를 자동 생성하지도 않는다.**
    - 게시 직전 HF API로 저장소의 실제 `private` 상태를 확인해 `releasePolicy.visibility`와 일치할 때만 커밋한다.
