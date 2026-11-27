@@ -157,10 +157,12 @@ export function buildApp(options: AppOptions = {}) {
   for(const url of [cloudPrefix,cloudPrefix+'/*'])app.route({method:['GET','POST','PUT','DELETE','PATCH'],url,bodyLimit:65536,onRequest:cloudOperator,handler:autonomousCloud});
   if (options.cloudflare) app.addHook('onReady', async () => options.cloudflare!.start());
   app.addHook('onClose', async () => { try { await options.cloudflare?.close(); } finally { try { options.workflows?.close(); } finally { store.close(); } } });
-  app.addHook('onRequest',async (_request,reply) => {
-    reply.header('cache-control','no-store');
+  app.addHook('onRequest',async (request,reply) => {
+    const path = new URL(request.url,'http://local').pathname;
+    reply.header('cache-control', path.startsWith('/brand/') ? 'public, max-age=3600' : 'no-store');
     reply.header('x-content-type-options','nosniff');
     reply.header('content-security-policy',"default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+    reply.header('connection','close');
   });
   app.setErrorHandler((error,request,reply) => {
     const path=new URL(request.url,'http://local').pathname;
@@ -176,14 +178,31 @@ export function buildApp(options: AppOptions = {}) {
     if (!equalSecret(request.headers.authorization ?? '',`Bearer ${token}`)) return reply.code(401).send({error:'Unauthorized'});
   };
   const operator = guard(operatorToken), worker = guard(workerToken);
-  app.get('/health',async () => ({status:'ok',mode:options.cloudflare ? (options.repository ? 'hybrid-workers' : 'cloudflare-bridge') : options.repository ? 'local-workers' : 'mock-local'}));
+  const healthMode = options.cloudflare ? (options.repository ? 'hybrid-workers' : 'cloudflare-bridge') : options.repository ? 'local-workers' : (options.deliveryOrchestratorFactory || options.modelFactoryOrchestratorFactory) ? 'aws-runtime' : 'mock-local';
+  app.get('/health',async () => ({status:'ok',mode:healthMode}));
   app.get('/favicon.ico',async (_request,reply) => reply.code(204).send());
   const staticRoot = new URL('../../../../apps/dashboard/public/',import.meta.url);
-  for (const [route,file,mime] of [['/','index.html','text/html'],['/app.js','app.js','application/javascript'],['/tool-audit.js','tool-audit.js','application/javascript'],['/styles.css','styles.css','text/css'],['/brand/hivemind-logo.png','brand/hivemind-logo.png','image/png'],['/brand/hivemind-bee.png','brand/hivemind-bee.png','image/png']] as const) {
+  for (const [route,file,mime] of [['/','index.html','text/html'],['/app.js','app.js','application/javascript'],['/tool-audit.js','tool-audit.js','application/javascript'],['/monitor.js','monitor.js','application/javascript'],['/styles.css','styles.css','text/css'],['/brand/hivemind-logo.png','brand/hivemind-logo.png','image/png'],['/brand/hivemind-bee.png','brand/hivemind-bee.png','image/png']] as const) {
     app.get(route,async (_request,reply) => reply.type(mime.startsWith('image/') ? mime : mime+'; charset=utf-8').send(await readFile(fileURLToPath(new URL(file,staticRoot)))));
   }
   app.get('/api/capabilities',{preHandler:operator},async () => ({providers:options.repository ? ['mock','codex','claude'] : ['mock'],repository:options.repository ?? null,...(options.cloudflare ? {cloudflare:{...options.cloudflare.capabilities(),...(options.workflows?{workflows:true}:{})}} : {})}));
   app.get('/api/state',{preHandler:operator},async () => ({...store.state(),...(options.cloudflare ? {cloudflare:options.cloudflare.state()} : {})}));
+  app.get('/api/monitor/snapshot',{preHandler:operator},async () => {
+    const [deliveryTasks, deliveryEvents, mfJobs, mfEvents, mfLedger, collabSessions] = await Promise.all([
+      deliveryStore.list(),
+      deliveryStore.events(),
+      modelFactoryStore.list(),
+      modelFactoryStore.events(),
+      modelFactoryStore.ledger(),
+      collabService.listSessions(),
+    ]);
+    return {
+      health: { status: 'ok', mode: healthMode },
+      delivery: { storageBackend: deliveryStore.storageBackend, tasks: deliveryTasks, events: deliveryEvents },
+      modelFactory: { storageBackend: modelFactoryStore.storageBackend, jobs: mfJobs, events: mfEvents, ledger: mfLedger },
+      collab: { storageBackend: collabService.storageBackend, sessions: collabSessions },
+    };
+  });
   if (options.cloudflare) {
     const cloudflare = options.cloudflare;
     app.post<{Body:CreateTask}>('/api/cloudflare/tasks',{

@@ -352,10 +352,11 @@ $('decision-form').addEventListener('submit', async event => {
   } catch (error) { setError('결정 기록 실패: ' + error.message); }
   finally { state.busy = false; render(); }
 });
+const legacyHidden = () => Boolean($('panel-legacy')?.hidden);
 render();
-void refresh();
-setInterval(() => { if (!document.hidden) void refresh(); }, 2000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) void refresh(); });
+if (!legacyHidden()) void refresh();
+setInterval(() => { if (!document.hidden && !legacyHidden()) void refresh(); }, 2000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && !legacyHidden()) void refresh(); });
 
 // Independent operator state: long-task polling never changes the old task form.
 const autonomousPath = '/api/cloudflare/autonomous-tasks';
@@ -563,5 +564,5 @@ $('autonomous-decision-form').addEventListener('submit', async event => {
   }
   finally { autonomous.busy = false; renderAutonomous(); }
 });
-void refreshAutonomous();
-setInterval(() => { if (!document.hidden) void refreshAutonomous(); }, 2000);
+if (!legacyHidden()) void refreshAutonomous();
+setInterval(() => { if (!document.hidden && !legacyHidden()) void refreshAutonomous(); }, 2000);

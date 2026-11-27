@@ -4,77 +4,621 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>Project HIVEMIND · 관제실</title>
+  <title>Project HIVEMIND · 운영 · 비용 관제실</title>
   <link rel="icon" type="image/png" href="/brand/hivemind-bee.png">
   <link rel="stylesheet" href="/styles.css">
   <script src="/tool-audit.js" defer></script>
   <script src="/app.js" defer></script>
+  <script src="/monitor.js" defer></script>
 </head>
 <body>
-  <a class="skip" href="#workspace">작업 내용으로 이동</a>
+  <a class="skip" href="#monitor-main">관제 내용으로 이동</a>
   <header class="masthead">
-    <div class="identity"><img class="brand-logo" src="/brand/hivemind-logo.png" alt="Project HIVEMIND — 손그림 꿀벌 로고" width="240" height="80"><span>One Vision. Many Agents.</span></div>
-    <div class="connection"><span id="connection-status" role="status">연결 대기</span><span id="last-sync">아직 동기화하지 않음</span></div>
-  </header>
-  <div class="demo-notice"><strong>실행 환경 선택</strong><span>로컬 또는 Cloudflare에서 Codex·Claude Code 작업을 실행합니다. mock 작업은 합성 diff와 모의 비용을 사용합니다.</span></div>
-  <main>
-    <section class="overview" aria-labelledby="page-title">
-      <div><p class="context">사람이 방향을 정하고, 워커가 실행합니다.</p><h1 id="page-title">개발 관제실</h1></div>
-      <div class="summary-strip" aria-label="프로젝트 현황"><div><strong id="task-count">0</strong><span>전체 작업</span></div><div><strong id="approval-count">0</strong><span>승인 대기</span></div><div><strong id="cost-total">$0.000000</strong><span id="cost-total-label">확인된 보고 비용</span></div></div>
-    </section>
-    <details class="access"><summary>관제 연결 설정</summary><form id="connection-form"><label for="operator-token">운영자 토큰</label><div class="input-action"><input id="operator-token" type="password" value="local-development-only" autocomplete="off" spellcheck="false" required><button type="submit" class="secondary">연결 확인</button></div><p class="help">서버의 HIVEMIND_OPERATOR_TOKEN과 같은 값을 입력하세요. 이 탭의 메모리에만 보관합니다.</p></form></details>
-    <p id="error-banner" class="error-banner" role="alert" hidden></p>
-    <p id="cloudflare-connection" class="help remote-connection" role="status">Cloudflare · 연결 확인 중</p>
-    <div class="workspace" id="workspace">
-      <aside class="task-sidebar" aria-labelledby="tasks-title">
-        <div class="section-title"><h2 id="tasks-title">작업</h2><button id="new-task-button" class="secondary" type="button">새 작업</button></div>
-        <div id="task-list" class="task-list"><p class="empty">첫 작업을 등록하면 여기에 표시됩니다.</p></div>
-        <section class="workers" aria-labelledby="workers-title"><div class="section-title"><h2 id="workers-title">워커</h2><span id="worker-count" class="quiet">0개</span></div><div id="worker-list"><p class="empty">워커 연결을 기다립니다. 별도 터미널에서 npm run worker를 실행하세요.</p></div></section>
-      </aside>
-      <div class="main-panel">
-        <section id="create-panel" class="panel" aria-labelledby="create-title">
-          <div class="panel-heading"><div><p class="context">새로운 지시</p><h2 id="create-title">작업을 등록하세요</h2></div><span id="create-route" class="pill">mock / local</span></div>
-          <p class="intro">목표와 완료 조건을 적어 주세요. 등록한 작업은 실행 승인을 받을 때까지 대기합니다.</p>
-          <form id="create-form" class="create-form"><label for="task-runtime">실행 환경<select id="task-runtime" name="runtime"><option value="local">로컬 (local)</option><option value="cloudflare">Cloudflare 원격</option></select></label><label for="task-provider">실행 워커<select id="task-provider" name="provider"><option value="mock">모의 워커 (mock)</option></select></label><div class="repository-context"><p id="provider-help" class="help">실행 가능한 워커 설정을 확인하고 있습니다.</p><dl id="create-repository" class="repository-facts" hidden><div><dt>저장소</dt><dd id="create-repository-name"></dd></div><div><dt>고정 시작 커밋</dt><dd id="create-base-commit"></dd></div><div><dt>테스트 프로필</dt><dd id="create-test-profile"></dd></div><div><dt>테스트 명령</dt><dd id="create-test-command"></dd></div></dl></div><label for="task-title">작업 제목<input id="task-title" name="title" required maxlength="160" placeholder="예: 로그인 폼의 입력 검증 추가"></label><label for="task-instructions">목표와 완료 조건<textarea id="task-instructions" name="instructions" rows="5" required maxlength="10000" placeholder="무엇을 바꾸고, 어떤 조건에서 완료로 판단할지 적어 주세요."></textarea></label><label class="budget-field" for="task-budget">작업 예산 (USD)<input id="task-budget" name="budget" type="number" min="0.001" max="1000" step="0.000001" value="0.01" required></label><p id="budget-help" class="help">모의 워커 예상 비용은 $0.001000입니다.</p><button type="submit" id="create-submit">작업 등록</button></form>
-        </section>
-        <section id="task-panel" class="panel" aria-labelledby="selected-title" hidden>
-          <div class="panel-heading"><div><p id="task-id" class="context"></p><h2 id="selected-title"></h2></div><span id="selected-status" class="pill"></span></div>
-          <p id="task-instructions-view" class="instructions"></p>
-          <dl class="task-facts"><div><dt>실행 경로</dt><dd id="task-route"></dd></div><div><dt>할당 워커</dt><dd id="task-worker"></dd></div><div><dt>예산</dt><dd id="task-budget-view"></dd></div><div><dt>예상 비용</dt><dd id="task-estimate"></dd></div><div><dt>보고 비용</dt><dd id="task-actual"></dd></div><div><dt>최근 변경</dt><dd id="task-updated"></dd></div></dl>
-          <section id="decision-panel" class="decision-panel" aria-labelledby="decision-title"><h3 id="decision-title">사람의 결정이 필요합니다</h3><p id="decision-description"></p><form id="decision-form"><label for="decision-reason">결정 사유<textarea id="decision-reason" rows="2" maxlength="2000" required placeholder="승인·반려·중단 이유를 기록하세요."></textarea></label><div class="actions"><button id="approve-button" type="submit" name="decision" value="approve">실행 승인</button><button id="reject-button" type="submit" name="decision" value="reject" class="secondary">반려</button><button id="cancel-button" type="submit" name="decision" value="cancel" class="danger">작업 중단</button></div></form></section>
-          <section class="result-section" aria-labelledby="result-title"><h3 id="result-title">실행 결과</h3><p id="task-summary" class="empty">아직 보고된 결과가 없습니다.</p><h4>Git diff <span id="diff-kind" class="quiet">합성 예시 · 자동 적용하지 않음</span></h4><p id="diff-truncated" class="evidence-warning" hidden>diff가 표시 한도를 넘어 일부만 저장되었습니다. worktree에서 전체 변경을 확인하세요.</p><pre id="task-diff" tabindex="0">워커 실행 후 변경 제안이 표시됩니다.</pre></section>
-          <section id="execution-section" class="execution-section" aria-labelledby="execution-title" hidden>
-            <div class="section-title"><h3 id="execution-title">실제 실행 근거</h3><span id="execution-status" class="pill">아직 보고되지 않음</span></div>
-            <dl class="repository-facts"><div><dt>저장소</dt><dd id="execution-repository"></dd></div><div><dt>고정 시작 커밋</dt><dd id="execution-base"></dd></div><div><dt>실행 후 HEAD</dt><dd id="execution-head"></dd></div><div><dt>테스트 프로필</dt><dd id="execution-profile"></dd></div><div class="wide"><dt>작업 worktree</dt><dd id="execution-worktree"></dd></div><div><dt id="agent-execution-label">제공자 실행</dt><dd id="agent-status"></dd></div><div><dt>실행 세션</dt><dd id="agent-thread"></dd></div><div><dt>모델</dt><dd id="agent-model"></dd></div><div><dt>토큰 사용량</dt><dd id="agent-usage"></dd></div></dl>
-            <div id="agent-error-block" hidden><h4 id="agent-error-title">제공자 오류 출력</h4><pre id="agent-stderr" tabindex="0"></pre></div>
-            <section id="setup-section" class="process-evidence" aria-labelledby="setup-title" hidden><div class="section-title"><h4 id="setup-title">실행 준비</h4><span id="setup-status" class="pill"></span></div><p id="setup-metadata" class="process-metadata"></p><details><summary>준비 명령 출력</summary><h4>표준 출력 (stdout)</h4><pre id="setup-stdout" tabindex="0"></pre><h4>오류 출력 (stderr)</h4><pre id="setup-stderr" tabindex="0"></pre></details><p id="setup-truncated" class="evidence-warning" hidden>준비 명령 출력이 한도를 넘어 일부만 저장되었습니다.</p></section>
-            <section class="process-evidence" aria-labelledby="tests-title"><div class="section-title"><h4 id="tests-title">테스트 결과</h4><span id="tests-status" class="pill">아직 실행하지 않음</span></div><p id="tests-metadata" class="process-metadata"></p><h4>표준 출력 (stdout)</h4><pre id="tests-stdout" tabindex="0">아직 보고된 테스트 출력이 없습니다.</pre><h4>오류 출력 (stderr)</h4><pre id="tests-stderr" tabindex="0">아직 보고된 테스트 출력이 없습니다.</pre><p id="tests-truncated" class="evidence-warning" hidden>테스트 출력이 한도를 넘어 일부만 저장되었습니다.</p></section>
-          </section>
-          <section id="remote-execution-section" class="execution-section" aria-labelledby="remote-execution-title" hidden>
-            <div class="section-title"><h3 id="remote-execution-title">원격 실행 근거</h3><span id="remote-phase" class="pill">아직 보고되지 않음</span></div>
-            <dl class="repository-facts"><div><dt>원격 작업 ID</dt><dd id="remote-job"></dd></div><div><dt>저장소</dt><dd id="remote-repository"></dd></div><div class="wide"><dt>고정 시작 커밋</dt><dd id="remote-base"></dd></div><div><dt>입력 snapshot ID</dt><dd id="remote-input-snapshot"></dd></div><div><dt>출력 snapshot ID</dt><dd id="remote-output-snapshot"></dd></div><div><dt>컨테이너 종료</dt><dd id="remote-stopped"></dd></div><div><dt>구독 인증 상태 저장</dt><dd id="remote-auth-synced"></dd></div><div class="wide"><dt>검토 worktree</dt><dd id="remote-worktree"></dd></div><div><dt>오류 코드</dt><dd id="remote-error"></dd></div></dl>
-            <section class="process-evidence" aria-labelledby="remote-agent-title"><div class="section-title"><h4 id="remote-agent-title">제공자 프로세스</h4><span id="remote-agent-status" class="pill"></span></div><p id="remote-agent-metadata" class="process-metadata"></p><h4>표준 출력 (stdout)</h4><pre id="remote-agent-stdout" tabindex="0"></pre><h4>오류 출력 (stderr)</h4><pre id="remote-agent-stderr" tabindex="0"></pre><p id="remote-agent-truncated" class="evidence-warning" hidden>제공자 출력이 한도를 넘어 일부만 저장되었습니다.</p></section>
-            <h4>별도 컨테이너 검증</h4><div id="remote-checks"></div>
-          </section>
-          <section class="events-section" aria-labelledby="events-title"><div class="section-title"><h3 id="events-title">작업 이벤트</h3><span class="quiet">최신 순</span></div><ol id="event-list" class="event-list"></ol></section>
-        </section>
+    <div class="identity">
+      <img class="brand-logo" src="/brand/hivemind-logo.png" alt="Project HIVEMIND — 손그림 꿀벌 로고" width="240" height="80">
+      <span>One Vision. Many Agents.</span>
+    </div>
+    <div class="masthead-right">
+      <div class="masthead-controls">
+        <span id="monitor-mode-badge" class="pill">연결 확인 중</span>
+        <button id="monitor-poll-toggle" type="button" class="secondary compact-btn" aria-pressed="true">자동 갱신 켜짐</button>
+        <button id="monitor-refresh-now" type="button" class="secondary compact-btn">새로고침</button>
+      </div>
+      <div class="connection">
+        <span id="connection-status" role="status">연결 대기</span>
+        <span id="last-sync">아직 동기화하지 않음</span>
       </div>
     </div>
-    <section class="autonomous-operator" aria-labelledby="autonomous-title">
-      <div class="section-title"><div><p class="context">Cloudflare · 장기 자율 작업</p><h2 id="autonomous-title">실행 범위 검토</h2></div><button id="autonomous-refresh" class="secondary" type="button">목록 새로고침</button></div>
-      <p class="help">등록은 MCP에서 초안으로 진행합니다. 현재 revision의 범위와 자격 증명 reference를 검토한 뒤 명시적으로 승인하세요.</p>
-      <p id="autonomous-error" class="error-banner" role="alert" hidden></p>
-      <div class="autonomous-layout">
-        <aside aria-label="장기 작업 페이지"><p id="autonomous-page" class="quiet">현재 페이지 · 조회 전</p><div id="autonomous-list" class="task-list"></div><div class="actions"><button id="autonomous-first" type="button" class="secondary">첫 페이지</button><button id="autonomous-next" type="button" class="secondary" disabled>다음 페이지</button></div></aside>
-        <section id="autonomous-review" class="panel" aria-label="현재 revision 검토" hidden>
-          <div class="panel-heading"><h3 id="autonomous-current"></h3><span id="autonomous-status" class="pill"></span></div><p id="autonomous-goal" class="instructions"></p>
-          <dl class="repository-facts"><div><dt>고정 모델</dt><dd id="autonomous-model"></dd></div><div><dt>종료 시각</dt><dd id="autonomous-ends"></dd></div><div class="wide"><dt>허용 도구</dt><dd id="autonomous-tools"></dd></div><div class="wide"><dt>웹 호스트 범위</dt><dd id="autonomous-web"></dd></div><div class="wide"><dt>자격 증명 reference · 비밀 값 아님</dt><dd id="autonomous-credentials"></dd></div><div class="wide"><dt>외부 profile · 대상과 상한</dt><dd id="autonomous-profiles"></dd></div><div class="wide"><dt>고정 source snapshot · 검사</dt><dd id="autonomous-source"></dd></div><div><dt>승인 예산</dt><dd id="autonomous-budget"></dd></div><div><dt>예약 상한 · 청구액 아님</dt><dd id="autonomous-reserved"></dd></div><div><dt>원장 확인 비용 · 전체 청구액 아님</dt><dd id="autonomous-spent"></dd></div><div><dt>모델 금액</dt><dd id="autonomous-model-cost"></dd></div><div><dt>토큰 사용량</dt><dd id="autonomous-usage"></dd></div><div><dt>정리 상태</dt><dd id="autonomous-cleanup"></dd></div></dl>
-          <form id="autonomous-decision-form" class="decision-panel"><label for="autonomous-reason">이번 결정 사유 또는 메시지<textarea id="autonomous-reason" maxlength="2000" rows="2" required></textarea></label><div class="actions"><button id="autonomous-approve" type="submit" value="approve">현재 revision 실행 승인</button><button id="autonomous-cancel" class="danger" type="submit" value="cancel">작업 중단</button><button id="autonomous-message" class="secondary" type="submit" value="message">메시지 기록</button><button id="autonomous-resume" class="secondary" type="submit" value="resume">같은 범위 재개</button></div><p class="help">예약·원장 정산은 실제 공급자 청구 확정과 다릅니다. 미확정 금액과 정리 대기는 그대로 보존합니다.</p></form>
-          <section id="autonomous-tool-audit" class="process-evidence" aria-labelledby="autonomous-tool-audit-title"><div class="section-title"><h4 id="autonomous-tool-audit-title">워커 도구 호출 기록</h4><span class="quiet">워커 보고 · 독립 증명 아님</span></div><div id="autonomous-tool-audit-body"><p class="empty">기록을 불러오는 중입니다.</p></div></section>
-        </section>
+  </header>
+
+  <main id="monitor-main">
+    <section class="overview" aria-labelledby="page-title">
+      <div>
+        <p class="context">의도와 정책으로 실행을 통제하고, 상태와 비용을 실시간으로 추적합니다.</p>
+        <h1 id="page-title">HIVEMIND 관제실</h1>
+      </div>
+      <div class="storage-strip" aria-label="저장소 연결 상태">
+        <div class="storage-chip"><span class="storage-label">SW 전달</span><strong id="monitor-backend-delivery">확인 중</strong></div>
+        <div class="storage-chip"><span class="storage-label">Model Factory</span><strong id="monitor-backend-mf">확인 중</strong></div>
+        <div class="storage-chip"><span class="storage-label">병렬 협업</span><strong id="monitor-backend-collab">확인 중</strong></div>
       </div>
     </section>
+
+    <details id="connection-access" class="access">
+      <summary>관제 연결 설정</summary>
+      <form id="connection-form">
+        <label for="operator-token">운영자 토큰</label>
+        <div class="input-action">
+          <input id="operator-token" type="password" value="local-development-only" autocomplete="off" spellcheck="false" required>
+          <button type="submit" class="secondary">연결 확인</button>
+        </div>
+        <p class="help">서버의 HIVEMIND_OPERATOR_TOKEN과 같은 값을 입력하세요. 이 탭의 메모리에만 보관하며 저장소에 기록하지 않습니다.</p>
+      </form>
+    </details>
+
+    <p id="monitor-error" class="error-banner" role="alert" hidden></p>
+    <p id="monitor-notice" class="notice-banner" role="status" hidden></p>
+
+    <nav class="tab-bar" role="tablist" aria-label="관제 화면 전환">
+      <button id="tab-overview" class="tab-btn active" type="button" role="tab" aria-selected="true" aria-controls="panel-overview" data-tab="overview">
+        <span>모니터링 개요 · 비용</span>
+      </button>
+      <button id="tab-delivery" class="tab-btn" type="button" role="tab" aria-selected="false" aria-controls="panel-delivery" data-tab="delivery">
+        <span>SW 전달</span>
+        <span id="tab-badge-delivery" class="tab-badge">0</span>
+      </button>
+      <button id="tab-model-factory" class="tab-btn" type="button" role="tab" aria-selected="false" aria-controls="panel-model-factory" data-tab="model-factory">
+        <span>Model Factory</span>
+        <span id="tab-badge-mf" class="tab-badge">0</span>
+      </button>
+      <button id="tab-collab" class="tab-btn" type="button" role="tab" aria-selected="false" aria-controls="panel-collab" data-tab="collab">
+        <span>병렬 협업</span>
+        <span id="tab-badge-collab" class="tab-badge">0</span>
+      </button>
+      <button id="tab-legacy" class="tab-btn" type="button" role="tab" aria-selected="false" aria-controls="panel-legacy" data-tab="legacy">
+        <span>로컬 · 레거시</span>
+        <span id="tab-badge-legacy" class="tab-badge">0</span>
+      </button>
+    </nav>
+
+    <!-- 1. MONITORING OVERVIEW & COSTS -->
+    <section id="panel-overview" class="tab-panel" role="tabpanel" aria-labelledby="tab-overview">
+      <div class="kpi-grid" aria-label="핵심 운영 지표">
+        <article class="kpi-card">
+          <p class="kpi-label">실행 중 워크로드</p>
+          <strong id="kpi-active-total" class="kpi-value">0</strong>
+          <p id="kpi-active-detail" class="kpi-sub">SW 전달 0 · 학습 0 · 협업 활성 0</p>
+        </article>
+        <article class="kpi-card kpi-card-attention">
+          <p class="kpi-label">승인 · 검토 대기</p>
+          <strong id="kpi-attention-total" class="kpi-value">0</strong>
+          <p id="kpi-attention-detail" class="kpi-sub">SW 전달 0 · 학습/공개 0</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Model Factory 잔여 예산</p>
+          <strong id="kpi-mf-remaining" class="kpi-value">미확정</strong>
+          <p id="kpi-mf-cap-detail" class="kpi-sub">중앙 상한 확인 중</p>
+        </article>
+        <article class="kpi-card">
+          <p class="kpi-label">Model Factory 정산 · 예약</p>
+          <strong id="kpi-mf-committed" class="kpi-value">미확정</strong>
+          <p id="kpi-mf-committed-detail" class="kpi-sub">정산 추정 $0.00 · 예약 상한 $0.00</p>
+        </article>
+      </div>
+
+      <section class="monitor-card" aria-labelledby="budget-monitor-title">
+        <div class="section-title">
+          <div>
+            <p class="context">중앙 예산 원장 · Model Factory</p>
+            <h2 id="budget-monitor-title">예산 사용률 및 비용 원장</h2>
+          </div>
+          <span id="budget-utilization-pill" class="pill">사용률 확인 중</span>
+        </div>
+
+        <div class="budget-meter" role="img" aria-label="중앙 예산 사용률 막대">
+          <div id="budget-bar-settled" class="budget-seg settled"></div>
+          <div id="budget-bar-reserved" class="budget-seg reserved"></div>
+        </div>
+        <div class="budget-legend">
+          <span><i class="swatch settled"></i>정산 추정치 <strong id="legend-settled">미확정</strong></span>
+          <span><i class="swatch reserved"></i>활성 예약 상한 <strong id="legend-reserved">미확정</strong></span>
+          <span><i class="swatch remaining"></i>잔여 중앙 예산 <strong id="legend-remaining">미확정</strong></span>
+          <span><i class="swatch cap"></i>중앙 예산 상한 <strong id="legend-cap">미확정</strong></span>
+        </div>
+        <p class="help cost-disclaimer">예약 상한은 최대 확보분이며, 정산 금액은 인스턴스 실행 시간 × 시간당 상한가로 계산한 추정치입니다. 실제 AWS 청구서 및 모델 구독 과금과 다릅니다.</p>
+
+        <div class="table-wrap">
+          <table class="data-table" aria-label="Model Factory 비용 원장 목록">
+            <thead>
+              <tr>
+                <th>작업 ID</th>
+                <th>모델</th>
+                <th>상태</th>
+                <th>리전 · 인스턴스</th>
+                <th class="num">예약 상한</th>
+                <th class="num">정산 추정</th>
+                <th>정산 시각</th>
+              </tr>
+            </thead>
+            <tbody id="monitor-ledger-body">
+              <tr><td colspan="7" class="empty-cell">비용 원장을 불러오는 중입니다.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div class="overview-two-col">
+        <section class="monitor-card" aria-labelledby="subsystem-status-title">
+          <div class="section-title">
+            <div>
+              <p class="context">AWS 단일 실행 경로</p>
+              <h2 id="subsystem-status-title">워크로드 상태 분포</h2>
+            </div>
+          </div>
+          <div class="subsystem-list">
+            <div class="subsystem-row">
+              <div class="subsystem-head">
+                <strong>SW 전달 (Fargate Spot · Draft PR)</strong>
+                <button id="jump-delivery" type="button" class="secondary compact-btn">상세 보기</button>
+              </div>
+              <p id="overview-delivery-budget" class="help">승인 예산 합계 확인 중 · 모델/Fargate 실청구 미확정</p>
+              <div id="overview-delivery-badges" class="status-badges"></div>
+            </div>
+            <div class="subsystem-row">
+              <div class="subsystem-head">
+                <strong>Model Factory (EC2 Spot · 검증 · 공개)</strong>
+                <button id="jump-mf" type="button" class="secondary compact-btn">상세 보기</button>
+              </div>
+              <p id="overview-mf-instances" class="help">실행 중 인스턴스 확인 중</p>
+              <div id="overview-mf-badges" class="status-badges"></div>
+            </div>
+            <div class="subsystem-row">
+              <div class="subsystem-head">
+                <strong>병렬 에이전트 협업</strong>
+                <button id="jump-collab" type="button" class="secondary compact-btn">상세 보기</button>
+              </div>
+              <p id="overview-collab-summary" class="help">협업 세션 확인 중</p>
+              <div id="overview-collab-badges" class="status-badges"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="monitor-card" aria-labelledby="spot-advisor-title">
+          <div class="section-title">
+            <div>
+              <p class="context">멀티 리전 스팟 배치</p>
+              <h2 id="spot-advisor-title">스팟 배치 및 절감 현황</h2>
+            </div>
+            <button id="spot-check-button" type="button" class="secondary compact-btn">실시간 배치 조회</button>
+          </div>
+          <p id="spot-advisor-status" class="help">최근 작업 배치 기록을 표시합니다. AWS 오케스트레이터 연결 시 실시간 스팟 배치 점수를 조회할 수 있습니다.</p>
+          <div id="spot-advisor-body" class="spot-body">
+            <p class="empty">아직 조회된 배치 정보가 없습니다.</p>
+          </div>
+        </section>
+      </div>
+
+      <section class="monitor-card" aria-labelledby="recent-events-title">
+        <div class="section-title">
+          <div>
+            <p class="context">실시간 관제 로그</p>
+            <h2 id="recent-events-title">최근 시스템 이벤트</h2>
+          </div>
+          <span class="quiet">최신 순 · 최대 25건</span>
+        </div>
+        <ol id="monitor-recent-events" class="event-list">
+          <li class="empty">이벤트를 불러오는 중입니다.</li>
+        </ol>
+      </section>
+    </section>
+
+    <!-- 2. SW DELIVERY TAB -->
+    <section id="panel-delivery" class="tab-panel" role="tabpanel" aria-labelledby="tab-delivery" hidden>
+      <div class="toolbar">
+        <div id="delivery-filters" class="filter-group" role="group" aria-label="SW 전달 상태 필터">
+          <button type="button" class="filter-btn active" data-filter="all">전체</button>
+          <button type="button" class="filter-btn" data-filter="active">실행 · 대기</button>
+          <button type="button" class="filter-btn" data-filter="attention">승인 · 검토 대기</button>
+          <button type="button" class="filter-btn" data-filter="terminal">종료</button>
+        </div>
+        <div class="toolbar-actions">
+          <span id="delivery-count-label" class="quiet">0건</span>
+          <button id="delivery-reconcile-btn" type="button" class="secondary compact-btn">워커 상태 정리 (Reconcile)</button>
+        </div>
+      </div>
+
+      <div class="workspace">
+        <aside class="task-sidebar" aria-label="SW 전달 작업 목록">
+          <div id="delivery-list" class="task-list"><p class="empty">등록된 SW 전달 작업이 없습니다.</p></div>
+        </aside>
+        <div class="main-panel">
+          <section id="delivery-empty" class="panel empty-panel">
+            <h2>SW 전달 작업을 선택하세요</h2>
+            <p class="intro">왼쪽 목록에서 작업을 선택하면 실행 상태, 스팟 배치, 불변 수용 테스트 검증 증명, Draft PR 해시 일치 여부와 승인·중단 제어를 확인할 수 있습니다.</p>
+          </section>
+          <section id="delivery-detail" class="panel" hidden>
+            <div class="panel-heading">
+              <div>
+                <p id="dlv-id" class="context"></p>
+                <h2 id="dlv-title"></h2>
+              </div>
+              <span id="dlv-status" class="pill"></span>
+            </div>
+            <p id="dlv-wait-reason" class="help" hidden></p>
+            <p id="dlv-instructions" class="instructions"></p>
+
+            <dl class="task-facts">
+              <div><dt>모델 제공자</dt><dd id="dlv-provider"></dd></div>
+              <div><dt>반복 횟수 (Ralph Loop)</dt><dd id="dlv-iteration"></dd></div>
+              <div><dt>승인 예산 · 모델 청구 미확정</dt><dd id="dlv-budget"></dd></div>
+              <div><dt>대상 저장소 · 브랜치</dt><dd id="dlv-repo"></dd></div>
+              <div><dt>고정 기준 커밋</dt><dd id="dlv-base-commit"></dd></div>
+              <div><dt>활성 리전 · 스팟 재시도</dt><dd id="dlv-region"></dd></div>
+              <div><dt>활성 실행 / 워커</dt><dd id="dlv-worker"></dd></div>
+              <div><dt>ECS 작업 ARN</dt><dd id="dlv-ecs-arn"></dd></div>
+              <div><dt>최근 갱신</dt><dd id="dlv-updated"></dd></div>
+            </dl>
+
+            <p id="dlv-outcome-banner" class="evidence-warning" hidden></p>
+
+            <section id="dlv-action-section" class="decision-panel" hidden>
+              <h3 id="dlv-action-title">운영자 결정</h3>
+              <p id="dlv-action-desc"></p>
+              <p id="dlv-fingerprint-row" class="fingerprint-box" hidden></p>
+              <form id="dlv-action-form">
+                <div id="dlv-human-fields" class="inline-fields" hidden>
+                  <label class="checkbox-label" for="dlv-opened-diff">
+                    <input id="dlv-opened-diff" type="checkbox">
+                    <span>Git diff를 직접 열어 확인했습니다 (openedDiff)</span>
+                  </label>
+                  <label class="compact-input" for="dlv-duration-min">검토 소요 시간 (분)
+                    <input id="dlv-duration-min" type="number" min="0" max="10080" step="0.1" value="1">
+                  </label>
+                  <label for="dlv-missing-evidence">부족한 근거 (선택)
+                    <input id="dlv-missing-evidence" type="text" maxlength="1000" placeholder="판단에 부족했던 근거가 있으면 기록하세요.">
+                  </label>
+                </div>
+                <label for="dlv-reason">결정 사유
+                  <textarea id="dlv-reason" rows="2" maxlength="2000" required placeholder="승인·반려·중단 사유를 기록하세요."></textarea>
+                </label>
+                <div class="actions">
+                  <button id="dlv-btn-approve" type="submit" value="approve" hidden>실행 승인 (Fargate Spot 기동)</button>
+                  <button id="dlv-btn-human-approve" type="submit" value="human_approve" hidden>Draft PR 승인 기록</button>
+                  <button id="dlv-btn-human-reject" type="submit" value="human_reject" class="secondary" hidden>Draft PR 반려 기록</button>
+                  <button id="dlv-btn-cancel" type="submit" value="cancel" class="danger" hidden>작업 중단</button>
+                </div>
+              </form>
+            </section>
+
+            <section class="execution-section">
+              <div class="section-title">
+                <h3>검증 증명 및 Draft PR</h3>
+                <span id="dlv-hash-match" class="pill">미게시</span>
+              </div>
+              <dl class="repository-facts">
+                <div><dt>수용 테스트 명령</dt><dd id="dlv-test-cmd"></dd></div>
+                <div><dt>수용 테스트 다이제스트</dt><dd id="dlv-acceptance-digest"></dd></div>
+                <div><dt>최근 검증 통과 · 경로 무결성</dt><dd id="dlv-attest-status"></dd></div>
+                <div><dt>검증 트리 해시 (verifiedTreeHash)</dt><dd id="dlv-verified-hash"></dd></div>
+                <div class="wide"><dt>최근 검증 요약</dt><dd id="dlv-attest-summary"></dd></div>
+                <div class="wide"><dt>Draft PR</dt><dd id="dlv-pr-link"></dd></div>
+                <div><dt>PR 트리 해시 (prTreeHash)</dt><dd id="dlv-pr-hash"></dd></div>
+                <div><dt>변경 요약</dt><dd id="dlv-change-summary"></dd></div>
+              </dl>
+              <div id="dlv-changed-files"></div>
+            </section>
+
+            <section class="execution-section">
+              <div class="section-title"><h3>스팟 배치 · 프리플라이트</h3></div>
+              <dl class="repository-facts">
+                <div><dt>선택 리전 · AZ</dt><dd id="dlv-place-region"></dd></div>
+                <div><dt>스팟 단가 · 점수 · 절감률</dt><dd id="dlv-place-metrics"></dd></div>
+                <div class="wide"><dt>배치 근거</dt><dd id="dlv-place-reason"></dd></div>
+                <div class="wide"><dt>최근 프리플라이트</dt><dd id="dlv-preflight"></dd></div>
+              </dl>
+            </section>
+
+            <section class="events-section">
+              <div class="section-title"><h3>작업 이벤트</h3><span class="quiet">최신 순</span></div>
+              <ol id="dlv-events" class="event-list"></ol>
+            </section>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. MODEL FACTORY TAB -->
+    <section id="panel-model-factory" class="tab-panel" role="tabpanel" aria-labelledby="tab-model-factory" hidden>
+      <div class="toolbar">
+        <div id="mf-filters" class="filter-group" role="group" aria-label="Model Factory 상태 필터">
+          <button type="button" class="filter-btn active" data-filter="all">전체</button>
+          <button type="button" class="filter-btn" data-filter="active">학습 · 평가 중</button>
+          <button type="button" class="filter-btn" data-filter="attention">승인 대기</button>
+          <button type="button" class="filter-btn" data-filter="terminal">종료</button>
+        </div>
+        <div class="toolbar-actions">
+          <span id="mf-inline-budget" class="quiet">잔여 예산 확인 중</span>
+          <button id="mf-sweep-btn" type="button" class="secondary compact-btn">만료 정리 · 상태 갱신</button>
+        </div>
+      </div>
+
+      <div class="workspace">
+        <aside class="task-sidebar" aria-label="Model Factory 작업 목록">
+          <div id="mf-list" class="task-list"><p class="empty">등록된 Model Factory 작업이 없습니다.</p></div>
+        </aside>
+        <div class="main-panel">
+          <section id="mf-empty" class="panel empty-panel">
+            <h2>Model Factory 작업을 선택하세요</h2>
+            <p class="intro">왼쪽 목록에서 학습 작업을 선택하면 예약·정산 비용, EC2 스팟 인스턴스 수명(TTL), 배치 계획, 산출물 영수증, 독립 검증 결과와 승인·중단 제어를 확인할 수 있습니다.</p>
+          </section>
+          <section id="mf-detail" class="panel" hidden>
+            <div class="panel-heading">
+              <div>
+                <p id="mf-id" class="context"></p>
+                <h2 id="mf-title"></h2>
+              </div>
+              <span id="mf-status" class="pill"></span>
+            </div>
+            <p id="mf-wait-reason" class="help" hidden></p>
+
+            <dl class="task-facts">
+              <div><dt>모델 ID</dt><dd id="mf-model-id"></dd></div>
+              <div><dt>저장소 · 기준 커밋</dt><dd id="mf-repo"></dd></div>
+              <div><dt>인스턴스 유형 · 리전</dt><dd id="mf-compute"></dd></div>
+              <div><dt>예약 상한 (최대 확보분)</dt><dd id="mf-reserved"></dd></div>
+              <div><dt>정산 추정치 (실청구 아님)</dt><dd id="mf-settled"></dd></div>
+              <div><dt>시간당 상한 · 실행 시간</dt><dd id="mf-rate"></dd></div>
+              <div><dt>공개 정책</dt><dd id="mf-release-policy"></dd></div>
+              <div><dt>다음 깨우기 시각</dt><dd id="mf-next-wake"></dd></div>
+              <div><dt>최근 갱신</dt><dd id="mf-updated"></dd></div>
+            </dl>
+
+            <p id="mf-outcome-banner" class="evidence-warning" hidden></p>
+
+            <section id="mf-action-section" class="decision-panel" hidden>
+              <h3 id="mf-action-title">운영자 결정</h3>
+              <p id="mf-action-desc"></p>
+              <p id="mf-fingerprint-row" class="fingerprint-box" hidden></p>
+              <div id="mf-quick-actions" class="actions" hidden>
+                <button id="mf-btn-wake" type="button" class="secondary" hidden>인스턴스 상태 확인 (Wake)</button>
+                <button id="mf-btn-verifier" type="button" class="secondary" hidden>독립 검증기 기동 (Fargate Spot)</button>
+              </div>
+              <form id="mf-action-form">
+                <div id="mf-release-fields" class="inline-fields" hidden>
+                  <label class="checkbox-label" for="mf-opened-raw">
+                    <input id="mf-opened-raw" type="checkbox">
+                    <span>원본 산출물을 직접 열람했습니다 (openedRawArtifacts)</span>
+                  </label>
+                  <label class="compact-input" for="mf-duration-min">검토 소요 시간 (분)
+                    <input id="mf-duration-min" type="number" min="0" max="10080" step="0.1" value="1">
+                  </label>
+                </div>
+                <label for="mf-reason">결정 사유
+                  <textarea id="mf-reason" rows="2" maxlength="2000" required placeholder="승인·반려·중단 사유를 기록하세요."></textarea>
+                </label>
+                <div class="actions">
+                  <button id="mf-btn-approve-training" type="submit" value="approve_training" hidden>학습 승인 (예산 예약·EC2 기동)</button>
+                  <button id="mf-btn-approve-release" type="submit" value="approve_release" hidden>공개 승인</button>
+                  <button id="mf-btn-reject-release" type="submit" value="reject_release" class="secondary" hidden>공개 반려</button>
+                  <button id="mf-btn-cancel" type="submit" value="cancel" class="danger" hidden>작업 중단</button>
+                </div>
+              </form>
+            </section>
+
+            <section class="execution-section">
+              <div class="section-title">
+                <h3>EC2 스팟 인스턴스 상태</h3>
+                <span id="mf-instance-state" class="pill">미기동</span>
+              </div>
+              <dl class="repository-facts">
+                <div><dt>인스턴스 ID</dt><dd id="mf-inst-id"></dd></div>
+                <div><dt>리전 · AZ</dt><dd id="mf-inst-az"></dd></div>
+                <div><dt>기동 시각</dt><dd id="mf-inst-launched"></dd></div>
+                <div><dt>만료 시각 (TTL)</dt><dd id="mf-inst-expires"></dd></div>
+                <div><dt>종료 시각</dt><dd id="mf-inst-terminated"></dd></div>
+                <div><dt>강제 종료 사유</dt><dd id="mf-inst-forced"></dd></div>
+              </dl>
+              <div id="mf-diagnostics-block" hidden>
+                <h4>진단 기록</h4>
+                <ul id="mf-diagnostics-list" class="diag-list"></ul>
+              </div>
+            </section>
+
+            <section class="execution-section">
+              <div class="section-title">
+                <h3>스팟 배치 계획</h3>
+                <span id="mf-plan-status" class="pill">없음</span>
+              </div>
+              <p id="mf-plan-note" class="help"></p>
+              <div id="mf-plan-regions"></div>
+            </section>
+
+            <section class="execution-section">
+              <div class="section-title">
+                <h3>산출물 영수증 · 검증 · 공개</h3>
+                <span id="mf-attest-source" class="pill">미검증</span>
+              </div>
+              <p id="mf-attest-disclaimer" class="evidence-warning" hidden></p>
+              <dl class="repository-facts">
+                <div class="wide"><dt>S3 산출물 경로</dt><dd id="mf-receipt-path"></dd></div>
+                <div><dt>매니페스트 다이제스트</dt><dd id="mf-receipt-digest"></dd></div>
+                <div><dt>파일 수</dt><dd id="mf-receipt-files"></dd></div>
+                <div><dt>독립 검증기 작업</dt><dd id="mf-verifier-info"></dd></div>
+                <div><dt>검증 결과</dt><dd id="mf-attest-result"></dd></div>
+                <div class="wide"><dt>검증 지표 · 요약</dt><dd id="mf-attest-summary"></dd></div>
+                <div class="wide"><dt>공개 결과</dt><dd id="mf-pub-info"></dd></div>
+              </dl>
+            </section>
+
+            <section class="events-section">
+              <div class="section-title"><h3>작업 이벤트</h3><span class="quiet">최신 순</span></div>
+              <ol id="mf-events" class="event-list"></ol>
+            </section>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4. PARALLEL AGENT COLLAB TAB -->
+    <section id="panel-collab" class="tab-panel" role="tabpanel" aria-labelledby="tab-collab" hidden>
+      <div class="toolbar">
+        <div class="toolbar-title">
+          <span class="quiet">병렬 에이전트 협업 세션과 하위 작업, 공유 게시판을 모니터링합니다.</span>
+        </div>
+        <div class="toolbar-actions">
+          <span id="collab-count-label" class="quiet">0개 세션</span>
+        </div>
+      </div>
+
+      <div class="workspace">
+        <aside class="task-sidebar" aria-label="협업 세션 목록">
+          <div id="collab-list" class="task-list"><p class="empty">등록된 협업 세션이 없습니다.</p></div>
+        </aside>
+        <div class="main-panel">
+          <section id="collab-empty" class="panel empty-panel">
+            <h2>협업 세션을 선택하세요</h2>
+            <p class="intro">왼쪽 목록에서 세션을 선택하면 하위 작업 진행 상태, 배치 리전·ECS 워커, 공유 게시판 메시지와 작업 로그를 확인할 수 있습니다.</p>
+          </section>
+          <section id="collab-detail" class="panel" hidden>
+            <div class="panel-heading">
+              <div>
+                <p id="clb-id" class="context"></p>
+                <h2 id="clb-title"></h2>
+              </div>
+              <span id="clb-status" class="pill"></span>
+            </div>
+            <p id="clb-goal" class="instructions"></p>
+
+            <dl class="task-facts">
+              <div><dt>제공자</dt><dd id="clb-provider"></dd></div>
+              <div><dt>최대 병렬 워커</dt><dd id="clb-parallel"></dd></div>
+              <div><dt>허용 리전</dt><dd id="clb-regions"></dd></div>
+              <div><dt>저장소 · 커밋</dt><dd id="clb-repo"></dd></div>
+              <div><dt>오케스트레이터 최근 실행</dt><dd id="clb-orch"></dd></div>
+              <div><dt>최근 갱신</dt><dd id="clb-updated"></dd></div>
+            </dl>
+
+            <div class="actions collab-actions">
+              <button id="clb-btn-reconcile" type="button" class="secondary">워커 상태 정리 (Reconcile)</button>
+              <button id="clb-btn-complete" type="button" hidden>세션 완료</button>
+              <button id="clb-btn-cancel" type="button" class="danger" hidden>세션 중단 (워커 중지)</button>
+            </div>
+
+            <section class="execution-section">
+              <div class="section-title">
+                <h3>하위 작업</h3>
+                <span id="clb-subtask-summary" class="quiet">0건</span>
+              </div>
+              <div id="clb-subtasks" class="subtask-list"></div>
+            </section>
+
+            <section class="execution-section">
+              <div class="section-title">
+                <h3>공유 게시판</h3>
+                <span id="clb-message-count" class="quiet">0건</span>
+              </div>
+              <form id="clb-message-form" class="collab-msg-form">
+                <div class="collab-msg-row">
+                  <label for="clb-msg-kind">메시지 유형
+                    <select id="clb-msg-kind">
+                      <option value="decision">결정 (decision)</option>
+                      <option value="chat">안내 (chat)</option>
+                      <option value="handoff">인계 (handoff)</option>
+                      <option value="question">질문 (question)</option>
+                      <option value="blocker">차단 (blocker)</option>
+                    </select>
+                  </label>
+                  <label class="grow" for="clb-msg-body">운영자 메시지
+                    <input id="clb-msg-body" type="text" maxlength="4000" required placeholder="에이전트들에게 전달할 지시나 결정을 입력하세요.">
+                  </label>
+                  <button id="clb-msg-submit" type="submit">게시</button>
+                </div>
+              </form>
+              <ol id="clb-messages" class="event-list"></ol>
+            </section>
+
+            <section class="execution-section">
+              <div class="section-title">
+                <h3>작업 로그</h3>
+                <span id="clb-worklog-count" class="quiet">0건</span>
+              </div>
+              <ol id="clb-worklogs" class="event-list"></ol>
+            </section>
+          </section>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5. LOCAL & LEGACY WORKSPACE TAB (preserves all existing IDs & behavior for app.js) -->
+    <section id="panel-legacy" class="tab-panel" role="tabpanel" aria-labelledby="tab-legacy" hidden>
+      <div class="demo-notice legacy-notice">
+        <strong>로컬 · 레거시 경로</strong>
+        <span>로컬 mock·Codex·Claude 워커 작업과 폐기된 Cloudflare 아카이브 경로입니다. mock 작업은 합성 diff와 모의 비용을 사용합니다.</span>
+      </div>
+      <div class="legacy-summary-bar">
+        <div class="summary-strip" aria-label="로컬 작업 현황">
+          <div><strong id="task-count">0</strong><span>전체 작업</span></div>
+          <div><strong id="approval-count">0</strong><span>승인 대기</span></div>
+          <div><strong id="cost-total">$0.000000</strong><span id="cost-total-label">확인된 보고 비용</span></div>
+        </div>
+      </div>
+      <p id="error-banner" class="error-banner" role="alert" hidden></p>
+      <p id="cloudflare-connection" class="help remote-connection" role="status">Cloudflare · 연결 확인 중</p>
+      <div class="workspace" id="workspace">
+        <aside class="task-sidebar" aria-labelledby="tasks-title">
+          <div class="section-title"><h2 id="tasks-title">작업</h2><button id="new-task-button" class="secondary" type="button">새 작업</button></div>
+          <div id="task-list" class="task-list"><p class="empty">첫 작업을 등록하면 여기에 표시됩니다.</p></div>
+          <section class="workers" aria-labelledby="workers-title"><div class="section-title"><h2 id="workers-title">워커</h2><span id="worker-count" class="quiet">0개</span></div><div id="worker-list"><p class="empty">워커 연결을 기다립니다. 별도 터미널에서 npm run worker를 실행하세요.</p></div></section>
+        </aside>
+        <div class="main-panel">
+          <section id="create-panel" class="panel" aria-labelledby="create-title">
+            <div class="panel-heading"><div><p class="context">새로운 지시</p><h2 id="create-title">작업을 등록하세요</h2></div><span id="create-route" class="pill">mock / local</span></div>
+            <p class="intro">목표와 완료 조건을 적어 주세요. 등록한 작업은 실행 승인을 받을 때까지 대기합니다.</p>
+            <form id="create-form" class="create-form"><label for="task-runtime">실행 환경<select id="task-runtime" name="runtime"><option value="local">로컬 (local)</option><option value="cloudflare">Cloudflare 원격</option></select></label><label for="task-provider">실행 워커<select id="task-provider" name="provider"><option value="mock">모의 워커 (mock)</option></select></label><div class="repository-context"><p id="provider-help" class="help">실행 가능한 워커 설정을 확인하고 있습니다.</p><dl id="create-repository" class="repository-facts" hidden><div><dt>저장소</dt><dd id="create-repository-name"></dd></div><div><dt>고정 시작 커밋</dt><dd id="create-base-commit"></dd></div><div><dt>테스트 프로필</dt><dd id="create-test-profile"></dd></div><div><dt>테스트 명령</dt><dd id="create-test-command"></dd></div></dl></div><label for="task-title">작업 제목<input id="task-title" name="title" required maxlength="160" placeholder="예: 로그인 폼의 입력 검증 추가"></label><label for="task-instructions">목표와 완료 조건<textarea id="task-instructions" name="instructions" rows="5" required maxlength="10000" placeholder="무엇을 바꾸고, 어떤 조건에서 완료로 판단할지 적어 주세요."></textarea></label><label class="budget-field" for="task-budget">작업 예산 (USD)<input id="task-budget" name="budget" type="number" min="0.001" max="1000" step="0.000001" value="0.01" required></label><p id="budget-help" class="help">모의 워커 예상 비용은 $0.001000입니다.</p><button type="submit" id="create-submit">작업 등록</button></form>
+          </section>
+          <section id="task-panel" class="panel" aria-labelledby="selected-title" hidden>
+            <div class="panel-heading"><div><p id="task-id" class="context"></p><h2 id="selected-title"></h2></div><span id="selected-status" class="pill"></span></div>
+            <p id="task-instructions-view" class="instructions"></p>
+            <dl class="task-facts"><div><dt>실행 경로</dt><dd id="task-route"></dd></div><div><dt>할당 워커</dt><dd id="task-worker"></dd></div><div><dt>예산</dt><dd id="task-budget-view"></dd></div><div><dt>예상 비용</dt><dd id="task-estimate"></dd></div><div><dt>보고 비용</dt><dd id="task-actual"></dd></div><div><dt>최근 변경</dt><dd id="task-updated"></dd></div></dl>
+            <section id="decision-panel" class="decision-panel" aria-labelledby="decision-title"><h3 id="decision-title">사람의 결정이 필요합니다</h3><p id="decision-description"></p><form id="decision-form"><label for="decision-reason">결정 사유<textarea id="decision-reason" rows="2" maxlength="2000" required placeholder="승인·반려·중단 이유를 기록하세요."></textarea></label><div class="actions"><button id="approve-button" type="submit" name="decision" value="approve">실행 승인</button><button id="reject-button" type="submit" name="decision" value="reject" class="secondary">반려</button><button id="cancel-button" type="submit" name="decision" value="cancel" class="danger">작업 중단</button></div></form></section>
+            <section class="result-section" aria-labelledby="result-title"><h3 id="result-title">실행 결과</h3><p id="task-summary" class="empty">아직 보고된 결과가 없습니다.</p><h4>Git diff <span id="diff-kind" class="quiet">합성 예시 · 자동 적용하지 않음</span></h4><p id="diff-truncated" class="evidence-warning" hidden>diff가 표시 한도를 넘어 일부만 저장되었습니다. worktree에서 전체 변경을 확인하세요.</p><pre id="task-diff" tabindex="0">워커 실행 후 변경 제안이 표시됩니다.</pre></section>
+            <section id="execution-section" class="execution-section" aria-labelledby="execution-title" hidden>
+              <div class="section-title"><h3 id="execution-title">실제 실행 근거</h3><span id="execution-status" class="pill">아직 보고되지 않음</span></div>
+              <dl class="repository-facts"><div><dt>저장소</dt><dd id="execution-repository"></dd></div><div><dt>고정 시작 커밋</dt><dd id="execution-base"></dd></div><div><dt>실행 후 HEAD</dt><dd id="execution-head"></dd></div><div><dt>테스트 프로필</dt><dd id="execution-profile"></dd></div><div class="wide"><dt>작업 worktree</dt><dd id="execution-worktree"></dd></div><div><dt id="agent-execution-label">제공자 실행</dt><dd id="agent-status"></dd></div><div><dt>실행 세션</dt><dd id="agent-thread"></dd></div><div><dt>모델</dt><dd id="agent-model"></dd></div><div><dt>토큰 사용량</dt><dd id="agent-usage"></dd></div></dl>
+              <div id="agent-error-block" hidden><h4 id="agent-error-title">제공자 오류 출력</h4><pre id="agent-stderr" tabindex="0"></pre></div>
+              <section id="setup-section" class="process-evidence" aria-labelledby="setup-title" hidden><div class="section-title"><h4 id="setup-title">실행 준비</h4><span id="setup-status" class="pill"></span></div><p id="setup-metadata" class="process-metadata"></p><details><summary>준비 명령 출력</summary><h4>표준 출력 (stdout)</h4><pre id="setup-stdout" tabindex="0"></pre><h4>오류 출력 (stderr)</h4><pre id="setup-stderr" tabindex="0"></pre></details><p id="setup-truncated" class="evidence-warning" hidden>준비 명령 출력이 한도를 넘어 일부만 저장되었습니다.</p></section>
+              <section class="process-evidence" aria-labelledby="tests-title"><div class="section-title"><h4 id="tests-title">테스트 결과</h4><span id="tests-status" class="pill">아직 실행하지 않음</span></div><p id="tests-metadata" class="process-metadata"></p><h4>표준 출력 (stdout)</h4><pre id="tests-stdout" tabindex="0">아직 보고된 테스트 출력이 없습니다.</pre><h4>오류 출력 (stderr)</h4><pre id="tests-stderr" tabindex="0">아직 보고된 테스트 출력이 없습니다.</pre><p id="tests-truncated" class="evidence-warning" hidden>테스트 출력이 한도를 넘어 일부만 저장되었습니다.</p></section>
+            </section>
+            <section id="remote-execution-section" class="execution-section" aria-labelledby="remote-execution-title" hidden>
+              <div class="section-title"><h3 id="remote-execution-title">원격 실행 근거</h3><span id="remote-phase" class="pill">아직 보고되지 않음</span></div>
+              <dl class="repository-facts"><div><dt>원격 작업 ID</dt><dd id="remote-job"></dd></div><div><dt>저장소</dt><dd id="remote-repository"></dd></div><div class="wide"><dt>고정 시작 커밋</dt><dd id="remote-base"></dd></div><div><dt>입력 snapshot ID</dt><dd id="remote-input-snapshot"></dd></div><div><dt>출력 snapshot ID</dt><dd id="remote-output-snapshot"></dd></div><div><dt>컨테이너 종료</dt><dd id="remote-stopped"></dd></div><div><dt>구독 인증 상태 저장</dt><dd id="remote-auth-synced"></dd></div><div class="wide"><dt>검토 worktree</dt><dd id="remote-worktree"></dd></div><div><dt>오류 코드</dt><dd id="remote-error"></dd></div></dl>
+              <section class="process-evidence" aria-labelledby="remote-agent-title"><div class="section-title"><h4 id="remote-agent-title">제공자 프로세스</h4><span id="remote-agent-status" class="pill"></span></div><p id="remote-agent-metadata" class="process-metadata"></p><h4>표준 출력 (stdout)</h4><pre id="remote-agent-stdout" tabindex="0"></pre><h4>오류 출력 (stderr)</h4><pre id="remote-agent-stderr" tabindex="0"></pre><p id="remote-agent-truncated" class="evidence-warning" hidden>제공자 출력이 한도를 넘어 일부만 저장되었습니다.</p></section>
+              <h4>별도 컨테이너 검증</h4><div id="remote-checks"></div>
+            </section>
+            <section class="events-section" aria-labelledby="events-title"><div class="section-title"><h3 id="events-title">작업 이벤트</h3><span class="quiet">최신 순</span></div><ol id="event-list" class="event-list"></ol></section>
+          </section>
+        </div>
+      </div>
+      <section class="autonomous-operator" aria-labelledby="autonomous-title">
+        <div class="section-title"><div><p class="context">Cloudflare · 장기 자율 작업 (아카이브)</p><h2 id="autonomous-title">실행 범위 검토</h2></div><button id="autonomous-refresh" class="secondary" type="button">목록 새로고침</button></div>
+        <p class="help">등록은 MCP에서 초안으로 진행합니다. 현재 revision의 범위와 자격 증명 reference를 검토한 뒤 명시적으로 승인하세요.</p>
+        <p id="autonomous-error" class="error-banner" role="alert" hidden></p>
+        <div class="autonomous-layout">
+          <aside aria-label="장기 작업 페이지"><p id="autonomous-page" class="quiet">현재 페이지 · 조회 전</p><div id="autonomous-list" class="task-list"></div><div class="actions"><button id="autonomous-first" type="button" class="secondary">첫 페이지</button><button id="autonomous-next" type="button" class="secondary" disabled>다음 페이지</button></div></aside>
+          <section id="autonomous-review" class="panel" aria-label="현재 revision 검토" hidden>
+            <div class="panel-heading"><h3 id="autonomous-current"></h3><span id="autonomous-status" class="pill"></span></div><p id="autonomous-goal" class="instructions"></p>
+            <dl class="repository-facts"><div><dt>고정 모델</dt><dd id="autonomous-model"></dd></div><div><dt>종료 시각</dt><dd id="autonomous-ends"></dd></div><div class="wide"><dt>허용 도구</dt><dd id="autonomous-tools"></dd></div><div class="wide"><dt>웹 호스트 범위</dt><dd id="autonomous-web"></dd></div><div class="wide"><dt>자격 증명 reference · 비밀 값 아님</dt><dd id="autonomous-credentials"></dd></div><div class="wide"><dt>외부 profile · 대상과 상한</dt><dd id="autonomous-profiles"></dd></div><div class="wide"><dt>고정 source snapshot · 검사</dt><dd id="autonomous-source"></dd></div><div><dt>승인 예산</dt><dd id="autonomous-budget"></dd></div><div><dt>예약 상한 · 청구액 아님</dt><dd id="autonomous-reserved"></dd></div><div><dt>원장 확인 비용 · 전체 청구액 아님</dt><dd id="autonomous-spent"></dd></div><div><dt>모델 금액</dt><dd id="autonomous-model-cost"></dd></div><div><dt>토큰 사용량</dt><dd id="autonomous-usage"></dd></div><div><dt>정리 상태</dt><dd id="autonomous-cleanup"></dd></div></dl>
+            <form id="autonomous-decision-form" class="decision-panel"><label for="autonomous-reason">이번 결정 사유 또는 메시지<textarea id="autonomous-reason" maxlength="2000" rows="2" required></textarea></label><div class="actions"><button id="autonomous-approve" type="submit" value="approve">현재 revision 실행 승인</button><button id="autonomous-cancel" class="danger" type="submit" value="cancel">작업 중단</button><button id="autonomous-message" class="secondary" type="submit" value="message">메시지 기록</button><button id="autonomous-resume" class="secondary" type="submit" value="resume">같은 범위 재개</button></div><p class="help">예약·원장 정산은 실제 공급자 청구 확정과 다릅니다. 미확정 금액과 정리 대기는 그대로 보존합니다.</p></form>
+            <section id="autonomous-tool-audit" class="process-evidence" aria-labelledby="autonomous-tool-audit-title"><div class="section-title"><h4 id="autonomous-tool-audit-title">워커 도구 호출 기록</h4><span class="quiet">워커 보고 · 독립 증명 아님</span></div><div id="autonomous-tool-audit-body"><p class="empty">기록을 불러오는 중입니다.</p></div></section>
+          </section>
+        </div>
+      </section>
+    </section>
   </main>
-  <footer><span>Project HIVEMIND · 개발 코드명</span><span>승인은 결과 수락을 기록하며 Git 병합이나 배포를 실행하지 않습니다.</span></footer>
+
+  <footer>
+    <span>Project HIVEMIND · 운영 · 비용 관제실</span>
+    <span>승인·상태 전이는 중앙 Control Plane 정책을 따르며, 원장 추정치는 실제 AWS·모델 청구서와 다릅니다.</span>
+  </footer>
 </body>
 </html>

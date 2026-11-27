@@ -19,8 +19,8 @@
 | 라우트 | 인증 | 등록 조건 |
 | --- | --- | --- |
 | `GET /health`, `GET /favicon.ico` | 없음 | 항상 |
-| `GET /`, `/app.js`, `/tool-audit.js`, `/styles.css`, `/brand/hivemind-logo.png`, `/brand/hivemind-bee.png` | 없음 | 항상 |
-| `GET /api/capabilities`, `GET /api/state` | 운영자 토큰 | 항상 |
+| `GET /`, `/app.js`, `/tool-audit.js`, `/monitor.js`, `/styles.css`, `/brand/hivemind-logo.png`, `/brand/hivemind-bee.png` | 없음 | 항상 |
+| `GET /api/capabilities`, `GET /api/state`, `GET /api/monitor/snapshot` | 운영자 토큰 | 항상 |
 | `POST /api/tasks`, `POST /api/tasks/:id/decision`, `POST /api/tasks/:id/cancel` | 운영자 토큰 | 항상 |
 | `POST /api/cloudflare/tasks`, `POST /api/cloudflare/tasks/:id/decision`, `POST /api/cloudflare/tasks/:id/cancel` | 운영자 토큰 | `options.cloudflare`가 있을 때 |
 | `POST /api/cloudflare/workflows`, `GET /api/cloudflare/workflows`, `POST /api/cloudflare/workflows/:id/approve`, `GET /api/cloudflare/workflows/:id`, `GET /api/cloudflare/workflows/:id/result` | 운영자 토큰 | `options.workflows`가 있을 때 |

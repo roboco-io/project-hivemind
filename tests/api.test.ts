@@ -67,7 +67,7 @@ test('a separate worker completes the real HTTP flow and awaits human result app
 
 test('dashboard assets load without exposing operator credentials', async t => {
   const app = buildApp({operatorToken:'custom-secret-value'}); t.after(()=>app.close());
-  for (const path of ['/','/app.js','/styles.css']) {
+  for (const path of ['/','/app.js','/tool-audit.js','/monitor.js','/styles.css']) {
     const response = await app.inject(path);
     assert.equal(response.statusCode,200);
     assert.ok(!response.body.includes('custom-secret-value'));
