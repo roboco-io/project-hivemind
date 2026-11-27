@@ -37,6 +37,8 @@ import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js
 import type { DeliveryStore } from '../../../packages/core/src/delivery.js';
 import type { ModelFactoryStore } from '../../../packages/core/src/model-factory.js';
 import type { AgentCollabService } from '../../../packages/core/src/agent-collab.js';
+import { createAwsAgentCredentialIssuer } from '../../../packages/adapters/src/aws-agent-access.js';
+import { parseEnabledPurposes, validateCatalogConfig } from '../../../packages/core/src/agent-credential-purposes.js';
 
 function isRfc1918Ipv4(address: string): boolean {
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(address);
@@ -214,6 +216,30 @@ function loadExtraSpokes(primary: AwsSpokeRegionConfig): AwsSpokeRegionConfig[] 
   });
 }
 
+/**
+ * Scoped AWS credentials for agents. Enabled only when the operator configured a dedicated parent role;
+ * the enabled purposes come from HIVEMIND_AGENT_CREDENTIAL_PURPOSES, never from a request.
+ */
+function createAgentCredentialsOptions() {
+  const parentRoleArn = process.env.HIVEMIND_AGENT_CREDENTIALS_PARENT_ROLE_ARN?.trim();
+  if (!parentRoleArn) return undefined;
+  const region = process.env.HIVEMIND_AWS_REGION?.trim() || 'ap-northeast-2';
+  const allowedRegions = (process.env.HIVEMIND_MF_ALLOWED_REGIONS ?? region).split(',').map((r) => r.trim()).filter(Boolean);
+  const catalog = validateCatalogConfig({
+    enabledPurposes: parseEnabledPurposes(process.env.HIVEMIND_AGENT_CREDENTIAL_PURPOSES),
+    artifactsBucket: process.env.HIVEMIND_ARTIFACTS_BUCKET?.trim() ?? '',
+    artifactsKmsKeyArn: process.env.HIVEMIND_ARTIFACTS_KMS_KEY_ARN?.trim() ?? '',
+    allowedRegions,
+  });
+  const issuer = createAwsAgentCredentialIssuer({
+    region,
+    allowedRegions: [region],
+    parentRoleArn,
+    baseCredentials: createEcsTaskCredentialsProvider(),
+  });
+  return { catalog, issuer, region };
+}
+
 function createAwsModelFactoryOrchestratorFactory() {
   const region = process.env.HIVEMIND_AWS_REGION?.trim();
   const bucket = process.env.HIVEMIND_ARTIFACTS_BUCKET?.trim();
@@ -292,6 +318,7 @@ function createAwsModelFactoryOrchestratorFactory() {
       store,
       ec2,
       s3,
+      ...(process.env.HIVEMIND_MF_TRAINING_ROLE_ID?.trim() ? { trainingRoleId: process.env.HIVEMIND_MF_TRAINING_ROLE_ID.trim() } : {}),
       artifactsBucket: bucket,
       artifactsRegion: region,
       ...(regionNetworks ? { regionNetworks, amiResolver } : {}),
@@ -495,7 +522,8 @@ try {
     });
   };
 
-  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(modelFactoryRepository ? { modelFactoryRepository } : {}),...(deliveryRepository ? { deliveryRepository } : {}),collabRepo,collabOrchestratorFactory});
+  const agentCredentials = createAgentCredentialsOptions();
+  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(modelFactoryRepository ? { modelFactoryRepository } : {}),...(deliveryRepository ? { deliveryRepository } : {}),collabRepo,collabOrchestratorFactory,...(agentCredentials ? { agentCredentials } : {})});
   const address = await app.listen({host,port});
   console.log(`HIVEMIND control service: ${address}`);
   for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,() => { void app!.close(); });

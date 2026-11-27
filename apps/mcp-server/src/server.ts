@@ -11,6 +11,7 @@ import {registerDeliveryOperatorTools} from './delivery.js';
 import {registerModelFactoryOperatorTools} from './model-factory.js';
 import {registerCollabOperatorTools} from './collab.js';
 import {registerAwsStatusTool} from './aws-status.js';
+import { registerAgentCredentialTools } from './agent-access.js';
 import {ControlPlanePower,loadControlPlanePowerConfig,registerControlPlanePowerTools,type ControlPlanePowerConfig,type PowerSystem} from './control-plane-power.js';
 import { join } from 'node:path';
 
@@ -20,7 +21,7 @@ import { join } from 'node:path';
  */
 export type McpProfile = 'default' | 'aws' | 'delivery' | 'model-factory' | 'collab' | 'legacy';
 export interface McpSettings { apiUrl: string; operatorToken: string; profile?: McpProfile; collabLocalAuthFile?: string; controlPlanePower?: ControlPlanePowerConfig }
-export interface HivemindMcpOptions extends McpSettings { fetchImpl?: typeof fetch; powerSystem?: PowerSystem }
+export interface HivemindMcpOptions extends McpSettings { fetchImpl?: typeof fetch; powerSystem?: PowerSystem; /** Where hivemind_agent_credentials writes credential files. */ agentCredentialsDir?: string }
 const configurationError = () => new Error('Invalid HIVEMIND MCP configuration.');
 const toolError = 'HIVEMIND 요청을 처리하지 못했습니다. 연결·권한·입력과 현재 작업 상태를 확인하세요.';
 const developmentToken = 'local-development-only';
@@ -121,6 +122,7 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
     registerDeliveryOperatorTools(server, { ...settings, fetchImpl: activeFetch, redact });
     registerModelFactoryOperatorTools(server, { ...settings, fetchImpl: activeFetch, redact });
     registerCollabOperatorTools(server, { ...settings, ...(options.collabLocalAuthFile ? { localAuthFile: options.collabLocalAuthFile } : {}), fetchImpl: activeFetch, redact });
+    registerAgentCredentialTools(server, { ...settings, fetchImpl: activeFetch, ...(options.agentCredentialsDir ? { credentialsDir: options.agentCredentialsDir } : {}) });
     // The idle timer ends with this server, so a Control Plane it started is lowered when the server closes.
     const closeServer = server.close.bind(server);
     server.close = async () => { if ((await power.shutdown()) === 'left_running') process.stderr.write('HIVEMIND Control Plane was left running: work is in progress or its state could not be read.\n'); await closeServer(); };
