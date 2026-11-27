@@ -52,7 +52,7 @@ npm run bootstrap -- [옵션]
 | DSQL 테이블과 DB 역할 | 테이블과 제한된 DB 역할 2개를 만들고 권한을 준다 |
 | Hub 최종 배포 | 서비스가 제한된 DB 역할로 접속하도록 Hub를 다시 배포한다 |
 | 인증 등록 | 모델 구독 인증, GitHub App, Hugging Face 토큰을 Secrets Manager에 등록한다 |
-| 로컬 MCP 클라이언트 설정 | 운영자 토큰 파일(권한 600)과 `.mcp.json`, `.codex/config.toml`을 쓴다 |
+| 로컬 MCP 클라이언트 설정 | 운영자 토큰 파일(권한 600), Control Plane 기동 설정 파일(`~/.hivemind/aws-control-plane.json`, 비밀 없음)과 `.mcp.json`, `.codex/config.toml`을 쓴다 |
 | 동작 확인 | Control Plane을 잠깐 켜서 세 저장소의 응답을 확인하고 다시 내린다 |
 
 순서에는 이유가 있다. Hub를 처음 배포할 때는 DSQL에 관리자 역할로 접속하는 설정을 쓴다. 제한된 DB 역할이 아직 없기 때문이다. DB 역할을 만든 뒤에야 제한된 설정으로 다시 배포한다. 순서를 바꾸면 서비스가 DB에 접속하지 못한다. 그래서 단계를 골라 수동으로 실행하지 말고 `npm run bootstrap`에 맡긴다.
@@ -77,6 +77,6 @@ AWS 로그인(SSO 포함)도 사용자가 한다. 인증 오류가 나면 사용
 
 ## 끝난 뒤
 
-- 평소 Control Plane은 `desiredCount 0`으로 꺼져 있다. 쓰려면 서비스를 1로 올리고 `scripts/aws-ssm-tunnel.ts`로 터널을 연다. 절차는 [MCP 서버 안내](../../../apps/mcp-server/README.md)에 있다.
+- 평소 Control Plane은 `desiredCount 0`으로 꺼져 있다. 쓸 때는 MCP 도구 `hivemind_control_plane_start`가 서비스를 올리고 터널을 연다. 쓰지 않으면 15분 뒤 스스로 내려간다. 손으로 여는 절차는 [MCP 서버 안내](../../../apps/mcp-server/README.md)에 있다.
 - 작업 등록과 조회는 `hivemind` 스킬을 쓴다.
 - 부트스트랩은 리소스를 지우지 않는다. 제거는 이 스킬의 범위가 아니다.

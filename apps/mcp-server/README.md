@@ -14,7 +14,7 @@ MCP 서버는 환경 변수 `HIVEMIND_MCP_PROFILE`로 노출할 도구 묶음을
 
 | 프로필 | 도구 | 용도 |
 |---|---|---|
-| `default` (별칭 `aws`) | 26개: `hivemind_status` 1 + `hivemind_delivery_*` 7 + `hivemind_mf_*` 8 + `hivemind_collab_*` 10 | AWS 단일 경로 전체. 일상 사용의 기본값이다. |
+| `default` (별칭 `aws`) | 28개: `hivemind_status` 1 + `hivemind_control_plane_*` 2 + `hivemind_delivery_*` 7 + `hivemind_mf_*` 8 + `hivemind_collab_*` 10 | AWS 단일 경로 전체. 일상 사용의 기본값이다. |
 | `delivery` | 7개 | SW 전달 작업만 노출한다. |
 | `model-factory` | 15개: 전달 7 + Model Factory 8 | 전달과 Model Factory만 노출한다. |
 | `collab` | 10개 | 협업 세션만 노출한다. |
@@ -23,6 +23,28 @@ MCP 서버는 환경 변수 `HIVEMIND_MCP_PROFILE`로 노출할 도구 묶음을
 2026-11-27 이전에는 `default`가 지금의 `legacy` 도구 묶음이었다. 그 묶음은 Cloudflare 경로용이라 AWS Control Plane에 연결하면 `hivemind_status`가 `configured: false`만 돌려줬다. 그래서 기본값을 AWS 경로로 바꿨다. 이 문서의 "장기 자율 작업 운영자 계약", "운영자 확인 최종 비용", "Workflow 팀 원장" 절은 `legacy` 프로필의 도구를 설명한다.
 
 기본 프로필의 `hivemind_status`는 Control Plane 연결과 운영자 인증을 확인하는 읽기 전용 도구다. `/api/delivery/tasks`, `/api/model-factory/jobs`, `/api/model-factory/ledger`, `/api/collab/sessions`를 읽어 저장소 종류, 상태별 건수, 남은 중앙 예산을 돌려준다. 작업 지시문이나 모델 출력은 돌려주지 않는다.
+
+## Control Plane 기동과 종료 (`hivemind_control_plane_start`, `hivemind_control_plane_stop`)
+
+AWS Control Plane은 평소 `desiredCount 0`으로 꺼져 있고, API는 SSM 포트 포워딩 터널로만 닿는다. 기본 프로필의 두 도구가 이 기동과 종료를 MCP 서버 안에서 수행한다. 구현은 `src/control-plane-power.ts`에 있다.
+
+`hivemind_control_plane_start`는 ECS 서비스를 1로 올리고, `control-plane` 컨테이너가 실행 상태가 될 때까지 기다린 뒤, `HIVEMIND_API_URL`의 로컬 포트로 터널을 연다. 기동은 과금을 일으키므로 다른 도구가 대신 일으키지 않는다. `hivemind_status`를 포함한 어떤 도구도 Control Plane을 켜지 않는다. 기동이 호출 대기 시간(50초)보다 오래 걸리면 `state: starting`을 돌려주고, 기동은 계속 진행된다. 다시 호출하면 진행 중인 기동의 결과를 받는다. 기동이 실패하면 터널을 닫고, 이 호출이 올린 서비스는 다시 0으로 내린다. 다른 주체가 올려 둔 서비스는 내리지 않는다.
+
+`hivemind_control_plane_stop`은 터널을 닫고 서비스를 0으로 내린다. 그 전에 Control Plane의 정리 경로(`POST /api/delivery/reconcile`, 활성 협업 세션의 `reconcile`)를 호출한다. 이 경로는 ECS가 워커를 더 이상 실행하지 않는다고 확인한 작업만 `failed`로 바꾼다. 그다음 `running` 전달 작업, `training_running` 학습 작업, `running` 협업 하위 작업을 센다. 하나라도 있으면 내리지 않는다. Control Plane API에 닿지 않아 셀 수 없을 때도 내리지 않는다. `force: true`는 이 확인을 건너뛴다.
+
+이 서버가 켠 Control Plane은 유휴 시간이 지나면 같은 확인을 거쳐 자동으로 내려간다. 유휴 시간은 운영자 도구 호출이 없었던 시간이며 기본 15분이다. 진행 중인 작업이 있으면 내리지 않고 5분 뒤 다시 본다. MCP 서버가 닫힐 때도 같은 확인을 거쳐 내린다. 유휴 타이머가 서버와 함께 끝나므로, 내리지 않으면 지켜보는 주체 없이 켜진 채 남기 때문이다.
+
+설정은 비밀이 아닌 파일 하나다. `npm run bootstrap`이 `~/.hivemind/aws-control-plane.json`을 쓴다. 경로는 `HIVEMIND_CONTROL_PLANE_CONFIG_FILE`로 바꿀 수 있다.
+
+```json
+{ "profile": "roboco", "region": "ap-northeast-2", "cluster": "hivemind-runtime-cluster", "service": "hivemind-runtime-control-plane", "idleMinutes": 15 }
+```
+
+`profile`과 `idleMinutes`는 생략할 수 있다. 값은 영문자, 숫자, `.`, `_`, `-`만 허용한다. 파일이 없거나 형식이 맞지 않으면 두 도구는 아무것도 하지 않고 설정 방법을 안내한다. MCP 서버를 실행하는 환경에 `aws` CLI와 `session-manager-plugin`이 있어야 하고, 해당 프로필로 로그인되어 있어야 한다. 필요한 AWS 권한은 `ecs:DescribeServices`, `ecs:UpdateService`, `ecs:ListTasks`, `ecs:DescribeTasks`, `ssm:StartSession`이다.
+
+종료가 거절되면 응답의 `inProgress.blockingIds`가 진행 중으로 센 기록의 ID를 알려 준다. `inProgress.unverifiable`은 Control Plane이 워커에 대한 근거가 없어 정리하지 못한 기록이다. 예를 들어 ECS 작업 ARN을 기록하기 전에 만든 전달 작업이 그렇다. 이런 기록은 자동으로 `failed`가 되지 않으므로, 운영자가 취소하기 전까지 자동 종료를 막는다.
+
+한계는 세 가지다. 다른 클라이언트가 켠 Control Plane은 이 서버가 자동으로 내리지 않는다. 이 서버가 켠 Control Plane을 다른 클라이언트가 함께 쓰는 경우, 이 서버는 그 사용을 알지 못해 유휴로 판단하고 내릴 수 있다. 클라이언트가 MCP 서버를 강제 종료하면 종료 처리가 실행되지 않아 Control Plane이 켜진 채 남는다.
 
 ## 장기 자율 작업 운영자 계약
 
@@ -104,7 +126,7 @@ AWS 단일 실행 경로의 일상 SW 개발에서는 `HIVEMIND_MCP_PROFILE=deli
 
 ### AWS SSM 포트 포워딩 연결 절차 (Codex · Claude Code 공통)
 
-AWS 상시 `ControlPlaneService`는 퍼블릭 인바운드 CIDR이 0개이므로 로컬에서 SSM 터널을 연 뒤 `http://127.0.0.1:4310`으로 연결한다.
+AWS 상시 `ControlPlaneService`는 퍼블릭 인바운드 CIDR이 0개이므로 로컬에서 SSM 터널을 연 뒤 `http://127.0.0.1:4310`으로 연결한다. 기본 프로필에서는 `hivemind_control_plane_start`가 이 절차를 대신한다. 아래는 손으로 여는 방법이다.
 
 ```sh
 # 1. 터미널 A: 암호화 SSM 포트 포워딩 열기 (IAM 인증, $0)

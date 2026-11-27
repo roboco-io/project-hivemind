@@ -11,14 +11,16 @@ import {registerDeliveryOperatorTools} from './delivery.js';
 import {registerModelFactoryOperatorTools} from './model-factory.js';
 import {registerCollabOperatorTools} from './collab.js';
 import {registerAwsStatusTool} from './aws-status.js';
+import {ControlPlanePower,loadControlPlanePowerConfig,registerControlPlanePowerTools,type ControlPlanePowerConfig,type PowerSystem} from './control-plane-power.js';
+import { join } from 'node:path';
 
 /**
  * `default` (and its alias `aws`) exposes the AWS single path: status + delivery + model factory + collab.
  * `legacy` is the retired Cloudflare tool set, kept only until the archive is removed (ADR-0012).
  */
 export type McpProfile = 'default' | 'aws' | 'delivery' | 'model-factory' | 'collab' | 'legacy';
-export interface McpSettings { apiUrl: string; operatorToken: string; profile?: McpProfile; collabLocalAuthFile?: string }
-export interface HivemindMcpOptions extends McpSettings { fetchImpl?: typeof fetch }
+export interface McpSettings { apiUrl: string; operatorToken: string; profile?: McpProfile; collabLocalAuthFile?: string; controlPlanePower?: ControlPlanePowerConfig }
+export interface HivemindMcpOptions extends McpSettings { fetchImpl?: typeof fetch; powerSystem?: PowerSystem }
 const configurationError = () => new Error('Invalid HIVEMIND MCP configuration.');
 const toolError = 'HIVEMIND 요청을 처리하지 못했습니다. 연결·권한·입력과 현재 작업 상태를 확인하세요.';
 const developmentToken = 'local-development-only';
@@ -53,7 +55,10 @@ export function loadMcpSettings(env: NodeJS.ProcessEnv = process.env): McpSettin
     if (rawProfile !== undefined && rawProfile !== 'default' && rawProfile !== 'aws' && rawProfile !== 'delivery' && rawProfile !== 'model-factory' && rawProfile !== 'collab' && rawProfile !== 'legacy') throw configurationError();
     const collabLocalAuthFile = env.HIVEMIND_COLLAB_LOCAL_AUTH_FILE;
     if (collabLocalAuthFile !== undefined && (collabLocalAuthFile.length === 0 || collabLocalAuthFile.length > 4096 || /[\0\r\n]/.test(collabLocalAuthFile))) throw configurationError();
-    return { ...validateSettings({ apiUrl, operatorToken: operatorToken ?? developmentToken }), ...(rawProfile ? { profile: rawProfile } : {}), ...(collabLocalAuthFile ? { collabLocalAuthFile } : {}) };
+    // Optional, non-secret: how to start the dormant Control Plane. Written by `npm run bootstrap`.
+    const powerFile = env.HIVEMIND_CONTROL_PLANE_CONFIG_FILE ?? (env.HOME ? join(env.HOME, '.hivemind', 'aws-control-plane.json') : undefined);
+    const controlPlanePower = powerFile ? loadControlPlanePowerConfig(powerFile) : undefined;
+    return { ...validateSettings({ apiUrl, operatorToken: operatorToken ?? developmentToken }), ...(rawProfile ? { profile: rawProfile } : {}), ...(collabLocalAuthFile ? { collabLocalAuthFile } : {}), ...(controlPlanePower ? { controlPlanePower } : {}) };
   } catch { throw configurationError(); }
 }
 
@@ -92,7 +97,7 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
     return value;
   };
   const numeric = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
-  const server = new SafeMcpServer({ name: 'hivemind', version: '0.1.0' }, { maxToolInputElements: 512, instructions: options.profile === undefined || options.profile === 'default' || options.profile === 'aws' ? 'AWS 단일 경로의 HIVEMIND 관제 도구입니다. 먼저 hivemind_status로 연결을 확인하세요. 작업 등록은 초안만 만듭니다. 실행 승인, 학습 승인, 공개 승인, 워커 기동(fan_out), 내장 오케스트레이터 실행, 취소와 사람 판단 기록은 과금·실제 모델 호출·외부 공개를 일으키므로 명시적인 사용자 지시가 있을 때만 호출하세요.' : options.profile === 'collab' ? '병렬 에이전트 협업 세션을 등록하고 하위 작업과 게시판 메시지를 관리합니다. 워커 기동(fan_out)과 내장 오케스트레이터 실행은 과금과 실제 모델 호출을 일으키므로 명시적인 사용자 지시가 있을 때만 호출하세요.' : options.profile === 'delivery' ? 'AWS 단일 경로의 SW 개발 전달 작업을 등록·승인·조회하고, 독립 검증과 해시 일치 근거만으로 Draft PR 판단을 기록합니다.' : 'Cloudflare 작업의 대상 저장소와 고정 커밋을 먼저 확인하세요. 작업 등록은 실행 승인 전 초안만 만듭니다. 실행 승인·결과 수락·반려·중단은 명시적인 사용자 지시에 따라 별도로 호출하세요. 결과 수락은 검토 이력만 기록하며 적용·병합·푸시를 실행하지 않습니다.' });
+  const server = new SafeMcpServer({ name: 'hivemind', version: '0.1.0' }, { maxToolInputElements: 512, instructions: options.profile === undefined || options.profile === 'default' || options.profile === 'aws' ? 'AWS 단일 경로의 HIVEMIND 관제 도구입니다. 먼저 hivemind_status로 연결을 확인하세요. Control Plane이 휴지 상태이면 사용자가 HIVEMIND 사용을 요청한 경우에 hivemind_control_plane_start로 켭니다. 작업 등록은 초안만 만듭니다. 실행 승인, 학습 승인, 공개 승인, 워커 기동(fan_out), 내장 오케스트레이터 실행, 취소와 사람 판단 기록은 과금·실제 모델 호출·외부 공개를 일으키므로 명시적인 사용자 지시가 있을 때만 호출하세요.' : options.profile === 'collab' ? '병렬 에이전트 협업 세션을 등록하고 하위 작업과 게시판 메시지를 관리합니다. 워커 기동(fan_out)과 내장 오케스트레이터 실행은 과금과 실제 모델 호출을 일으키므로 명시적인 사용자 지시가 있을 때만 호출하세요.' : options.profile === 'delivery' ? 'AWS 단일 경로의 SW 개발 전달 작업을 등록·승인·조회하고, 독립 검증과 해시 일치 근거만으로 Draft PR 판단을 기록합니다.' : 'Cloudflare 작업의 대상 저장소와 고정 커밋을 먼저 확인하세요. 작업 등록은 실행 승인 전 초안만 만듭니다. 실행 승인·결과 수락·반려·중단은 명시적인 사용자 지시에 따라 별도로 호출하세요. 결과 수락은 검토 이력만 기록하며 적용·병합·푸시를 실행하지 않습니다.' });
   if (options.profile === 'delivery') {
     registerDeliveryOperatorTools(server, { ...settings, fetchImpl, redact });
     return server;
@@ -108,10 +113,17 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
   }
   if (options.profile !== 'legacy') {
     // Default profile: the whole AWS single path in one server.
-    registerAwsStatusTool(server, { ...settings, fetchImpl, redact });
-    registerDeliveryOperatorTools(server, { ...settings, fetchImpl, redact });
-    registerModelFactoryOperatorTools(server, { ...settings, fetchImpl, redact });
-    registerCollabOperatorTools(server, { ...settings, ...(options.collabLocalAuthFile ? { localAuthFile: options.collabLocalAuthFile } : {}), fetchImpl, redact });
+    const power = new ControlPlanePower({ ...settings, fetchImpl, ...(options.controlPlanePower ? { config: options.controlPlanePower } : {}), ...(options.powerSystem ? { system: options.powerSystem } : {}) });
+    // Operator tool calls restart the idle period. The power module's own checks use the raw fetch and do not.
+    const activeFetch: typeof fetch = (input, init) => { power.markActivity(); return fetchImpl(input, init); };
+    registerAwsStatusTool(server, { ...settings, fetchImpl: activeFetch, redact, power });
+    registerControlPlanePowerTools(server, power);
+    registerDeliveryOperatorTools(server, { ...settings, fetchImpl: activeFetch, redact });
+    registerModelFactoryOperatorTools(server, { ...settings, fetchImpl: activeFetch, redact });
+    registerCollabOperatorTools(server, { ...settings, ...(options.collabLocalAuthFile ? { localAuthFile: options.collabLocalAuthFile } : {}), fetchImpl: activeFetch, redact });
+    // The idle timer ends with this server, so a Control Plane it started is lowered when the server closes.
+    const closeServer = server.close.bind(server);
+    server.close = async () => { if ((await power.shutdown()) === 'left_running') process.stderr.write('HIVEMIND Control Plane was left running: work is in progress or its state could not be read.\n'); await closeServer(); };
     return server;
   }
   async function api(path: string, signal: AbortSignal, body?: Record<string, unknown>): Promise<Record<string, unknown>> {

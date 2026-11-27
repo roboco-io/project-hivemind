@@ -1,12 +1,15 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import type { ControlPlanePower } from './control-plane-power.js';
 
 export interface AwsStatusMcpOptions {
   apiUrl: string;
   operatorToken: string;
   fetchImpl?: typeof fetch;
   redact?: (value: string) => string;
+  /** When given, an unreachable Control Plane is reported with its power state instead of a bare error. */
+  power?: ControlPlanePower;
 }
 
 const TOOL_ERROR = 'HIVEMIND 상태를 조회하지 못했습니다. 연결·권한과 Control Plane 기동 여부를 확인하세요.';
@@ -87,6 +90,21 @@ export function registerAwsStatusTool(server: McpServer, options: AwsStatusMcpOp
         };
         return { content: [{ type: 'text', text: JSON.stringify(output) }], structuredContent: output };
       } catch {
+        // A dormant Control Plane is the normal resting state, not a fault: say so and say how to start it.
+        const state = options.power?.configured ? await options.power.state() : null;
+        if (state === 'stopped' || state === 'starting') {
+          const output = {
+            runtime: 'aws',
+            connected: false,
+            controlPlane: {
+              state,
+              hint: state === 'stopped'
+                ? 'Control Plane이 휴지 상태(desiredCount 0)입니다. 사용자가 HIVEMIND 사용을 요청했으면 hivemind_control_plane_start 로 켜세요.'
+                : 'Control Plane이 기동 중이거나 터널이 없습니다. hivemind_control_plane_start 를 호출하면 터널을 열고 준비될 때까지 기다립니다.',
+            },
+          };
+          return { content: [{ type: 'text', text: JSON.stringify(output) }], structuredContent: output };
+        }
         return { isError: true, content: [{ type: 'text', text: TOOL_ERROR }] };
       }
     },

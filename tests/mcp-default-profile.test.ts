@@ -48,7 +48,7 @@ test('default MCP profile exposes the AWS single path in one server and no retir
 
   const unset = await connect(t);
   const names = (await unset.client.listTools()).tools.map((tool) => tool.name).sort();
-  assert.equal(names.length, 26, 'status 1 + delivery 7 + model factory 8 + collab 10');
+  assert.equal(names.length, 28, 'status 1 + control plane start/stop 2 + delivery 7 + model factory 8 + collab 10');
   assert.ok(names.includes('hivemind_status'));
   assert.equal(names.filter((n) => n.startsWith('hivemind_delivery_')).length, 7);
   assert.equal(names.filter((n) => n.startsWith('hivemind_mf_')).length, 8);

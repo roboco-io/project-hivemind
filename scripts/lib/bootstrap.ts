@@ -45,6 +45,10 @@ export interface BootstrapOptions {
   projectRoot: string;
   localApiPort: number;
   operatorTokenFile: string;
+  /** Non-secret file that tells the MCP server how to start the dormant Control Plane. */
+  controlPlaneConfigFile: string;
+  /** AWS profile recorded in that file. */
+  profile?: string;
 }
 
 export type StepStatus = 'done' | 'already_done' | 'skipped' | 'would_run' | 'failed' | 'not_run';
@@ -310,12 +314,19 @@ export async function runBootstrap(options: BootstrapOptions, system: BootstrapS
   await credential('client-config', '로컬 MCP 클라이언트 설정', '이 컴퓨터의 Claude Code와 Codex에서 HIVEMIND MCP 도구 사용. 클라우드 쪽 구성에는 영향이 없습니다.', () => {
     if (options.skipClientConfig) return { status: 'skipped', detail: '--skip-client-config' };
     const apiUrl = `http://127.0.0.1:${options.localApiPort}`;
-    if (dry) return { status: 'would_run', detail: `운영자 토큰 파일 ${options.operatorTokenFile} 작성, Claude Code와 Codex 설정에 ${apiUrl} 등록` };
+    if (dry) return { status: 'would_run', detail: `운영자 토큰 파일 ${options.operatorTokenFile}과 Control Plane 기동 설정 파일 ${options.controlPlaneConfigFile} 작성, Claude Code와 Codex 설정에 ${apiUrl} 등록` };
     const token = String(readSecret(system, options.primaryRegion, `${options.prefix}/operator-token`).raw ?? '').trim();
     if (!token) throw new Error('운영자 토큰을 읽지 못했습니다.');
     system.writeSecretFile(options.operatorTokenFile, JSON.stringify({ OPERATOR_TOKEN: token }));
+    // Lets the MCP tools hivemind_control_plane_start/stop raise the service and open the tunnel. No secret in it.
+    const outputs = stackOutputs(system, options.primaryRegion, HUB_STACK);
+    if (!outputs.ClusterName || !outputs.ControlPlaneServiceName) throw new Error('Hub 스택 출력에 ClusterName 또는 ControlPlaneServiceName 이 없습니다.');
+    system.writeSecretFile(
+      options.controlPlaneConfigFile,
+      `${JSON.stringify({ ...(options.profile ? { profile: options.profile } : {}), region: options.primaryRegion, cluster: outputs.ClusterName, service: outputs.ControlPlaneServiceName }, null, 2)}\n`,
+    );
     const written = system.configureClients({ projectRoot: options.projectRoot, apiUrl, operatorTokenFile: options.operatorTokenFile });
-    return { status: 'done', detail: `운영자 토큰 파일(권한 600)과 ${written.join(', ')} 작성. 클라이언트를 다시 시작해야 반영됩니다.` };
+    return { status: 'done', detail: `운영자 토큰 파일(권한 600), Control Plane 기동 설정 파일과 ${written.join(', ')} 작성. 클라이언트를 다시 시작해야 반영됩니다.` };
   });
 
   await step('verify', '동작 확인', async () => {

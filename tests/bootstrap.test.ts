@@ -55,8 +55,8 @@ function makeSystem(world: World) {
         if (arg('--query') === 'Stacks[0].StackStatus') return 'UPDATE_COMPLETE';
         return JSON.stringify(
           name === 'HivemindAwsRuntimeStack' && world.hubHasRoleOutputs
-            ? [{ OutputKey: 'ControlPlaneTaskRoleArn', OutputValue: `arn:aws:iam::${ACCOUNT}:role/cp` }]
-            : [{ OutputKey: 'ClusterName', OutputValue: 'c' }],
+            ? [{ OutputKey: 'ControlPlaneTaskRoleArn', OutputValue: `arn:aws:iam::${ACCOUNT}:role/cp` }, { OutputKey: 'ClusterName', OutputValue: 'hm-cluster' }, { OutputKey: 'ControlPlaneServiceName', OutputValue: 'hm-control-plane' }]
+            : [],
         );
       }
       if (service === 'ecr' && action === 'describe-images') {
@@ -112,6 +112,8 @@ const baseOptions = (overrides: Partial<BootstrapOptions> = {}): BootstrapOption
   projectRoot: '/repo',
   localApiPort: 4311,
   operatorTokenFile: '/home/op/.hivemind/aws-operator-token.json',
+  controlPlaneConfigFile: '/home/op/.hivemind/aws-control-plane.json',
+  profile: 'ops',
   ...overrides,
 });
 const statusOf = (results: Awaited<ReturnType<typeof runBootstrap>>) => Object.fromEntries(results.map((r) => [r.id, r.status]));
@@ -158,6 +160,10 @@ test('bootstrap on an empty account creates resources in the safe order and repo
   // The operator token is written to the 600 file only; it is not in any command line or log.
   assert.deepEqual(JSON.parse(written['/home/op/.hivemind/aws-operator-token.json']!), { OPERATOR_TOKEN: 'operator-token-value-0000000000000000' });
   assert.ok(!JSON.stringify(commands).includes('operator-token-value'));
+  // The start settings for the MCP server name the service to raise; they hold no secret.
+  const power = written['/home/op/.hivemind/aws-control-plane.json']!;
+  assert.deepEqual(JSON.parse(power), { profile: 'ops', region: 'ap-northeast-2', cluster: 'hm-cluster', service: 'hm-control-plane' });
+  assert.ok(!power.includes('operator-token-value'));
   assert.equal(verifyCalls(), 1);
 
   const report = formatBootstrapReport(results);
