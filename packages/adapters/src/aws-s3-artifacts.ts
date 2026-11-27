@@ -15,6 +15,8 @@ export interface S3ObjectPort {
   putObject(key: string, body: Uint8Array, contentType: string, signal?: AbortSignal): Promise<{ sha256: string; etag?: string }>;
   getObject(key: string, expectedSha256?: string, signal?: AbortSignal): Promise<Uint8Array>;
   headObject?(key: string, signal?: AbortSignal): Promise<{ contentLength: number; etag?: string }>;
+  /** Server-side copy inside the bucket (single request, objects up to 5 GiB). */
+  copyObject?(sourceKey: string, destinationKey: string, signal?: AbortSignal): Promise<void>;
 }
 
 const BUCKET_PATTERN = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
@@ -48,6 +50,8 @@ function signS3Request(options: {
   contentType?: string;
   credentials: AwsEcsCredentials;
   nowMs: number;
+  /** Set for CopyObject: the source as `/<bucket>/<encoded key>`. */
+  copySource?: string;
 }): { url: string; headers: Record<string, string> } {
   const host = `${options.bucket}.s3.${options.region}.amazonaws.com`;
   const canonicalUri = encodeS3Path(options.key);
@@ -60,7 +64,8 @@ function signS3Request(options: {
     'x-amz-content-sha256': payloadHash,
     'x-amz-date': amzDate,
     ...(options.contentType ? { 'content-type': options.contentType } : {}),
-    ...(options.method === 'PUT' ? { 'x-amz-checksum-sha256': sha256Base64Bytes(options.body) } : {}),
+    ...(options.method === 'PUT' && !options.copySource ? { 'x-amz-checksum-sha256': sha256Base64Bytes(options.body) } : {}),
+    ...(options.copySource ? { 'x-amz-copy-source': options.copySource } : {}),
     ...(options.credentials.sessionToken ? { 'x-amz-security-token': options.credentials.sessionToken } : {}),
   };
   const sortedKeys = Object.keys(headers).sort();
@@ -152,6 +157,31 @@ export function createAwsS3ArtifactsPort(config: AwsS3ArtifactsConfig): S3Object
         }
       }
       return bytes;
+    },
+
+    async copyObject(sourceKey, destinationKey, signal) {
+      const credentials = await config.credentials();
+      const signed = signS3Request({
+        method: 'PUT',
+        region: config.region,
+        bucket: config.bucket,
+        key: destinationKey,
+        body: new Uint8Array(0),
+        credentials,
+        nowMs: now(),
+        copySource: `/${config.bucket}${encodeS3Path(sourceKey)}`,
+      });
+      const response = await fetchImpl(signed.url, {
+        method: 'PUT',
+        headers: signed.headers,
+        redirect: 'error',
+        signal: signal ?? AbortSignal.timeout(120_000),
+      });
+      // CopyObject can answer 200 and still carry an <Error> body when the copy fails part way.
+      const text = await response.text();
+      if (!response.ok || !text.includes('<CopyObjectResult') || text.includes('<Error>')) {
+        throw new Error(`S3 copy ${sourceKey} -> ${destinationKey} failed with HTTP ${response.status}`);
+      }
     },
 
     async headObject(key, signal) {

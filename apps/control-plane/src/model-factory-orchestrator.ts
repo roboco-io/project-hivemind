@@ -152,9 +152,21 @@ export interface ModelFactoryOrchestratorOptions {
   onPlacementAttempt?: (attempt: PlacementAttemptRecord) => void;
   wakeIntervalMs?: number;
   now?: () => number;
+  /**
+   * Role ID (AROA...) of the training instance role. When set, instances write only to
+   * `staging/<role id>:<instance id>/` and the Control Plane copies checked artifacts to the job prefix.
+   */
+  trainingRoleId?: string;
 }
 
 const MAX_INLINE_INPUT_VERIFY_BYTES = 5 * 1024 * 1024; // 5 MiB full SHA-256 preflight; larger verified via HEAD size + instance-side SHA-256
+
+const STAGING_ROLE_ID = /^AROA[A-Z0-9]{12,124}$/;
+
+/** `staging/<role id>:` — followed by the instance ID, this equals `staging/${aws:userid}` for the instance role. */
+export function stagingPrefixBase(roleId: string): string {
+  return `staging/${roleId}:`;
+}
 
 function shellSingleQuote(value: string): string {
   if (/[\r\n\0]/.test(value)) throw new Error('Unsafe control character in bootstrap environment value');
@@ -163,14 +175,28 @@ function shellSingleQuote(value: string): string {
 
 export function composeTrainingUserData(
   job: ModelFactoryJob,
-  envMeta: { artifactsBucket?: string; artifactsRegion?: string },
+  envMeta: { artifactsBucket?: string; artifactsRegion?: string; stagingRoleId?: string },
 ): string | undefined {
   if (job.compute.userDataScript === undefined) return undefined;
   const lines = [
     `export HIVEMIND_JOB_ID=${shellSingleQuote(job.id)}`,
     `export HIVEMIND_MODEL_ID=${shellSingleQuote(job.modelId)}`,
-    `export HIVEMIND_ARTIFACT_PREFIX=${shellSingleQuote(job.compute.s3ArtifactPrefix)}`,
   ];
+  if (envMeta.stagingRoleId) {
+    // The instance role may write only under staging/<role id>:<instance id>/ (IAM variable aws:userid).
+    // The job's own prefix is filled by the Control Plane after it checks the receipt.
+    if (!STAGING_ROLE_ID.test(envMeta.stagingRoleId)) throw new Error('Invalid training instance role ID');
+    lines.push(
+      `export HIVEMIND_JOB_ARTIFACT_PREFIX=${shellSingleQuote(job.compute.s3ArtifactPrefix)}`,
+      `HIVEMIND_IMDS_TOKEN=$(curl -sS -m 5 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)`,
+      `HIVEMIND_INSTANCE_ID=$(curl -sS -m 5 -H "X-aws-ec2-metadata-token: $HIVEMIND_IMDS_TOKEN" http://169.254.169.254/latest/meta-data/instance-id)`,
+      'unset HIVEMIND_IMDS_TOKEN',
+      `case "$HIVEMIND_INSTANCE_ID" in i-[0-9a-f]*) ;; *) echo 'hivemind: instance id unavailable; stopping' >&2; shutdown -h now; exit 1 ;; esac`,
+      `export HIVEMIND_ARTIFACT_PREFIX="${stagingPrefixBase(envMeta.stagingRoleId)}$HIVEMIND_INSTANCE_ID"`,
+    );
+  } else {
+    lines.push(`export HIVEMIND_ARTIFACT_PREFIX=${shellSingleQuote(job.compute.s3ArtifactPrefix)}`);
+  }
   if (envMeta.artifactsBucket) {
     lines.push(`export HIVEMIND_ARTIFACTS_BUCKET=${shellSingleQuote(envMeta.artifactsBucket)}`);
   }
@@ -331,6 +357,7 @@ export class ModelFactoryOrchestrator {
       const userDataScript = composeTrainingUserData(approved, {
         artifactsBucket: this.options.artifactsBucket,
         artifactsRegion: this.options.artifactsRegion,
+        ...(this.options.trainingRoleId ? { stagingRoleId: this.options.trainingRoleId } : {}),
       });
 
       const extraTags: Record<string, string> = {
@@ -464,14 +491,14 @@ export class ModelFactoryOrchestrator {
     }
   }
 
-  private async tryLoadS3Receipt(job: ModelFactoryJob, signal?: AbortSignal): Promise<ModelArtifactReceipt | null> {
-    const receiptKey = `${job.compute.s3ArtifactPrefix}/receipt.json`;
+  /** Reads and size-checks a receipt under one prefix. Null when it is absent or does not match. */
+  private async readReceiptAt(prefix: string, signal?: AbortSignal): Promise<ModelArtifactReceipt | null> {
     try {
-      const raw = await this.options.s3.getObject(receiptKey, undefined, signal);
+      const raw = await this.options.s3.getObject(`${prefix}/receipt.json`, undefined, signal);
       const parsed = JSON.parse(Buffer.from(raw).toString('utf8')) as ModelArtifactReceipt;
       if (this.options.s3.headObject && Array.isArray(parsed.files)) {
         for (const file of parsed.files) {
-          const objKey = `${job.compute.s3ArtifactPrefix}/${file.path}`;
+          const objKey = `${prefix}/${file.path}`;
           const head = await this.options.s3.headObject(objKey, signal);
           if (head.contentLength !== file.sizeBytes) {
             throw new Error(`Artifact size mismatch for ${objKey}: expected ${file.sizeBytes}, got ${head.contentLength}`);
@@ -480,6 +507,38 @@ export class ModelFactoryOrchestrator {
       }
       return parsed;
     } catch {
+      return null;
+    }
+  }
+
+  private async tryLoadS3Receipt(job: ModelFactoryJob, signal?: AbortSignal): Promise<ModelArtifactReceipt | null> {
+    // Jobs launched before per-instance staging wrote straight to the job prefix.
+    const direct = await this.readReceiptAt(job.compute.s3ArtifactPrefix, signal);
+    if (direct) return direct;
+    const roleId = this.options.trainingRoleId;
+    if (!roleId || !job.instance || !this.options.s3.copyObject) return null;
+    // The staging folder is derived from the instance the Control Plane launched, never from the receipt.
+    const staging = `${stagingPrefixBase(roleId)}${job.instance.instanceId}`;
+    const staged = await this.readReceiptAt(staging, signal);
+    if (!staged || staged.s3Prefix !== staging || staged.jobId !== job.id || !Array.isArray(staged.files)) return null;
+    try {
+      for (const file of staged.files) {
+        await this.options.s3.copyObject(`${staging}/${file.path}`, `${job.compute.s3ArtifactPrefix}/${file.path}`, signal);
+      }
+      const promoted: ModelArtifactReceipt = { ...staged, s3Prefix: job.compute.s3ArtifactPrefix };
+      await this.options.s3.putObject(
+        `${job.compute.s3ArtifactPrefix}/receipt.json`,
+        new TextEncoder().encode(JSON.stringify(promoted, null, 2)),
+        'application/json',
+        signal,
+      );
+      return promoted;
+    } catch (error) {
+      console.error(JSON.stringify({
+        event: 'hivemind.mf_staging_copy.error',
+        jobId: job.id,
+        message: (error instanceof Error ? error.message : String(error)).slice(0, 300),
+      }));
       return null;
     }
   }
