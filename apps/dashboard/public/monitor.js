@@ -223,7 +223,7 @@
   }
 
   async function monitorApi(path, body, timeoutMs = 15000) {
-    const token = byId('operator-token')?.value || '';
+    const token = (byId('operator-token')?.value || '').trim();
     const response = await fetch(path, {
       method: body === undefined ? 'GET' : 'POST',
       redirect: 'error',
@@ -311,7 +311,7 @@
     }
     const pollBtn = byId('monitor-poll-toggle');
     if (pollBtn) {
-      pollBtn.textContent = state.autoRefresh ? '자동 갱신 켜짐' : '자동 갱신 일시정지';
+      pollBtn.textContent = state.autoRefresh ? '자동 갱신 켜짐 (15초)' : '자동 갱신 일시정지';
       pollBtn.setAttribute('aria-pressed', String(state.autoRefresh));
     }
     const backendText = (v) => (v && BACKEND_LABEL[v]) || (v ? safeText(v, 32) : '미연결');
@@ -1383,6 +1383,11 @@
     void refresh();
   });
   byId('connection-form')?.addEventListener('submit', () => {
+    const entered = (byId('operator-token')?.value || '').trim();
+    if (entered) {
+      byId('operator-token').value = entered;
+      saveTabToken(entered);
+    }
     setError(null);
     void refresh();
   });
@@ -1608,37 +1613,67 @@
     );
   });
 
-  // Consume one-time #token=... fragment into memory only and immediately strip it from the URL.
+  const TAB_TOKEN_KEY = 'hivemind.operatorToken';
+
+  function saveTabToken(token) {
+    try {
+      if (typeof sessionStorage !== 'undefined' && token) {
+        sessionStorage.setItem(TAB_TOKEN_KEY, token);
+      }
+    } catch {
+      // Ignore storage restrictions.
+    }
+  }
+
+  function restoreTabToken() {
+    try {
+      if (typeof sessionStorage === 'undefined') return;
+      const saved = sessionStorage.getItem(TAB_TOKEN_KEY);
+      if (saved && saved.trim()) {
+        const input = byId('operator-token');
+        if (input) input.value = saved.trim();
+      }
+    } catch {
+      // Ignore storage restrictions.
+    }
+  }
+
+  // Consume one-time #token=... fragment into tab-scoped sessionStorage only and immediately strip it from the URL.
   // Query strings (?token=...) are intentionally ignored so tokens are never sent in HTTP request lines.
   function consumeHashToken() {
     try {
       const loc = typeof location !== 'undefined' ? location : null;
-      if (!loc || typeof loc.hash !== 'string' || loc.hash.length < 2) return;
+      if (!loc || typeof loc.hash !== 'string' || loc.hash.length < 2) return false;
       const params = new URLSearchParams(loc.hash.slice(1));
-      if (!params.has('token')) return;
+      if (!params.has('token')) return false;
       const hashToken = params.get('token');
+      let applied = false;
       if (hashToken && hashToken.trim()) {
+        const trimmed = hashToken.trim();
         const input = byId('operator-token');
-        if (input) input.value = hashToken.trim();
+        if (input) input.value = trimmed;
+        saveTabToken(trimmed);
+        applied = true;
       }
       params.delete('token');
       const remaining = params.toString();
       if (typeof history !== 'undefined' && typeof history.replaceState === 'function') {
         history.replaceState(null, '', (loc.pathname || '/') + (loc.search || '') + (remaining ? '#' + remaining : ''));
       }
+      return applied;
     } catch {
-      // Ignore malformed hash fragments.
+      return false;
     }
   }
 
   // Initialize default view & polling
-  consumeHashToken();
+  if (!consumeHashToken()) restoreTabToken();
   switchTab('overview');
   renderAll();
   void refresh();
   setInterval(() => {
     if (!document.hidden && state.autoRefresh) void refresh();
-  }, 5000);
+  }, 15000);
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && state.autoRefresh) void refresh();
   });

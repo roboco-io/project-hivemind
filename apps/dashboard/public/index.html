@@ -21,7 +21,7 @@
     <div class="masthead-right">
       <div class="masthead-controls">
         <span id="monitor-mode-badge" class="pill">연결 확인 중</span>
-        <button id="monitor-poll-toggle" type="button" class="secondary compact-btn" aria-pressed="true">자동 갱신 켜짐</button>
+        <button id="monitor-poll-toggle" type="button" class="secondary compact-btn" aria-pressed="true">자동 갱신 켜짐 (15초)</button>
         <button id="monitor-refresh-now" type="button" class="secondary compact-btn">새로고침</button>
       </div>
       <div class="connection">
@@ -52,7 +52,7 @@
           <input id="operator-token" type="password" value="local-development-only" autocomplete="off" spellcheck="false" required>
           <button type="submit" class="secondary">연결 확인</button>
         </div>
-        <p class="help">서버의 HIVEMIND_OPERATOR_TOKEN과 같은 값을 입력하세요. 이 탭의 메모리에만 보관하며 저장소에 기록하지 않습니다.</p>
+        <p class="help">서버의 HIVEMIND_OPERATOR_TOKEN과 같은 값을 입력하세요. 현재 탭 세션(sessionStorage)에만 보관하며 탭을 닫으면 사라집니다.</p>
       </form>
     </details>
 

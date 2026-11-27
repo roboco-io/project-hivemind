@@ -667,13 +667,29 @@ test('control-plane serves /monitor.js with CSP and without exposing operator cr
   assert.ok(!snapRes.body.includes('super-secret-monitor-token'));
 });
 
-test('monitor.js consumes #token fragment into memory, strips URL hash, and ignores ?token query string', async () => {
+test('monitor.js consumes #token fragment into tab sessionStorage, survives reload, strips URL hash, and ignores ?token query string', async () => {
   const [html, auditScript, appScript, monitorScript] = await Promise.all(
     ['index.html', 'tool-audit.js', 'app.js', 'monitor.js'].map((name) =>
       readFile(new URL('../apps/dashboard/public/' + name, import.meta.url).pathname.replace('/dist/', '/'), 'utf8'),
     ),
   );
-  const runWithUrl = async (loc: { pathname: string; search: string; hash: string }) => {
+  const makeSessionStorage = (initial: Record<string, string> = {}) => {
+    const map = new Map<string, string>(Object.entries(initial));
+    return {
+      getItem: (k: string) => map.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        map.set(k, String(v));
+      },
+      removeItem: (k: string) => {
+        map.delete(k);
+      },
+      snapshot: () => Object.fromEntries(map),
+    };
+  };
+  const runWithUrl = async (
+    loc: { pathname: string; search: string; hash: string },
+    storage = makeSessionStorage(),
+  ) => {
     const elements = new Map<string, Element>();
     for (const match of html!.matchAll(/<(\w+)[^>]*\bid="([^"]+)"/g)) {
       elements.set(match[2]!, new Element(match[1]!, match[2]!));
@@ -689,6 +705,7 @@ test('monitor.js consumes #token fragment into memory, strips URL hash, and igno
       document: { getElementById: get, createElement: (t: string) => new Element(t), addEventListener() {}, hidden: false },
       location: loc,
       history: { replaceState: (_s: unknown, _t: string, url: string) => replaced.push(url) },
+      sessionStorage: storage,
       URL,
       URLSearchParams,
       AbortSignal,
@@ -711,16 +728,22 @@ test('monitor.js consumes #token fragment into memory, strips URL hash, and igno
     runInContext(appScript!, context);
     runInContext(monitorScript!, context);
     await new Promise((r) => setImmediate(r));
-    return { tokenValue: get('operator-token').value, replaced, seenAuth };
+    return { tokenValue: get('operator-token').value, replaced, seenAuth, storage };
   };
 
-  // #token fragment works and is immediately stripped from the URL bar
-  const fromHash = await runWithUrl({ pathname: '/', search: '', hash: '#token=HASH_TOKEN_999&tab=overview' });
+  // #token fragment works, saves to tab sessionStorage, and is immediately stripped from the URL bar
+  const sharedTabStorage = makeSessionStorage();
+  const fromHash = await runWithUrl({ pathname: '/', search: '', hash: '#token=HASH_TOKEN_999&tab=overview' }, sharedTabStorage);
   assert.equal(fromHash.tokenValue, 'HASH_TOKEN_999');
   assert.deepEqual(fromHash.replaced, ['/#tab=overview']);
   assert.ok(fromHash.seenAuth.includes('Bearer HASH_TOKEN_999'));
 
-  // ?token query string is ignored
+  // Reloading the same tab (without #token in URL) restores the token from sessionStorage cleanly
+  const afterReload = await runWithUrl({ pathname: '/', search: '', hash: '' }, sharedTabStorage);
+  assert.equal(afterReload.tokenValue, 'HASH_TOKEN_999');
+  assert.ok(afterReload.seenAuth.includes('Bearer HASH_TOKEN_999'));
+
+  // ?token query string is ignored in a fresh tab
   const fromQuery = await runWithUrl({ pathname: '/', search: '?token=QUERY_TOKEN_BAD', hash: '' });
   assert.equal(fromQuery.tokenValue, 'local-development-only');
   assert.deepEqual(fromQuery.replaced, []);
