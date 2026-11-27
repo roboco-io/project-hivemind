@@ -556,6 +556,9 @@ export class AwsRuntimeStack extends Stack {
       },
       secrets: {
         HIVEMIND_WORKER_TOKEN: ecs.Secret.fromSecretsManager(this.workerTokenSecret),
+        // Issue #20: handed to the model only for tasks whose executionPolicy opted in
+        // (hivemindAgentAccess, operator-listed repositories). Spoke workers do not get it.
+        HIVEMIND_AGENT_TOKEN: ecs.Secret.fromSecretsManager(this.agentTokenSecret),
       },
     });
 

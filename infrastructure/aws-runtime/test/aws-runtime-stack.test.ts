@@ -149,9 +149,9 @@ test('enforces strict 3-way secret separation across Control Plane, AI Worker, V
   assert.match(cpExecDoc, /WorkerTokenSecret/);
   assert.match(wkExecDoc, /WorkerTokenSecret/);
   assert.doesNotMatch(wkExecDoc, /OperatorTokenSecret/);
-  // Only the Control Plane reads the Model Factory agent token.
+  // The Control Plane and the hub AI worker (for opted-in Model Factory tasks, issue #20) read the agent token.
   assert.match(cpExecDoc, /AgentTokenSecret/);
-  assert.doesNotMatch(wkExecDoc, /AgentTokenSecret/);
+  assert.match(wkExecDoc, /AgentTokenSecret/);
   assert.doesNotMatch(workerDoc, /AgentTokenSecret/);
   assert.doesNotMatch(verifierDoc, /AgentTokenSecret/);
   template.hasResourceProperties('AWS::SecretsManager::Secret', {
