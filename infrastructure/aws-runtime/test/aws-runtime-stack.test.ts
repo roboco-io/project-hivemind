@@ -426,3 +426,24 @@ test('agent credentials parent role is separate, assumable only by the Control P
   assert.match(env, /spot-placement-read,model-inputs-upload,model-artifacts-read/);
   assert.match(env, /HIVEMIND_ARTIFACTS_KMS_KEY_ARN/);
 });
+
+test('the MCP tunnel role can only find the Control Plane task and port-forward to it', () => {
+  const template = synth();
+  const roles = template.findResources('AWS::IAM::Role') as Record<string, { Properties: { RoleName?: string; AssumeRolePolicyDocument: unknown; MaxSessionDuration?: number } }>;
+  const [roleId, role] = Object.entries(roles).find(([, r]) => r.Properties.RoleName === 'hivemind-dev-mcp-tunnel-role')!;
+  assert.equal(role.Properties.MaxSessionDuration, 43200);
+  assert.match(JSON.stringify(role.Properties.AssumeRolePolicyDocument), /:root/);
+  const policies = Object.values(template.findResources('AWS::IAM::Policy')) as { Properties: { Roles: unknown; PolicyDocument: { Statement: Record<string, unknown>[] } } }[];
+  const statements = policies.filter((p) => JSON.stringify(p.Properties.Roles).includes(roleId)).flatMap((p) => p.Properties.PolicyDocument.Statement);
+  const actions = [...new Set(statements.flatMap((st) => [st.Action].flat() as string[]))].sort();
+  assert.deepEqual(actions, ['ecs:DescribeServices', 'ecs:DescribeTasks', 'ecs:ListTasks', 'ssm:ResumeSession', 'ssm:StartSession', 'ssm:TerminateSession']);
+  const start = statements.find((st) => st.Sid === 'PortForwardToControlPlaneTasks')!;
+  const startResources = JSON.stringify(start.Resource);
+  assert.match(startResources, /document\/AWS-StartPortForwardingSession/);
+  assert.match(startResources, /:task\//);
+  assert.doesNotMatch(startResources, /"\*"/);
+  const list = statements.find((st) => st.Sid === 'ListControlPlaneTasks')!;
+  assert.ok(JSON.stringify(list.Condition).includes('ecs:cluster'));
+  assert.doesNotMatch(JSON.stringify(statements), /UpdateService|ExecuteCommand|iam:|secretsmanager:/);
+  template.hasOutput('McpTunnelRoleArn', {});
+});

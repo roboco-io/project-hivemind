@@ -71,6 +71,7 @@ export class AwsRuntimeStack extends Stack {
   readonly trainingInstanceRole: iam.Role;
   readonly trainingInstanceProfile: iam.CfnInstanceProfile;
   readonly agentCredentialsParentRole: iam.Role;
+  readonly mcpTunnelRole: iam.Role;
   readonly operatorTokenSecret: secretsmanager.Secret;
   readonly workerTokenSecret: secretsmanager.Secret;
   readonly agentTokenSecret: secretsmanager.Secret;
@@ -686,6 +687,58 @@ export class AwsRuntimeStack extends Stack {
       // does not fall back to on-demand capacity by itself.
       capacityProviderStrategies: [{ capacityProvider: 'FARGATE_SPOT', weight: 1, base: 1 }],
     });
+
+    // 6. Tunnel-only role for MCP servers (agent profile). It can find the running Control Plane task and
+    // open an SSM port-forwarding session to it, nothing else: no UpdateService, no ECS Exec shell, no
+    // other cluster. Operators of this account assume it through an AWS CLI role_arn + source_profile
+    // profile, which renews the credentials while the tunnel stays open.
+    const controlPlaneTaskArns = this.formatArn({ service: 'ecs', resource: 'task', resourceName: `${this.cluster.clusterName}/*` });
+    this.mcpTunnelRole = new iam.Role(this, 'McpTunnelRole', {
+      roleName: `${prefix}-mcp-tunnel-role`,
+      assumedBy: new iam.AccountRootPrincipal(),
+      maxSessionDuration: Duration.hours(12),
+      description: 'SSM port forwarding to the HIVEMIND Control Plane only',
+    });
+    this.mcpTunnelRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'DescribeControlPlaneService',
+        actions: ['ecs:DescribeServices'],
+        resources: [controlPlaneService.serviceArn],
+      }),
+    );
+    this.mcpTunnelRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'ListControlPlaneTasks',
+        actions: ['ecs:ListTasks'],
+        resources: ['*'],
+        conditions: { ArnEquals: { 'ecs:cluster': this.cluster.clusterArn } },
+      }),
+    );
+    this.mcpTunnelRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'DescribeControlPlaneTasks',
+        actions: ['ecs:DescribeTasks'],
+        resources: [controlPlaneTaskArns],
+      }),
+    );
+    this.mcpTunnelRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'PortForwardToControlPlaneTasks',
+        actions: ['ssm:StartSession'],
+        resources: [
+          controlPlaneTaskArns,
+          this.formatArn({ service: 'ssm', account: '', resource: 'document', resourceName: 'AWS-StartPortForwardingSession' }),
+        ],
+      }),
+    );
+    this.mcpTunnelRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'ManageOwnSessions',
+        actions: ['ssm:TerminateSession', 'ssm:ResumeSession'],
+        resources: [this.formatArn({ service: 'ssm', resource: 'session', resourceName: '${aws:userid}-*' })],
+      }),
+    );
+    new CfnOutput(this, 'McpTunnelRoleArn', { value: this.mcpTunnelRole.roleArn });
 
     // Multi-Region Model Factory TTL Guard: runs every 5 min on its own, so it also covers a Control Plane that is down (Spot interruption or desiredCount 0).
     // Fails closed: terminates any hivemind:managed-by=hivemind-model-factory instance past hivemind:expires-at or missing the tag.
