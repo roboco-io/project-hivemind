@@ -396,3 +396,20 @@ test('protocol: an HTTP refusal names the method, host, path and status but not 
   f.opts.fetch=(async(u:any,i:any)=>String(u).includes('X-Amz-Signature')?new Response('denied',{status:403}):fetch(u,i)) as typeof globalThis.fetch;
   await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts),(e:Error)=>/^Hugging Face LFS unavailable: PUT lfs-bucket\.example\.test\/upload returned HTTP 403$/.test(e.message)&&!e.message.includes('secret-signature'));
 });
+
+test('protocol: zero-padded multipart part keys (00001, 00002) are accepted in numeric order',async()=>{
+  // Hugging Face returns part URLs under keys like "00001"; huggingface_hub sorts them by integer value.
+  const f=protocolFixture(v=>{v.transfer='multipart';v.objects[0].actions.upload={href:'https://huggingface.co/o/r.git/info/lfs/multipart/complete',header:{chunk_size:'10','00002':'https://lfs-bucket.example.test/part2','00001':'https://lfs-bucket.example.test/part1'}};return v;});
+  await hfLfsCommit(inv,TOKEN,manifest(),f.opts);
+  assert.deepEqual(f.calls.filter(c=>c.method==='PUT').map(c=>new URL(c.url).pathname),['/part1','/part2']);
+  for(const header of [{chunk_size:'10','00001':'https://lfs-bucket.example.test/part1','00003':'https://lfs-bucket.example.test/part3'},{chunk_size:'10','0000001':'https://lfs-bucket.example.test/p1','0000002':'https://lfs-bucket.example.test/p2'}]){
+    const g=protocolFixture(v=>{v.transfer='multipart';v.objects[0].actions.upload={href:'https://huggingface.co/o/r.git/info/lfs/multipart/complete',header};return v;});
+    await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),g.opts),/^Error: Hugging Face LFS unavailable: lfs-batch models\/a\.bin check failed$/);
+    assert.equal(g.calls.filter(c=>c.method==='PUT').length,0);
+  }
+});
+
+test('protocol: a refusal names the step it happened in',async()=>{
+  const f=protocolFixture(v=>{v.transfer='unknown';return v;});
+  await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts),/^Error: Hugging Face LFS unavailable: lfs-batch check failed$/);
+});

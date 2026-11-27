@@ -155,7 +155,17 @@ export async function hfLfsProof(i:HfLfsInvocation,token:string,manifest:Externa
   return {commitOid:id};
 }
 
+/**
+ * Commits the manifest to Hugging Face. A refusal names the step it happened in (for example
+ * "lfs-batch" or "upload model.safetensors part 3"), never a token, URL query or file content.
+ */
 export async function hfLfsCommit(i:HfLfsInvocation,token:string,manifest:ExternalLargeManifest,o:HfLfsOptions):Promise<{commitOid:string}>{
+  const at={step:'validate'};
+  try{return await commitSteps(i,token,manifest,o,at);}
+  catch(e){if(e instanceof Error&&e.message==='Hugging Face LFS unavailable')throw failBecause(`${at.step} check failed`);throw e;}
+}
+
+async function commitSteps(i:HfLfsInvocation,token:string,manifest:ExternalLargeManifest,o:HfLfsOptions,at:{step:string}):Promise<{commitOid:string}>{
   assertHfLfsAllowed(o.visibility,o.allowPublicLarge);checkManifest(i,manifest);
   active(i,o);o={...o,signal:AbortSignal.any([AbortSignal.timeout(Math.max(1,Math.min(UPLOAD_TIMEOUT_MS,i.expiresAt-(o.now??Date.now)()))),...(o.signal?[o.signal]:[])])};
   // Validate the message before any upload so a bad message cannot orphan LFS objects.
@@ -166,17 +176,22 @@ export async function hfLfsCommit(i:HfLfsInvocation,token:string,manifest:Extern
   const protectedValues=[...new Set([token,...configuredValues])];
   const metadata=Buffer.from(JSON.stringify({message:o.message,paths:manifest.files.map(f=>f.path)}));
   const metadataFile={path:'metadata',size:metadata.length,sha256:createHash('sha256').update(metadata).digest('hex'),storageRef:'metadata'};
+  at.step='preflight';
   await preflightHfFiles([metadataFile],{open:async()=>new Blob([metadata]).stream(),forbiddenValues:protectedValues,signal:o.signal,assertActive:()=>active(i,o)});
   await preflightHfFiles(manifest.files,{open:o.open,forbiddenValues:protectedValues,signal:o.signal,assertActive:()=>active(i,o)});
+  at.step='revision';
   const info=record(await api(`${base}/revision/${r}?blobs=true`,'GET'));
   assertHfVisibility(info,resolveHfVisibility(o.visibility));const parent=hash40(info.sha);
+  at.step='prior-commit-proof';
   const prior=await hfLfsProof(i,token,manifest,o);if(prior)return prior;
+  at.step='sample';
   const samples=[];
   for(const f of manifest.files){
     let sample=Buffer.alloc(0);
     for await(const chunk of fileChunks(f,i,o)){sample=Buffer.concat([sample,chunk.subarray(0,512-sample.length)]);if(sample.length===Math.min(512,f.size))break;}
     samples.push({path:f.path,size:f.size,sample:sample.toString('base64')});
   }
+  at.step='preupload';
   const preupload=record(await api(`${base}/preupload/${r}`,'POST',{files:samples}));
   need(Array.isArray(preupload.files)&&preupload.files.length===manifest.files.length);
   const modes=new Map<string,string>();let regularBytes=0;
@@ -185,6 +200,7 @@ export async function hfLfsCommit(i:HfLfsInvocation,token:string,manifest:Extern
   need(regularBytes<=HF_REGULAR_MAX_BYTES);
   const files=[...new Map(manifest.files.filter(f=>modes.get(f.path)==='lfs').map(f=>[f.sha256,f])).values()];
   need(files.every(f=>manifest.files.every(g=>g.sha256!==f.sha256||g.size===f.size)));
+  at.step='lfs-batch';
   const lfsBase=`${HF_ORIGIN}/${repo(o.repository)}.git/info/lfs`;
   const batch=files.length?record(await api(`${lfsBase}/objects/batch`,'POST',{operation:'upload',transfers:['basic','multipart'],hash_algo:'sha256',ref:{name:o.revision},objects:files.map(f=>({oid:f.sha256,size:f.size}))},'application/vnd.git-lfs+json')):{objects:[]};
   need(batch.transfer===undefined||batch.transfer==='basic'||batch.transfer==='multipart');
@@ -213,6 +229,7 @@ export async function hfLfsCommit(i:HfLfsInvocation,token:string,manifest:Extern
   };
   // Validate every destination before beginning any transfer.
   const transfers=files.map(f=>{
+    at.step=`lfs-batch ${f.path}`;
     const obj=byOid.get(f.sha256);need(obj&&obj.size===f.size&&obj.error===undefined);
     if(obj.actions===undefined)return {f};
     const actions=record(obj.actions),upload=record(actions.upload),h=upload.header===undefined?{}:record(upload.header);
@@ -223,7 +240,7 @@ export async function hfLfsCommit(i:HfLfsInvocation,token:string,manifest:Extern
       need(typeof h.chunk_size==='string'&&/^[1-9][0-9]*$/.test(h.chunk_size));
       const size=Number(h.chunk_size);need(Number.isSafeInteger(size)&&size>0);
       const keys=Object.keys(h).filter(k=>/^\d+$/.test(k)).sort((a,b)=>Number(a)-Number(b));
-      need(keys.length===Math.ceil(f.size/size)&&keys.length<=10000&&keys.every((k,n)=>k===String(n+1)));
+      need(keys.length===Math.ceil(f.size/size)&&keys.length<=10000&&keys.every((k,n)=>/^[0-9]{1,6}$/.test(k)&&Number(k)===n+1));
       const urls=keys.map(k=>checkUploadHref(h[k],o.uploadHosts)),url=endpoint(upload,'multipart/complete');headersFor(upload,url);
       return {f,upload,url,urls,size,verify,verifyUrl};
     }
@@ -240,6 +257,7 @@ export async function hfLfsCommit(i:HfLfsInvocation,token:string,manifest:Extern
     const parts:{partNumber:number;etag:string}[]=[];
     try{
       for(let n=0;n<t.urls!.length;n++){
+        at.step=`upload ${t.f.path} part ${n+1}/${t.urls!.length}`;
         let remaining=Math.min(t.size!,t.f.size-total),consumed=false;
         const body=new ReadableStream<Uint8Array>({async pull(c){
           try{checkActive();if(remaining===0){consumed=true;c.close();return;}
@@ -256,7 +274,9 @@ export async function hfLfsCommit(i:HfLfsInvocation,token:string,manifest:Extern
         if(record(t.upload.header??{}).chunk_size!==undefined){const etag=res.headers.get('etag');need(etag&&etag.trim().length>0&&etag.length<=1024&&!/[\p{Cc}]/u.test(etag));parts.push({partNumber:n+1,etag});}
       }
       checkActive();need(!pending.length&&(await reader.read()).done&&total===t.f.size);checkActive();
+      at.step=`upload-complete ${t.f.path}`;
       if(parts.length)await call(t.url!,{method:'POST',headers:{...headersFor(t.upload,t.url!),accept:'application/vnd.git-lfs+json','content-type':'application/vnd.git-lfs+json'},body:JSON.stringify({oid:t.f.sha256,parts})});
+      at.step=`upload-verify ${t.f.path}`;
       if(t.verify)await call(t.verifyUrl!,{method:'POST',headers:{...headersFor(t.verify,t.verifyUrl!,true),'content-type':'application/vnd.git-lfs+json'},body:JSON.stringify({oid:t.f.sha256,size:t.f.size})});
     }finally{uploadStop.abort();void reader.cancel().catch(()=>{});reader.releaseLock();}
   }
@@ -281,11 +301,14 @@ export async function hfLfsCommit(i:HfLfsInvocation,token:string,manifest:Extern
   // Narrow the remote visibility race immediately before publication. HF offers no
   // atomic visibility CAS: visibility may still change between this GET and POST.
   // Keep the original parentCommit CAS instead of accepting a newly observed head.
+  at.step='commit-parent-check';
   const latest=record(await api(`${base}/revision/${r}?blobs=true`,'GET'));
   assertHfVisibility(latest,resolveHfVisibility(o.visibility));need(latest.sha===parent);
+  at.step='commit';
   const body=toStream(boundedCommit());
   const res=record(await readJson(await call(`${base}/commit/${r}`,{method:'POST',headers:{...auth,accept:'application/json','content-type':'application/x-ndjson'},body,duplex:'half'})));
   need(complete);
   const oid=hash40(res.commitOid);
+  at.step='commit-proof';
   const proof=await hfLfsProof(i,token,manifest,o,oid);need(proof);return proof;
 }
