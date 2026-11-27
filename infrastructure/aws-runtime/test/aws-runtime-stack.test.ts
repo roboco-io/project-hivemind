@@ -117,6 +117,8 @@ test('enforces strict 3-way secret separation across Control Plane, AI Worker, V
   assert.match(cpDoc, /ec2:TerminateInstances/);
   // Subnet AZ IDs order the subnets by the planned AZ order at launch.
   assert.match(cpDoc, /ec2:DescribeSubnets/);
+  // Live Spot placement scores rank regions for types the score feed does not list.
+  assert.match(cpDoc, /ec2:GetSpotPlacementScores/);
   assert.match(cpDoc, /hivemind-model-factory/);
   assert.match(cpDoc, /ec2\.amazonaws\.com/);
   assert.match(cpDoc, /ModelFactoryTrainingInstanceRole/);
