@@ -30,6 +30,7 @@ function freshAccount(): World {
     images: new Set(),
     secrets: {
       'hivemind-runtime/operator-token': 'operator-token-value-0000000000000000',
+      'hivemind-runtime/agent-token': 'agent-token-value-000000000000000000000',
       'hivemind-runtime/model-subscription-auth': 'randomInitialPassword',
       'hivemind-runtime/github-draft-pr': 'randomInitialPassword',
       'hivemind-runtime/hf-release-token': 'randomInitialPassword',
@@ -112,6 +113,7 @@ const baseOptions = (overrides: Partial<BootstrapOptions> = {}): BootstrapOption
   projectRoot: '/repo',
   localApiPort: 4311,
   operatorTokenFile: '/home/op/.hivemind/aws-operator-token.json',
+  agentTokenFile: '/home/op/.hivemind/aws-agent-token.json',
   controlPlaneConfigFile: '/home/op/.hivemind/aws-control-plane.json',
   profile: 'ops',
   ...overrides,
@@ -160,6 +162,9 @@ test('bootstrap on an empty account creates resources in the safe order and repo
   // The operator token is written to the 600 file only; it is not in any command line or log.
   assert.deepEqual(JSON.parse(written['/home/op/.hivemind/aws-operator-token.json']!), { OPERATOR_TOKEN: 'operator-token-value-0000000000000000' });
   assert.ok(!JSON.stringify(commands).includes('operator-token-value'));
+  // The Model Factory agent token goes to its own 600 file, also never on a command line.
+  assert.deepEqual(JSON.parse(written['/home/op/.hivemind/aws-agent-token.json']!), { AGENT_TOKEN: 'agent-token-value-000000000000000000000' });
+  assert.ok(!JSON.stringify(commands).includes('agent-token-value'));
   // The start settings for the MCP server name the service to raise; they hold no secret.
   const power = written['/home/op/.hivemind/aws-control-plane.json']!;
   assert.deepEqual(JSON.parse(power), { profile: 'ops', region: 'ap-northeast-2', cluster: 'hm-cluster', service: 'hm-control-plane' });
@@ -172,6 +177,7 @@ test('bootstrap on an empty account creates resources in the safe order and repo
   assert.match(report, /GitHub App: Draft PR 게시/);
   assert.match(report, /Hugging Face 토큰: Model Factory 산출물의 Hugging Face 공개/);
   assert.ok(!report.includes('operator-token-value'));
+  assert.ok(!report.includes('agent-token-value'));
 });
 
 test('running the bootstrap again changes nothing that already exists and keeps deployed spokes in the Hub configuration', async () => {

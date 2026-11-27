@@ -45,6 +45,8 @@ export interface BootstrapOptions {
   projectRoot: string;
   localApiPort: number;
   operatorTokenFile: string;
+  /** Where the Model Factory agent token is written (mode 600). The agent's MCP profile reads it. */
+  agentTokenFile?: string;
   /** Non-secret file that tells the MCP server how to start the dormant Control Plane. */
   controlPlaneConfigFile: string;
   /** AWS profile recorded in that file. */
@@ -318,6 +320,20 @@ export async function runBootstrap(options: BootstrapOptions, system: BootstrapS
     const token = String(readSecret(system, options.primaryRegion, `${options.prefix}/operator-token`).raw ?? '').trim();
     if (!token) throw new Error('운영자 토큰을 읽지 못했습니다.');
     system.writeSecretFile(options.operatorTokenFile, JSON.stringify({ OPERATOR_TOKEN: token }));
+    // The agent token exists on stacks deployed with the agent token secret; an older stack has none.
+    let agentWritten = false;
+    if (options.agentTokenFile) {
+      let agentToken = '';
+      try {
+        agentToken = String(readSecret(system, options.primaryRegion, `${options.prefix}/agent-token`).raw ?? '').trim();
+      } catch {
+        agentToken = '';
+      }
+      if (agentToken) {
+        system.writeSecretFile(options.agentTokenFile, JSON.stringify({ AGENT_TOKEN: agentToken }));
+        agentWritten = true;
+      }
+    }
     // Lets the MCP tools hivemind_control_plane_start/stop raise the service and open the tunnel. No secret in it.
     const outputs = stackOutputs(system, options.primaryRegion, HUB_STACK);
     if (!outputs.ClusterName || !outputs.ControlPlaneServiceName) throw new Error('Hub 스택 출력에 ClusterName 또는 ControlPlaneServiceName 이 없습니다.');
@@ -326,7 +342,7 @@ export async function runBootstrap(options: BootstrapOptions, system: BootstrapS
       `${JSON.stringify({ ...(options.profile ? { profile: options.profile } : {}), region: options.primaryRegion, cluster: outputs.ClusterName, service: outputs.ControlPlaneServiceName }, null, 2)}\n`,
     );
     const written = system.configureClients({ projectRoot: options.projectRoot, apiUrl, operatorTokenFile: options.operatorTokenFile });
-    return { status: 'done', detail: `운영자 토큰 파일(권한 600), Control Plane 기동 설정 파일과 ${written.join(', ')} 작성. 클라이언트를 다시 시작해야 반영됩니다.` };
+    return { status: 'done', detail: `운영자 토큰 파일(권한 600)${agentWritten ? ', 에이전트 토큰 파일(권한 600)' : ''}, Control Plane 기동 설정 파일과 ${written.join(', ')} 작성. 클라이언트를 다시 시작해야 반영됩니다.` };
   });
 
   await step('verify', '동작 확인', async () => {

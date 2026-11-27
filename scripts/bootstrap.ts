@@ -78,6 +78,7 @@ async function main(): Promise<void> {
     projectRoot,
     localApiPort: Number(process.env.HIVEMIND_LOCAL_PORT ?? '4311'),
     operatorTokenFile: join(homedir(), '.hivemind', 'aws-operator-token.json'),
+    agentTokenFile: join(homedir(), '.hivemind', 'aws-agent-token.json'),
     controlPlaneConfigFile: join(homedir(), '.hivemind', 'aws-control-plane.json'),
     profile,
   };
