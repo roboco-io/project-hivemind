@@ -47,7 +47,12 @@ export function registerModelFactoryRoutes(app: FastifyInstance, options: ModelF
   app.post<{ Body: CreateModelFactoryJob }>(
     '/api/model-factory/jobs',
     { onRequest: operatorOnly, bodyLimit: 131072 },
-    async (request, reply) => reply.code(201).send(await store.create(request.body)),
+    async (request, reply) => {
+      const created = await store.create(request.body);
+      // Rank the job's regions and AZs by Spot placement score stability so the human sees the order before approving.
+      const job = orchestrator ? await orchestrator.planAtRegistration(created, AbortSignal.timeout(20_000)) : created;
+      return reply.code(201).send(job);
+    },
   );
 
   app.post<{ Params: { id: string }; Body: { approvalFingerprint: string; reason: string } }>(

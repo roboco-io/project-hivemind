@@ -4,6 +4,7 @@ import type {
   ModelReleaseAttestation,
   ModelReleaseDecision,
   ModelReleasePublication,
+  TrainingPlacementPlan,
 } from '../../../packages/contracts/src/model-factory.js';
 import type {
   Ec2SpotTrainerPort,
@@ -17,7 +18,7 @@ import {
 import type { SpotPlacementFeedPort } from '../../../packages/adapters/src/spot-placement-feed.js';
 import type { ModelFactoryStore } from '../../../packages/core/src/model-factory.js';
 import { calculateActualCostMicros } from '../../../packages/core/src/model-factory-guard-settlement.js';
-import { selectOptimalSpotPlacement } from '../../../packages/core/src/multi-region.js';
+import { orderSubnetsByPlannedAzs, planTrainingPlacement } from '../../../packages/core/src/model-factory-placement.js';
 
 export interface TrustedHfReleasePublisherPort {
   publish(input: {
@@ -248,6 +249,22 @@ export class ModelFactoryOrchestrator {
     }
   }
 
+  /** Plans the region and AZ order from the Spot placement score feed. Never throws. */
+  async planPlacement(job: ModelFactoryJob, signal?: AbortSignal): Promise<TrainingPlacementPlan> {
+    const feed = this.options.spotFeed;
+    const snapshot = feed ? await feed.getSnapshot(signal).catch(() => null) : null;
+    return planTrainingPlacement(snapshot, job.compute, this.now(), feed?.feedUrl ?? null);
+  }
+
+  /** Plans the placement for a newly registered job and stores it. Returns the job unchanged when that fails. */
+  async planAtRegistration(job: ModelFactoryJob, signal?: AbortSignal): Promise<ModelFactoryJob> {
+    try {
+      return await this.options.store.recordPlacementPlan(job.id, await this.planPlacement(job, signal));
+    } catch {
+      return job;
+    }
+  }
+
   async approveAndLaunchTraining(
     jobId: string,
     approvalFingerprint: string,
@@ -255,57 +272,25 @@ export class ModelFactoryOrchestrator {
     signal?: AbortSignal,
   ): Promise<ModelFactoryJob> {
     const approved = await this.options.store.approveTraining(jobId, approvalFingerprint, reason);
-    const baseCandidates = approved.compute.candidateRegions?.length
-      ? approved.compute.candidateRegions
-      : [approved.compute.region];
-
-    // Rank candidate regions by 6-hourly Spot Placement Score stability & lowest price (5-region GPU Spot auto-routing).
-    const rankedTargets: { region: string; azId?: string }[] = [];
-    const snapshot = this.options.spotFeed ? await this.options.spotFeed.getSnapshot(signal).catch(() => null) : null;
-    if (snapshot && baseCandidates.length > 1) {
-      const remaining = [...baseCandidates];
-      while (remaining.length > 0) {
-        try {
-          const decision = selectOptimalSpotPlacement(
-            snapshot,
-            {
-              primaryRegion: remaining[0]!,
-              allowedRegions: remaining,
-              workloadClass: approved.compute.workloadClass ?? 'g6e.12xlarge',
-              maxHourlyPriceUsd: approved.compute.maxHourlyPriceUsd,
-            },
-            this.now(),
-          );
-          rankedTargets.push({
-            region: decision.selectedRegion,
-            ...(decision.selectedAzId ? { azId: decision.selectedAzId } : {}),
-          });
-          const idx = remaining.indexOf(decision.selectedRegion);
-          remaining.splice(idx >= 0 ? idx : 0, 1);
-        } catch (err) {
-          if (rankedTargets.length === 0) throw err;
-          break;
-        }
-      }
+    // Rank the approved regions and their AZs by Spot placement score stability with the newest feed.
+    // When the feed cannot rank them now, keep the plan made at registration, if that one was ranked.
+    let plan = await this.planPlacement(approved, signal);
+    if (plan.status !== 'ranked' && approved.placementPlan?.status === 'ranked') {
+      plan = approved.placementPlan;
     } else {
-      for (const r of baseCandidates) {
-        let azId = r === approved.compute.region ? approved.compute.availabilityZoneId : undefined;
-        if (!azId && snapshot && approved.compute.workloadClass) {
-          const decision = selectOptimalSpotPlacement(
-            snapshot,
-            {
-              primaryRegion: r,
-              allowedRegions: [r],
-              workloadClass: approved.compute.workloadClass,
-              maxHourlyPriceUsd: approved.compute.maxHourlyPriceUsd,
-            },
-            this.now(),
-          );
-          if (decision.selectedAzId) azId = decision.selectedAzId;
-        }
-        rankedTargets.push({ region: r, ...(azId ? { azId } : {}) });
+      try {
+        await this.options.store.recordPlacementPlan(approved.id, plan);
+      } catch {
+        // Recording the plan is for audit only; it must not block the launch.
       }
     }
+    const rankedTargets: { region: string; azIds: string[] }[] = plan.regions.map((entry) => ({
+      region: entry.region,
+      azIds:
+        entry.region === approved.compute.region && approved.compute.availabilityZoneId
+          ? [approved.compute.availabilityZoneId]
+          : entry.azs.map((az) => az.azId),
+    }));
 
     const nowMs = this.now();
     const expiresAtIso = new Date(nowMs + approved.compute.maxLifetimeMs).toISOString();
@@ -372,14 +357,25 @@ export class ModelFactoryOrchestrator {
                   ? [approved.compute.subnetId]
                   : [undefined];
 
-        for (const subnetId of candidateSubnets) {
+        let orderedSubnets = candidateSubnets;
+        const listedSubnets = candidateSubnets.filter((id): id is string => id !== undefined);
+        if (listedSubnets.length > 1 && target.azIds.length > 0 && this.options.ec2.describeSubnetAzIds) {
+          try {
+            const subnetAzIds = await this.options.ec2.describeSubnetAzIds(target.region, listedSubnets, signal);
+            orderedSubnets = orderSubnetsByPlannedAzs(listedSubnets, subnetAzIds, target.azIds);
+          } catch {
+            // Without AZ IDs the subnets keep their listed order; every subnet is still tried.
+          }
+        }
+
+        for (const subnetId of orderedSubnets) {
           try {
             const launched = await this.options.ec2.launchSpotInstance(
               {
                 jobId: approved.id,
                 modelId: approved.modelId,
                 region: target.region,
-                ...(!subnetId && target.azId ? { availabilityZoneId: target.azId } : {}),
+                ...(!subnetId && target.azIds[0] ? { availabilityZoneId: target.azIds[0] } : {}),
                 instanceType: approved.compute.instanceType,
                 amiId,
                 maxHourlyPriceUsd: approved.compute.maxHourlyPriceUsd,

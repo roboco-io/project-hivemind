@@ -111,7 +111,7 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
     'hivemind_mf_create',
     {
       title: 'HIVEMIND 모델 팩토리 학습 작업 초안 등록',
-      description: '동적 AMI·인스턴스 타입·최대 수명·비용 상한과 공개 정책으로 학습 초안만 등록합니다. 스팟 용량이 없을 때를 대비해 compute.candidateRegions에 다른 리전을 적을 수 있고, AMI는 리전마다 다르므로 그 리전의 AMI를 compute.regionOverrides에 적습니다.',
+      description: '동적 AMI·인스턴스 타입·최대 수명·비용 상한과 공개 정책으로 학습 초안만 등록합니다. 스팟 용량이 없을 때를 대비해 compute.candidateRegions에 다른 리전을 적을 수 있고, AMI는 리전마다 다르므로 그 리전의 AMI를 compute.regionOverrides에 적습니다. 등록 결과의 placementPlan은 스팟 배치 점수 추세로 정한 리전·AZ 시도 순서입니다. 피드에 없는 인스턴스 유형은 workloadClass에 비슷한 피드 풀을 적어야 순위가 매겨집니다.',
       inputSchema: z.strictObject({
         title: z.string().trim().min(1).max(160),
         modelId: z.string().trim().min(1).max(120),
@@ -119,7 +119,7 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
         baseCommit: hex40,
         compute: z.strictObject({
           region: z.string().min(4).max(32),
-          // Other regions the Control Plane may try, in Spot placement score order, when `region` has no capacity.
+          // Other regions the Control Plane may try. `region` and these are tried in Spot placement score stability order.
           candidateRegions: z.array(z.string().min(4).max(32)).min(1).max(8).optional(),
           // Per-region AMI, subnets and security groups. An AMI ID is valid in one region only.
           regionOverrides: z
@@ -138,6 +138,7 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
           maxLifetimeMs: z.number().int().min(60_000).max(604_800_000),
           maxHourlyPriceUsd: z.number().positive().max(200),
           maxTotalCostMicros: z.number().int().min(1).max(10_000_000_000),
+          // Spot placement score feed pool or preset used to rank regions, for types the feed does not list.
           workloadClass: z.string().min(1).max(64).optional(),
           subnetId: z.string().regex(/^subnet-[a-f0-9]{8,17}$/i).optional(),
           securityGroupIds: z.array(z.string().regex(/^sg-[a-f0-9]{8,17}$/i)).min(1).max(5).optional(),

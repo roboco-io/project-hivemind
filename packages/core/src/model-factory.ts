@@ -24,6 +24,7 @@ import type {
   ModelTrainingInputSpec,
   SubmitModelReleaseAttestation,
   TrainingComputeSpec,
+  TrainingPlacementPlan,
 } from '../../contracts/src/model-factory.js';
 import { DomainError, text } from './store.js';
 
@@ -849,6 +850,34 @@ export class ModelFactoryStore {
       job.releaseVerifier = { ecsTaskArn: text(ecsTaskArn, 'ecsTaskArn', 512), dispatchedAt: this.timestamp() };
       const saved = this.save(job);
       this.emit(saved.id, 'model_factory.release_verifier_dispatched', { ecsTaskArn: job.releaseVerifier.ecsTaskArn });
+      return saved;
+    });
+  }
+
+  /**
+   * Stores the region and AZ order planned from the Spot placement score feed. The plan only reorders the
+   * regions the job lists, so it is not part of the approval fingerprint.
+   */
+  async recordPlacementPlan(id: string, plan: TrainingPlacementPlan): Promise<ModelFactoryJob> {
+    return this.tx(() => {
+      const job = this.load(id);
+      if (TERMINAL_STATUSES.has(job.status)) {
+        throw new DomainError(`Cannot record a placement plan in state ${job.status}`, 409);
+      }
+      const allowed = new Set([job.compute.region, ...(job.compute.candidateRegions ?? [])]);
+      if (plan.regions.some((entry) => !allowed.has(entry.region))) {
+        throw new DomainError('Placement plan names a region the job does not list', 400);
+      }
+      job.placementPlan = structuredClone(plan);
+      const saved = this.save(job);
+      const first = plan.regions[0];
+      this.emit(saved.id, 'model_factory.placement_planned', {
+        status: plan.status,
+        feedPool: plan.feedPool,
+        feedGeneratedAt: plan.feedGeneratedAt,
+        regionOrder: plan.regions.map((entry) => entry.region),
+        firstAzId: first?.azs[0]?.azId ?? null,
+      });
       return saved;
     });
   }

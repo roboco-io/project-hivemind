@@ -61,6 +61,23 @@ export interface Ec2SpotTrainerPort {
   describeInstance(region: string, instanceId: string, signal?: AbortSignal): Promise<DescribedSpotInstance>;
   terminateInstance(region: string, instanceId: string, signal?: AbortSignal): Promise<{ instanceId: string; state: Ec2InstanceLifecycleState }>;
   sweepExpiredSpotInstances(region: string, nowMs?: number, signal?: AbortSignal): Promise<ExpiredSpotSweepResult>;
+  /** Maps each subnet to its AZ ID (for example `use2-az1`). Optional: without it subnets keep their listed order. */
+  describeSubnetAzIds?(region: string, subnetIds: string[], signal?: AbortSignal): Promise<Record<string, string>>;
+}
+
+/** Reads subnet ID to AZ ID pairs from an EC2 DescribeSubnets response. */
+export function parseSubnetAzIds(xml: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const setBlock of extractTagBlocks(xml, 'subnetSet')) {
+    // Drop nested sets (tagSet, ipv6CidrBlockAssociationSet, ...) so each remaining <item> is one subnet.
+    const flat = setBlock.replace(/<([A-Za-z0-9]+Set)>[\s\S]*?<\/\1>/g, '');
+    for (const item of extractTagBlocks(flat, 'item')) {
+      const subnetId = firstTagValue(item, 'subnetId');
+      const azId = firstTagValue(item, 'availabilityZoneId');
+      if (subnetId && azId) result[subnetId] = azId;
+    }
+  }
+  return result;
 }
 
 export interface AwsEc2SpotTrainerOptions {
@@ -380,6 +397,16 @@ export class AwsEc2SpotTrainer implements Ec2SpotTrainerPort {
       amiId: input.amiId,
       state: first.state,
     };
+  }
+
+  async describeSubnetAzIds(region: string, subnetIds: string[], signal?: AbortSignal): Promise<Record<string, string>> {
+    if (subnetIds.length === 0) return {};
+    const params: Record<string, string> = { Action: 'DescribeSubnets' };
+    subnetIds.forEach((id, index) => {
+      if (!/^subnet-[a-f0-9]{8,17}$/i.test(id)) throw new Error(`Invalid subnet ID: ${id}`);
+      params[`SubnetId.${index + 1}`] = id;
+    });
+    return parseSubnetAzIds(await this.callEc2Query(region, params, signal));
   }
 
   async describeInstance(region: string, instanceId: string, signal?: AbortSignal): Promise<DescribedSpotInstance> {

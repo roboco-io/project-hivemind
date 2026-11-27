@@ -11,6 +11,8 @@ export interface SpotPlacementFeedConfig {
 }
 
 export interface SpotPlacementFeedPort {
+  /** Where the snapshot comes from, for audit records. */
+  readonly feedUrl?: string;
   getSnapshot(signal?: AbortSignal): Promise<SpotMarketSnapshot | null>;
 }
 
@@ -66,6 +68,7 @@ export function createSpotPlacementFeedPort(config: SpotPlacementFeedConfig = {}
   let cached: { snapshot: SpotMarketSnapshot; fetchedAtMs: number } | null = null;
 
   return {
+    feedUrl,
     async getSnapshot(signal?: AbortSignal): Promise<SpotMarketSnapshot | null> {
       const currentMs = now();
       if (cached && currentMs - cached.fetchedAtMs < cacheTtlMs) {

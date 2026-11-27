@@ -58,6 +58,45 @@ export interface TrainingComputeSpec {
   inputs?: ModelTrainingInputSpec;
 }
 
+/** Spot Placement Score summary of one region or AZ over the trend window. Scores are 1 (low) to 10 (high). */
+export interface PlacementScoreTrend {
+  latest: number;
+  min: number;
+  avg: number;
+  /** Recent half average minus earlier half average. */
+  slope: number;
+  samples: number;
+}
+
+export interface PlannedPlacementRegion {
+  region: string;
+  /** Null when the feed has no score for this region. */
+  trend: PlacementScoreTrend | null;
+  /** Latest regional Spot price for the feed pool, USD per hour. Null when unknown. */
+  priceUsd: number | null;
+  /** AZ IDs (for example `use2-az1`) in try order, most stable first. AZ IDs are the same in every account. */
+  azs: { azId: string; trend: PlacementScoreTrend }[];
+}
+
+/**
+ * The order in which the Control Plane tries regions and AZs, ranked by Spot Placement Score stability.
+ * It only reorders the regions the job already lists; it never adds or removes one.
+ */
+export interface TrainingPlacementPlan {
+  status: 'ranked' | 'feed_unavailable' | 'feed_stale' | 'type_not_in_feed';
+  /** Human-readable reason, in English, for the order. */
+  note: string;
+  feedUrl: string | null;
+  feedGeneratedAt: string | null;
+  /** Feed pool whose scores were used (for example `g6e.12xlarge` or `m.xlarge`). */
+  feedPool: string | null;
+  /** Instance types the feed pool covers. */
+  feedPoolMembers: string[];
+  trendWindowHours: number;
+  regions: PlannedPlacementRegion[];
+  plannedAt: string;
+}
+
 export interface ModelArtifactFile {
   path: string;
   sha256: string;
@@ -166,6 +205,8 @@ export interface ModelFactoryJob {
   releaseAttestation: ModelReleaseAttestation | null;
   /** Last independent verifier task the Control Plane started for this job. Absent when none was started. */
   releaseVerifier?: { ecsTaskArn: string; dispatchedAt: string } | null;
+  /** Last region and AZ order planned from the Spot Placement Score feed, at registration and again at launch. */
+  placementPlan?: TrainingPlacementPlan | null;
   releaseDecision: ModelReleaseDecision | null;
   publication: ModelReleasePublication | null;
   createdAt: string;
