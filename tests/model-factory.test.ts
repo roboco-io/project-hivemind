@@ -747,3 +747,18 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
     await store.close();
   }
 });
+
+test('digests order files by code unit, so a byte-order sort on the instance gives the same digest', async () => {
+  const { createHash } = await import('node:crypto');
+  const { computeModelManifestDigest, computeTrainingInputsDigest } = await import('../packages/core/src/model-factory.js');
+  // Mixed case and punctuation: a locale order would be 1_Pooling, config_sentence…, config.json, README.md.
+  const files = ['model/config.json', 'train-summary.json', 'model/README.md', 'model/config_sentence_transformers.json', 'model/1_Pooling/config.json']
+    .map((path, i) => ({ path, sha256: String(i + 1).repeat(64), sizeBytes: 10 + i }));
+  const byteOrder = [...files].sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)));
+  assert.deepEqual(byteOrder.map((f) => f.path), ['model/1_Pooling/config.json', 'model/README.md', 'model/config.json', 'model/config_sentence_transformers.json', 'train-summary.json']);
+  // What a Python script on the instance computes: json.dumps({'version':1,'files':sorted(...)}, separators=(',',':')).
+  const sha = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  assert.equal(computeModelManifestDigest(files), sha({ version: 1, files: byteOrder }));
+  assert.equal(computeModelManifestDigest([...files].reverse()), computeModelManifestDigest(files), 'input order does not matter');
+  assert.equal(computeTrainingInputsDigest('models/m/inputs/b1', files), sha({ version: 1, s3Prefix: 'models/m/inputs/b1', files: byteOrder }));
+});

@@ -106,6 +106,15 @@ aws --profile roboco --region ap-northeast-2 ecs update-service \
 2. `POST /api/model-factory/jobs`: 동적 `region`, `instanceType`, `amiId`, `maxLifetimeMs`, `maxHourlyPriceUsd`, `maxTotalCostMicros`, `s3ArtifactPrefix`(`models/<modelId>/...`, `inputs/` 제외), `inputs`, `userDataScript`, `releasePolicy` 등록 (`awaiting_training_approval`). `instanceProfileArn`을 생략하면 Control Plane이 승인된 `hivemind-runtime-mf-training-instance-profile`을 자동 부착한다(미허용 ARN 지정 시 거절).
 3. `POST /api/model-factory/jobs/:id/approve-training`: `approvalFingerprint` 검증 → 중앙 예산 예약(전역 상한 초과 시 409 거절) → 입력 사전 검증 → EC2 Spot 기동 (`training_running`). Control Plane은 EC2 태그(`hivemind:job-id`, `hivemind:artifact-bucket`, `hivemind:artifact-region`, `hivemind:artifact-prefix`, `hivemind:inputs-prefix`, `hivemind:inputs-digest`)와 `userDataScript` 선두 `export HIVEMIND_JOB_ID`, `HIVEMIND_ARTIFACTS_BUCKET`, `HIVEMIND_ARTIFACTS_REGION`, `HIVEMIND_ARTIFACT_PREFIX`, `HIVEMIND_INPUTS_PREFIX`, `HIVEMIND_INPUTS_DIGEST`, `HIVEMIND_INPUTS_MANIFEST_B64`를 자동 주입한다.
 4. 학습/평가 인스턴스는 `aws s3 cp --region "$HIVEMIND_ARTIFACTS_REGION"`으로 입력을 내려받아 SHA-256을 검증하고, 결과물과 `${HIVEMIND_ARTIFACT_PREFIX}/receipt.json`을 직접 업로드한 뒤 `shutdown -h now`로 스스로 종료한다(`InstanceInitiatedShutdownBehavior=terminate`).
+   - **영수증 형식과 `manifestDigest` 계산 규칙.** `receipt.json`은 `{ "version": 1, "jobId", "s3Bucket", "s3Prefix", "manifestDigest", "files": [{ "path", "sha256", "sizeBytes" }], "recordedAt" }`이다. `path`는 `s3Prefix` 아래의 상대 경로다. `manifestDigest`는 `{"version":1,"files":[...]}`를 공백 없이 직렬화한 JSON의 SHA-256이다. `files`는 `path`의 바이트 순서로 정렬하고, 각 항목의 키 순서는 `path`, `sha256`, `sizeBytes`다. 로케일 정렬을 쓰면 안 된다. 바이트 순서에서는 `model/README.md`가 `model/config.json`보다 앞이다. Python에서는 다음과 같다. 계산한 값이 다르면 Control Plane이 영수증을 거절한다.
+
+     ```python
+     files = sorted(files, key=lambda f: f['path'])   # 바이트(코드포인트) 순서. locale 정렬 금지
+     body = json.dumps({'version': 1, 'files': [{'path': f['path'], 'sha256': f['sha256'], 'sizeBytes': f['sizeBytes']} for f in files]}, separators=(',', ':'), ensure_ascii=False)
+     manifest_digest = hashlib.sha256(body.encode('utf-8')).hexdigest()
+     ```
+
+     2026-11-27 이전의 Control Plane은 `path`를 로케일 순서로 정렬했다. 파일이 여러 개이고 대소문자나 문장부호가 섞인 경로가 있으면 인스턴스가 계산한 값과 달라졌다. 경로는 ASCII로 쓰는 것을 권한다.
 5. Control Plane 주기 wake 또는 `POST /api/model-factory/jobs/:id/wake`: EC2 종료 확인 + 실사용 초 비용 정산 + S3 `receipt.json` `manifestDigest` 및 각 파일 존재/크기(`HEAD`) 검증 (`evaluating`).
 6. **배포 전 검사 보고 및 출처 명시:**
    - 운영자/에이전트가 `POST /api/model-factory/jobs/:id/verify-release`로 보고할 경우, HIVEMIND는 응답과 저장 상태에 항상 `attestationSource: "operator_self_reported"`와 명시적 고지(`verificationDisclaimer: "이 검사 결과는 운영자/호출자가 직접 보고한 값이며, HIVEMIND가 releaseCheckCommand를 독립 격리 환경에서 실행해 검증하지 않았습니다."`)를 강제 기록한다.

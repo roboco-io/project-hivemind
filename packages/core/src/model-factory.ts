@@ -56,6 +56,17 @@ function normalizeRelativePath(raw: string, label: string): string {
   return cleaned;
 }
 
+/**
+ * Order of the file list inside a digest. The training instance computes the artifact digest itself, in
+ * whatever language its script uses, so the order must not depend on a locale. Paths are compared by
+ * UTF-16 code unit, which for ASCII paths is plain byte order (`sorted()` in Python, `sort` with LC_ALL=C).
+ * A locale comparison would put `model/config.json` before `model/README.md`, and a byte-order sort on the
+ * instance would then produce a different digest and the receipt would be refused.
+ */
+function byPathCodeUnits(a: { path: string }, b: { path: string }): number {
+  return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+}
+
 export function computeTrainingInputsDigest(s3Prefix: string, files: ModelTrainingInputFile[]): string {
   const cleanPrefix = normalizeRelativePath(s3Prefix, 'compute.inputs.s3Prefix');
   if (!Array.isArray(files) || files.length === 0 || files.length > 1000) {
@@ -74,7 +85,7 @@ export function computeTrainingInputsDigest(s3Prefix: string, files: ModelTraini
       }
       return { path, sha256, sizeBytes: f.sizeBytes };
     })
-    .sort((a, b) => a.path.localeCompare(b.path));
+    .sort(byPathCodeUnits);
   return sha256Hex(JSON.stringify({ version: 1, s3Prefix: cleanPrefix, files: normalized }));
 }
 
@@ -103,7 +114,7 @@ export function validateTrainingInputSpec(
       sha256: f.sha256.toLowerCase(),
       sizeBytes: f.sizeBytes,
     }))
-    .sort((a, b) => a.path.localeCompare(b.path));
+    .sort(byPathCodeUnits);
   return { s3Prefix, files, digest: computedDigest };
 }
 
@@ -124,7 +135,7 @@ export function computeModelManifestDigest(files: ModelArtifactFile[]): string {
       }
       return { path, sha256, sizeBytes: f.sizeBytes };
     })
-    .sort((a, b) => a.path.localeCompare(b.path));
+    .sort(byPathCodeUnits);
   return sha256Hex(JSON.stringify({ version: 1, files: normalized }));
 }
 
