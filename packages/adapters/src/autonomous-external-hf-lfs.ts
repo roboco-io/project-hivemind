@@ -30,6 +30,8 @@ export interface HfLfsOptions{
 }
 
 const fail=()=>new Error('Hugging Face LFS unavailable');
+/** A refusal whose reason is safe to record: a host name, an HTTP method and status, never a query string or token. */
+const failBecause=(detail:string)=>new Error(`Hugging Face LFS unavailable: ${detail.replace(/[^\x20-\x7e]/g,'?').slice(0,300)}`);
 function need(ok:unknown):asserts ok{if(!ok)throw fail();}
 const sha256=(s:string)=>createHash('sha256').update(s).digest('hex');
 const mark=(i:HfLfsInvocation)=>'hivemind:'+sha256(JSON.stringify([i.ownershipToken,i.idempotencyKey,i.parametersHash]));
@@ -86,7 +88,8 @@ function checkManifest(i:HfLfsInvocation,m:ExternalLargeManifest){
 function checkUploadHref(href:unknown,hosts:readonly string[]):string{
   need(typeof href==='string'&&href.length<=4096);
   let u:URL;try{u=new URL(href);}catch{throw fail();}
-  need(u.protocol==='https:'&&!u.username&&!u.password&&u.port===''&&!u.hash&&hosts.some(h=>h.toLowerCase()===u.hostname));
+  need(u.protocol==='https:'&&!u.username&&!u.password&&u.port===''&&!u.hash);
+  if(!hosts.some(h=>h.toLowerCase()===u.hostname))throw failBecause(`upload host not allowed: ${u.hostname}`);
   return u.toString();
 }
 
@@ -114,7 +117,8 @@ function context(i:HfLfsInvocation,token:string,o:HfLfsOptions,readOnly=false){
       }
       const response=fetcher(url,{...init,redirect:'manual',signal} as RequestInit);
       const res=await interrupt(response,signal);
-      assertActive();need(res.status>=200&&res.status<300&&res.ok&&!res.redirected);
+      assertActive();
+      if(!(res.status>=200&&res.status<300&&res.ok&&!res.redirected)){const u=new URL(url);throw failBecause(`${init.method} ${u.hostname}${u.pathname} returned HTTP ${res.status}`);}
       if(pipe)await interrupt(pipe,signal);
       return res;
     }catch(e){stop.abort();if(pipe)void pipe.catch(()=>{});throw e;}

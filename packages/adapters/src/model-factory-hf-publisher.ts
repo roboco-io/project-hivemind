@@ -24,13 +24,18 @@ export interface TrustedHfReleasePublisherConfig {
  * Workers never receive HF write tokens. Every file is read from S3 with SHA-256 verification
  * against the human-approved receipt manifestDigest before streaming via hfLfsCommit.
  */
-export function createTrustedHfReleasePublisher(config: TrustedHfReleasePublisherConfig) {
-  const uploadHosts = config.uploadHosts ?? [
+/** Hosts Hugging Face hands out for LFS upload URLs. Any other upload host is refused. */
+export const HF_RELEASE_UPLOAD_HOSTS: readonly string[] = [
     's3.us-east-1.amazonaws.com',
+    // Multipart LFS uploads for large files are presigned on S3 Transfer Acceleration (seen 2026-11-27).
+    'hf-hub-lfs-us-east-1.s3-accelerate.amazonaws.com',
     'cdn-lfs.hf.co',
     'cdn-lfs-us-1.hf.co',
     'cdn-lfs-eu-1.hf.co',
-  ];
+];
+
+export function createTrustedHfReleasePublisher(config: TrustedHfReleasePublisherConfig) {
+  const uploadHosts = config.uploadHosts ?? HF_RELEASE_UPLOAD_HOSTS;
   const now = config.now ?? Date.now;
 
   return {

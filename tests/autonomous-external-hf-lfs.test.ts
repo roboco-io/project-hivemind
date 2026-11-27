@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {hfLfsCommit,hfLfsProof,lfsPointer,HF_LFS_MAX_FILE_BYTES,type HfLfsOptions,type HfLfsInvocation} from '../packages/adapters/src/autonomous-external-hf-lfs.ts';
 import type {ExternalLargeManifest} from '../packages/contracts/src/autonomous-external-large.js';
+import {HF_RELEASE_UPLOAD_HOSTS} from '../packages/adapters/src/model-factory-hf-publisher.ts';
 
 const TOKEN='TEST_ONLY_HF_TOKEN_CANARY_0001';
 const sha=(b:Uint8Array|string)=>createHash('sha256').update(b).digest('hex');
@@ -375,4 +376,23 @@ test('redirect: manual 302 never follows or forwards authorization',async()=>{
  f.opts.fetch=(async(u:any,i:any)=>{assert.equal(i.redirect,'manual');seen.push({url:String(u),headers:i.headers});return new Response(null,{status:302,headers:{location:'https://evil.example.test/steal'}});}) as typeof globalThis.fetch;
  await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts));
  assert.equal(seen.length,1);assert.ok(seen[0]!.url.startsWith('https://huggingface.co/api/models/o/r/revision/'));assert.equal(f.state.commitBodies.length,0);
+});
+
+test('protocol: an upload host outside the list is refused by name, and the release publisher allows the S3 accelerate host',async()=>{
+  const ACCEL='hf-hub-lfs-us-east-1.s3-accelerate.amazonaws.com';
+  const withAccel=(v:any)=>{v.transfer='multipart';v.objects[0].actions.upload={href:'https://huggingface.co/o/r.git/info/lfs/multipart/complete',header:{chunk_size:'10','1':`https://${ACCEL}/part1`,'2':`https://${ACCEL}/part2`}};return v;};
+  const refused=protocolFixture(withAccel);
+  await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),refused.opts),new RegExp(`^Error: Hugging Face LFS unavailable: upload host not allowed: ${ACCEL.replaceAll('.','\\.')}$`));
+  assert.equal(refused.calls.filter(c=>c.method==='PUT').length,0);
+  assert.ok(HF_RELEASE_UPLOAD_HOSTS.includes(ACCEL));
+  const allowed=protocolFixture(withAccel);
+  await hfLfsCommit(inv,TOKEN,manifest(),{...allowed.opts,uploadHosts:HF_RELEASE_UPLOAD_HOSTS});
+  assert.deepEqual(allowed.calls.filter(c=>c.method==='PUT').map(c=>new URL(c.url).hostname),[ACCEL,ACCEL]);
+});
+
+test('protocol: an HTTP refusal names the method, host, path and status but not the query',async()=>{
+  const f=protocolFixture(v=>{v.objects[0].actions.upload.href='https://lfs-bucket.example.test/upload?X-Amz-Signature=secret-signature';return v;});
+  const fetch=f.opts.fetch!;
+  f.opts.fetch=(async(u:any,i:any)=>String(u).includes('X-Amz-Signature')?new Response('denied',{status:403}):fetch(u,i)) as typeof globalThis.fetch;
+  await assert.rejects(hfLfsCommit(inv,TOKEN,manifest(),f.opts),(e:Error)=>/^Hugging Face LFS unavailable: PUT lfs-bucket\.example\.test\/upload returned HTTP 403$/.test(e.message)&&!e.message.includes('secret-signature'));
 });
