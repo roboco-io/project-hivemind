@@ -272,7 +272,7 @@ Silicon Model Factory(SMF)는 과제 조사부터 Hugging Face 공개까지를 �
 
 **4. 자동 병합.** 전달 정책의 `autoMerge: true`는 `protectedPaths`(`dir/` 접두사, 정확한 파일, 구간마다 `*` 하나)와 함께 써야 하고, 저장소가 운영자 목록(`HIVEMIND_DELIVERY_AUTO_MERGE_REPOS`, 배포 기본값 `roboco-io/silicon-model-factory`)에 있어야 한다. 검증기가 검사 명령을 통과시키고 Draft PR이 열리면, Control Plane은 검증된 패치의 경로(이름 변경 포함)를 보호 경로와 비교한다. 겹치지 않으면 PR을 준비 상태로 바꾸고 검증한 머리 커밋에 고정해 squash 병합한다. 겹치거나, 머리 커밋이 바뀌었거나, 병합이 실패하면 병합하지 않고, 작업에 이유를 기록하고, 긴급 알림을 보내고, 그 저장소의 트리거를 끈다. 트리거가 보내는 작업은 보호 경로 아래 파일을 수용 파일로 고정하므로 검증기도 그 변경을 실패로 판정한다.
 
-**5. 알림.** Control Plane은 SNS 주제(`HIVEMIND_NOTIFY_TOPIC_ARN`, 배포 스크립트가 us-east-2의 `smf-budget`을 찾는다)로 공개 성공·실패, 예산 상한에 걸린 학습 승인, 자동 병합 거절을 보낸다. 운영자와 에이전트는 `POST /api/notifications`(`kind`: `task_finished`, `loop_stopped`, `budget_exhausted` 등)로 과제 종료와 반복 정지를 보낸다. 메시지 속성 `channel`은 긴급(`budget_exhausted`, `loop_stopped`, `auto_merge_refused`)이면 `urgent`, 나머지는 `email`이다. 문자 구독에 필터 정책 `{"channel":["urgent"]}`을 두면 문자는 긴급 알림만 받는다. 보내는 양은 시간당 30건으로 제한한다.
+**5. 알림.** Control Plane은 SNS 주제(`HIVEMIND_NOTIFY_TOPIC_ARN`, 배포 스크립트가 us-east-2의 `smf-budget`을 찾는다)로 공개 성공·실패, 예산 상한에 걸린 학습 승인, 자동 병합 거절을 보낸다. 운영자와 에이전트는 `POST /api/notifications`(`kind`: `task_finished`, `loop_stopped`, `budget_exhausted` 등)로 과제 종료와 반복 정지를 보낸다. 메시지 속성 `channel`은 긴급(`budget_exhausted`, `loop_stopped`, `auto_merge_refused`)이면 `urgent`, 나머지는 `email`이다. 문자 구독에는 필터 정책 `{"$or":[{"channel":["urgent"]},{"channel":[{"exists":false}]}]}`을 둔다. 그러면 문자는 긴급 알림과 `channel` 속성이 없는 메시지(AWS Budgets의 예산 알림)만 받는다. `{"channel":["urgent"]}`만 두면 예산 알림이 문자로 가지 않는다. 이메일 구독에는 필터를 두지 않는다. 보내는 양은 시간당 30건으로 제한한다.
 
 ### 원장 저장소와 TTL Guard 정산 (`HIVEMIND_MF_STORAGE`)
 

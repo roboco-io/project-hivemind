@@ -3,7 +3,8 @@ import type { AwsEcsCredentials } from './aws-ecs-driver.js';
 
 /**
  * Notification kinds. `urgent` kinds go to every subscription; the others carry `channel=email` so an SMS
- * subscription with the filter policy `{"channel":["urgent"]}` skips them (SMS has a small monthly quota).
+ * subscription filtered on `channel` urgent-or-absent skips them (SMS has a small monthly quota; budget
+ * alerts from AWS Budgets carry no attribute and must still reach SMS).
  */
 export const NOTIFICATION_KINDS = {
   release_published: { urgent: false },
