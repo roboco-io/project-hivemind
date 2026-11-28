@@ -11,7 +11,8 @@ FROM node:24-slim
 WORKDIR /app
 # Independent Verification image: runs pinned acceptance tests against SHA-256 verified S3 bundles & patches.
 # Strictly contains ZERO model CLIs, ZERO model subscription auth, and ZERO GitHub credentials.
-RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+# Pinned acceptance tests of RTL projects simulate hardware, so the verifier has the same simulators as the worker.
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates verilator iverilog g++ make && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 RUN npm ci --ignore-scripts
 COPY --from=build /app/dist ./dist
