@@ -13,6 +13,7 @@ import type {
   CreateDeliveryTask,
   DeliveryChangeSummary,
   DeliveryEvent,
+  DeliveryModelUsage,
   DeliveryPolicy,
   DeliveryPreflightReport,
   DeliveryProvider,
@@ -669,6 +670,44 @@ export class DeliveryStore {
         cliVersion: normalized.cliVersion,
         reason: normalized.reason,
       });
+      return saved;
+    });
+  }
+
+  /** Records the model usage of the active run. The worker calls it once per run, whatever the outcome. */
+  async recordModelUsage(id: string, input: Omit<DeliveryModelUsage, 'recordedAt'>): Promise<DeliveryTask> {
+    const count = (value: unknown, name: string): number | null => {
+      if (value === null || value === undefined) return null;
+      if (!Number.isSafeInteger(value) || (value as number) < 0) throw new DomainError(`${name} must be a non-negative integer or null`, 400);
+      return value as number;
+    };
+    if (!['completed', 'failed', 'timed_out', 'aborted'].includes(input.outcome)) throw new DomainError('Invalid usage outcome', 400);
+    if (!['codex_session_log', 'unavailable'].includes(input.source)) throw new DomainError('Invalid usage source', 400);
+    const iteration = count(input.iteration, 'iteration');
+    const durationMs = count(input.durationMs, 'durationMs');
+    if (iteration === null || durationMs === null) throw new DomainError('iteration and durationMs are required', 400);
+    return this.tx(() => {
+      const task = this.load(id);
+      if (task.status !== 'running' || task.activeRunId !== input.runId) {
+        throw new DomainError('Active run mismatch for model usage', 409);
+      }
+      const usage: DeliveryModelUsage = {
+        runId: input.runId,
+        iteration,
+        provider: task.provider,
+        outcome: input.outcome,
+        inputTokens: count(input.inputTokens, 'inputTokens'),
+        cachedInputTokens: count(input.cachedInputTokens, 'cachedInputTokens'),
+        cacheWriteInputTokens: count(input.cacheWriteInputTokens, 'cacheWriteInputTokens'),
+        outputTokens: count(input.outputTokens, 'outputTokens'),
+        reasoningOutputTokens: count(input.reasoningOutputTokens, 'reasoningOutputTokens'),
+        source: input.source,
+        durationMs,
+        recordedAt: this.timestamp(),
+      };
+      task.modelUsage = [...(task.modelUsage ?? []), usage].slice(-100);
+      const saved = this.save(task);
+      this.emit(saved.id, 'delivery.model_usage_recorded', { ...usage });
       return saved;
     });
   }

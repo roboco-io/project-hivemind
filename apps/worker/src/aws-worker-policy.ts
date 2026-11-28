@@ -123,7 +123,8 @@ export function buildWorkerCliCommand(options: {
         options.cliBin,
         'exec',
         '--ignore-user-config',
-        '--ephemeral',
+        // No --ephemeral: the session log in CODEX_HOME (a per-run temp directory removed after the run)
+        // carries the token usage, also for runs that time out.
         '--skip-git-repo-check',
         '--sandbox',
         sandboxMode,

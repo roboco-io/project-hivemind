@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type {
   CreateDeliveryTask,
+  DeliveryModelUsage,
   DeliveryPreflightReport,
   DraftPrPublication,
   HumanDeliveryDecision,
@@ -184,6 +185,28 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
     '/api/delivery/tasks/:id/preflight',
     { onRequest: workerOnly, bodyLimit: 16384 },
     async (request) => await store.recordPreflight(request.params.id, request.body),
+  );
+
+  app.post<{ Params: { id: string }; Body: Omit<DeliveryModelUsage, 'recordedAt' | 'provider'> }>(
+    '/api/delivery/tasks/:id/model-usage',
+    { onRequest: workerOnly, bodyLimit: 4096 },
+    async (request) => {
+      const body = (request.body ?? {}) as Partial<DeliveryModelUsage>;
+      const task = await store.recordModelUsage(request.params.id, {
+        runId: String(body.runId ?? ''),
+        iteration: body.iteration as number,
+        provider: 'codex',
+        outcome: body.outcome as DeliveryModelUsage['outcome'],
+        inputTokens: body.inputTokens ?? null,
+        cachedInputTokens: body.cachedInputTokens ?? null,
+        cacheWriteInputTokens: body.cacheWriteInputTokens ?? null,
+        outputTokens: body.outputTokens ?? null,
+        reasoningOutputTokens: body.reasoningOutputTokens ?? null,
+        source: body.source as DeliveryModelUsage['source'],
+        durationMs: body.durationMs as number,
+      });
+      return { ok: true, recorded: task.modelUsage?.length ?? 0 };
+    },
   );
 
   app.post<{ Params: { id: string }; Body: { workerId: string; runId: string } }>(

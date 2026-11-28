@@ -62,6 +62,28 @@ export interface WorkerExecutionPolicy {
   verificationKind?: VerificationKind;
 }
 
+/**
+ * Model usage of one worker run (issue #20 follow-up: cost per stage). Recorded for completed, failed,
+ * timed-out and interrupted runs. Token counts are null when the provider did not report them.
+ * outputTokens already includes reasoningOutputTokens (codex reports total = input + output); the
+ * reasoning count is kept separately and must not be added again. cachedInputTokens is part of inputTokens.
+ */
+export interface DeliveryModelUsage {
+  runId: string;
+  iteration: number;
+  provider: DeliveryProvider;
+  outcome: 'completed' | 'failed' | 'timed_out' | 'aborted';
+  inputTokens: number | null;
+  cachedInputTokens: number | null;
+  cacheWriteInputTokens: number | null;
+  outputTokens: number | null;
+  reasoningOutputTokens: number | null;
+  /** Where the counts came from: the codex session log, or nothing (provider without a usage report). */
+  source: 'codex_session_log' | 'unavailable';
+  durationMs: number;
+  recordedAt: string;
+}
+
 export interface DeliveryPreflightReport {
   runId: string;
   ok: boolean;
@@ -179,6 +201,8 @@ export interface DeliveryTask {
   lastPlacement: RegionPlacementDecision | null;
   waitReason: string | null;
   lastPreflight: DeliveryPreflightReport | null;
+  /** Model usage per worker run, oldest first (at most 100). Absent on tasks created before it existed. */
+  modelUsage?: DeliveryModelUsage[];
   spotRetriesUsed: number;
   activeRunId: string | null;
   activeWorkerId: string | null;

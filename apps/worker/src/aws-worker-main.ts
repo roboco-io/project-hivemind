@@ -1,4 +1,5 @@
 import { controlFetch } from './control-fetch.js';
+import { buildModelUsageReport } from './model-usage.js';
 import { readFile } from 'node:fs/promises';
 import { setUpCollabWorkerOrFailSubtask } from './collab-worker-setup.js';
 import { join } from 'node:path';
@@ -62,6 +63,17 @@ async function fetchWorkerSpec(controlApiUrl: string, workerToken: string, taskI
     throw new Error(`Failed to fetch worker spec from control plane (HTTP ${res.status})`);
   }
   return (await res.json()) as WorkerSpec;
+}
+
+async function reportModelUsage(controlApiUrl: string, workerToken: string, taskId: string, report: Awaited<ReturnType<typeof buildModelUsageReport>>): Promise<void> {
+  const res = await controlFetch(new URL(`/api/delivery/tasks/${encodeURIComponent(taskId)}/model-usage`, controlApiUrl), {
+    method: 'POST',
+    redirect: 'error',
+    headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
+    body: JSON.stringify(report),
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
 }
 
 async function reportWorkerCompleted(
@@ -384,6 +396,16 @@ async function main(): Promise<void> {
             env,
             maxOutputBytes: 256_000,
           });
+          // Usage is reported for every run, including failed and timed-out ones; a report that cannot be
+          // delivered must not change the run's own outcome.
+          await reportModelUsage(controlApiUrl, workerToken, ctx.taskId, await buildModelUsageReport({
+            provider: spec.provider,
+            codexHome: env.CODEX_HOME ?? join(homeDir, '.codex'),
+            runId: ctx.runId,
+            iteration: ctx.iteration,
+            status: res.status,
+            durationMs: res.durationMs,
+          })).catch((error) => console.error(`Model usage report failed: ${error instanceof Error ? error.message : String(error)}`));
           if (res.status !== 'passed') {
             const combined = [res.stderr, res.stdout].filter(Boolean).join('\n--- stdout ---\n');
             const safeErr = redactWorkerOutput(combined, [...auth.redactSecrets, workerToken, agentToken]).slice(-2500);
