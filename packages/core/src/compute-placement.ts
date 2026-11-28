@@ -1,17 +1,17 @@
 import type {
+  ComputePlacementPlan,
+  ComputeSpec,
   PlacementScoreTrend,
   PlannedPlacementRegion,
-  TrainingComputeSpec,
-  TrainingPlacementPlan,
-} from '../../contracts/src/model-factory.js';
+} from '../../contracts/src/compute.js';
 import type { SpotMarketSnapshot, SpotTimeSeriesPoint } from '../../contracts/src/multi-region.js';
 import { resolveWorkloadPreset } from './multi-region.js';
 
 export const PLACEMENT_TREND_WINDOW_HOURS = 72;
 export const PLACEMENT_MAX_FEED_AGE_HOURS = 24;
 
-/** The regions a training job may launch in: its own region first, then its candidate regions. */
-export function trainingCandidateRegions(compute: Pick<TrainingComputeSpec, 'region' | 'candidateRegions'>): string[] {
+/** The regions a compute job may launch in: its own region first, then its candidate regions. */
+export function computeCandidateRegions(compute: Pick<ComputeSpec, 'region' | 'candidateRegions'>): string[] {
   return [...new Set([compute.region, ...(compute.candidateRegions ?? [])])];
 }
 
@@ -21,7 +21,7 @@ export function trainingCandidateRegions(compute: Pick<TrainingComputeSpec, 'reg
  */
 export function resolveFeedPool(
   snapshot: SpotMarketSnapshot,
-  compute: Pick<TrainingComputeSpec, 'instanceType' | 'workloadClass'>,
+  compute: Pick<ComputeSpec, 'instanceType' | 'workloadClass'>,
 ): string | null {
   if (compute.workloadClass) {
     let pool: string;
@@ -95,17 +95,17 @@ export interface LivePlacementScores {
  * scores keep their listed order after the scored ones. The plan never adds or removes a region, so it
  * stays inside what the human approved.
  */
-export function planTrainingPlacement(
+export function planComputePlacement(
   snapshot: SpotMarketSnapshot | null,
-  compute: Pick<TrainingComputeSpec, 'region' | 'candidateRegions' | 'instanceType' | 'workloadClass'>,
+  compute: Pick<ComputeSpec, 'region' | 'candidateRegions' | 'instanceType' | 'workloadClass'>,
   nowMs: number,
   feedUrl: string | null = null,
   live: LivePlacementScores | null = null,
-): TrainingPlacementPlan {
-  const regions = trainingCandidateRegions(compute);
+): ComputePlacementPlan {
+  const regions = computeCandidateRegions(compute);
   const liveScores = live?.scores.filter((s) => Number.isInteger(s.score) && s.score >= 1 && s.score <= 10) ?? [];
 
-  let feedProblem: { status: TrainingPlacementPlan['status']; note: string } | null = null;
+  let feedProblem: { status: ComputePlacementPlan['status']; note: string } | null = null;
   let pool: string | null = null;
   if (!snapshot) {
     feedProblem = { status: 'feed_unavailable', note: 'Spot placement score feed is unavailable.' };

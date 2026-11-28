@@ -62,13 +62,16 @@ export function registerAwsStatusTool(server: McpServer, options: AwsStatusMcpOp
     async (_args, extra): Promise<CallToolResult> => {
       try {
         const agent = options.scope === 'agent';
-        const [delivery, jobs, ledger, collab] = await Promise.all([
+        const [projects, delivery, jobs, ledger, collab] = await Promise.all([
+          agent
+            ? get('/api/projects/me', extra.signal).catch((): Record<string, unknown> => ({}))
+            : get('/api/projects', extra.signal).catch((): Record<string, unknown> => ({})),
           agent ? Promise.resolve<Record<string, unknown>>({}) : get('/api/delivery/tasks', extra.signal),
-          get('/api/model-factory/jobs', extra.signal),
-          get('/api/model-factory/ledger', extra.signal),
+          get('/api/compute/jobs', extra.signal),
+          get('/api/compute/ledger', extra.signal),
           agent ? Promise.resolve<Record<string, unknown>>({}) : get('/api/collab/sessions', extra.signal),
         ]);
-        const modelFactory = {
+        const compute = {
           storageBackend: backend(jobs.storageBackend),
           total: Array.isArray(jobs.jobs) ? jobs.jobs.length : 0,
           byStatus: countByStatus(jobs.jobs),
@@ -78,18 +81,30 @@ export function registerAwsStatusTool(server: McpServer, options: AwsStatusMcpOp
           remainingBudgetMicros: micros(ledger.remainingBudgetMicros),
         };
         if (agent) {
-          const output = { runtime: 'aws', connected: true, principal: 'agent', modelFactory };
+          const project = (projects.project as { id?: string; status?: string } | null | undefined) ?? null;
+          const output = {
+            runtime: 'aws',
+            connected: true,
+            principal: 'agent',
+            projectId: project?.id ?? null,
+            compute,
+          };
           return { content: [{ type: 'text', text: JSON.stringify(output) }], structuredContent: output };
         }
         const output = {
           runtime: 'aws',
           connected: true,
+          projects: {
+            storageBackend: backend(projects.storageBackend),
+            total: Array.isArray(projects.projects) ? projects.projects.length : 0,
+            byStatus: countByStatus(projects.projects),
+          },
           delivery: {
             storageBackend: backend(delivery.storageBackend),
             total: Array.isArray(delivery.tasks) ? delivery.tasks.length : 0,
             byStatus: countByStatus(delivery.tasks),
           },
-          modelFactory,
+          compute,
           collab: {
             storageBackend: backend(collab.storageBackend),
             total: Array.isArray(collab.sessions) ? collab.sessions.length : 0,

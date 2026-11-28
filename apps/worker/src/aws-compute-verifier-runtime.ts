@@ -6,25 +6,21 @@ import type { S3ObjectPort } from '../../../packages/adapters/src/aws-s3-artifac
 import { processEnvironment, runProcess } from '../../../packages/adapters/src/process.js';
 import type { ProcessEvidence } from '../../../packages/contracts/src/index.js';
 import type {
-  ModelArtifactReceipt,
-  ModelTrainingInputSpec,
-  SubmitModelReleaseAttestation,
-} from '../../../packages/contracts/src/model-factory.js';
-import { computeModelManifestDigest } from '../../../packages/core/src/model-factory.js';
+  ComputeArtifactReceipt,
+  ComputeInputSpec,
+  SubmitComputeReleaseAttestation,
+} from '../../../packages/contracts/src/compute.js';
+import { computeArtifactManifestDigest } from '../../../packages/core/src/compute.js';
 
-export interface ModelReleaseVerificationInput {
+export interface ComputeReleaseVerificationInput {
   jobId: string;
-  /** S3 prefix of the job's artifacts; `receipt.json` lives directly under it. */
   artifactPrefix: string;
-  /** Manifest digest the Control Plane recorded for this job. The S3 receipt must carry the same one. */
   expectedManifestDigest: string;
   releaseCheckCommand: string[];
-  /** Pinned training inputs. When present they are the working directory of the check command. */
-  inputs?: Pick<ModelTrainingInputSpec, 's3Prefix' | 'files'>;
+  inputs?: Pick<ComputeInputSpec, 's3Prefix' | 'files'>;
   s3: S3ObjectPort;
   workRoot?: string;
   timeoutMs?: number;
-  /** Total artifact bytes this verifier will download. Larger jobs cannot be verified here. */
   maxArtifactBytes?: number;
   runCheck?: (command: string[], options: { cwd: string; env: NodeJS.ProcessEnv; timeoutMs: number }) => Promise<ProcessEvidence>;
   now?: () => number;
@@ -40,7 +36,6 @@ function safeRelativePath(path: string, label: string): string {
   return path;
 }
 
-/** The last stdout line may be a flat JSON object of metrics; anything else is ignored. */
 function metricsFromStdout(stdout: string): Record<string, number | string | boolean> {
   const last = stdout.trim().split('\n').pop()?.trim() ?? '';
   if (!last.startsWith('{') || last.length > 8000) return {};
@@ -61,34 +56,22 @@ function metricsFromStdout(stdout: string): Record<string, number | string | boo
 }
 
 /**
- * Independent release verification of one Model Factory job.
- *
- * The verifier trusts nothing the training instance reported except through its own checks:
- *   1. The S3 receipt must belong to this job, and its manifest digest must equal both the digest the
- *      Control Plane recorded and the digest recomputed from the receipt's file list.
- *   2. Every artifact file is downloaded and its SHA-256 compared with the receipt.
- *   3. The pinned training inputs, if any, are downloaded and their SHA-256 compared with the approved spec.
- *   4. `releaseCheckCommand` runs with the inputs as working directory and the artifacts in
- *      `HIVEMIND_ARTIFACT_DIR`. Its exit code decides `releaseCheckPassed`.
- *
- * Steps 1 to 3 throw on a mismatch: no attestation is produced, so the job stays in `evaluating` for an
- * operator to inspect. Only step 4 can produce a failing attestation.
- *
- * Isolation limits: the command runs without shell, without the task's credential environment variables and
- * with a fresh HOME. It is NOT a sandbox: it shares the container and its network with this process.
+ * Independent release verification of one Compute job.
+ * Verifies the S3 receipt manifestDigest, every artifact SHA-256, and pinned inputs before running
+ * `releaseCheckCommand` in a clean environment without task credentials.
  */
-export async function runModelReleaseVerification(input: ModelReleaseVerificationInput): Promise<SubmitModelReleaseAttestation> {
+export async function runComputeReleaseVerification(input: ComputeReleaseVerificationInput): Promise<SubmitComputeReleaseAttestation> {
   if (!input.releaseCheckCommand.length || !input.releaseCheckCommand[0]) throw new Error('releaseCheckCommand is empty');
   const now = input.now ?? Date.now;
   const prefix = input.artifactPrefix.replace(/\/+$/, '');
   const expectedDigest = input.expectedManifestDigest.toLowerCase();
 
-  const receipt = JSON.parse(Buffer.from(await input.s3.getObject(`${prefix}/receipt.json`)).toString('utf8')) as ModelArtifactReceipt;
+  const receipt = JSON.parse(Buffer.from(await input.s3.getObject(`${prefix}/receipt.json`)).toString('utf8')) as ComputeArtifactReceipt;
   if (receipt.jobId !== input.jobId) throw new Error('S3 receipt belongs to a different job');
   if (typeof receipt.manifestDigest !== 'string' || receipt.manifestDigest.toLowerCase() !== expectedDigest) {
     throw new Error('S3 receipt manifestDigest does not match the digest recorded by the Control Plane');
   }
-  if (computeModelManifestDigest(receipt.files) !== expectedDigest) {
+  if (computeArtifactManifestDigest(receipt.files) !== expectedDigest) {
     throw new Error('S3 receipt file list does not hash to its manifestDigest');
   }
   const totalBytes = receipt.files.reduce((sum, f) => sum + f.sizeBytes, 0);
@@ -97,7 +80,7 @@ export async function runModelReleaseVerification(input: ModelReleaseVerificatio
     throw new Error(`Artifacts total ${totalBytes} bytes, above the ${maxBytes}-byte limit of this verifier`);
   }
 
-  const workspace = await mkdtemp(join(input.workRoot ?? tmpdir(), 'hivemind-mf-verify-'));
+  const workspace = await mkdtemp(join(input.workRoot ?? tmpdir(), 'hivemind-compute-verify-'));
   try {
     const artifactDir = join(workspace, 'artifacts');
     const inputsDir = join(workspace, 'inputs');
@@ -107,7 +90,6 @@ export async function runModelReleaseVerification(input: ModelReleaseVerificatio
     for (const file of receipt.files) {
       const relative = safeRelativePath(file.path, 'artifact path');
       const bytes = await input.s3.getObject(`${prefix}/${relative}`, file.sha256);
-      // The port already checks the hash when it can; checking again keeps this guarantee local.
       if (bytes.byteLength !== file.sizeBytes || createHash('sha256').update(bytes).digest('hex') !== file.sha256.toLowerCase()) {
         throw new Error(`Artifact ${relative} does not match its receipt entry`);
       }
@@ -126,7 +108,6 @@ export async function runModelReleaseVerification(input: ModelReleaseVerificatio
       await writeFile(target, bytes);
     }
 
-    // Base environment only (PATH, locale, HOME): none of the task's credential or token variables.
     const env: NodeJS.ProcessEnv = {
       ...processEnvironment(homeDir),
       HIVEMIND_JOB_ID: input.jobId,
@@ -148,7 +129,6 @@ export async function runModelReleaseVerification(input: ModelReleaseVerificatio
       releaseCheckPassed: passed,
       metrics: {
         ...metricsFromStdout(evidence.stdout),
-        // Verifier-measured facts win over anything the command printed under the same name.
         verifierExitCode: evidence.exitCode ?? -1,
         verifierStatus: evidence.status,
         verifierDurationMs: evidence.durationMs,
@@ -167,9 +147,8 @@ export async function runModelReleaseVerification(input: ModelReleaseVerificatio
   }
 }
 
-/** Decodes the job description the Control Plane passes to the verifier task as base64 JSON. */
-export function decodeModelReleaseVerificationSpec(base64: string): Pick<
-  ModelReleaseVerificationInput,
+export function decodeComputeReleaseVerificationSpec(base64: string): Pick<
+  ComputeReleaseVerificationInput,
   'jobId' | 'artifactPrefix' | 'expectedManifestDigest' | 'releaseCheckCommand' | 'inputs'
 > {
   const parsed = JSON.parse(Buffer.from(base64, 'base64').toString('utf8')) as Record<string, unknown>;
@@ -183,11 +162,11 @@ export function decodeModelReleaseVerificationSpec(base64: string): Pick<
     command.length === 0 ||
     command.some((part) => typeof part !== 'string')
   ) {
-    throw new Error('Malformed model release verification spec');
+    throw new Error('Malformed compute release verification spec');
   }
-  const inputs = parsed.inputs as ModelReleaseVerificationInput['inputs'] | undefined;
+  const inputs = parsed.inputs as ComputeReleaseVerificationInput['inputs'] | undefined;
   if (inputs !== undefined && (typeof inputs?.s3Prefix !== 'string' || !Array.isArray(inputs.files))) {
-    throw new Error('Malformed pinned inputs in model release verification spec');
+    throw new Error('Malformed pinned inputs in compute release verification spec');
   }
   return {
     jobId: parsed.jobId,

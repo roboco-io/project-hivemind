@@ -1,19 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  DsqlModelFactoryRepository,
-  importModelFactoryHistoryIfEmpty,
+  DsqlComputeRepository,
+  importComputeHistoryIfEmpty,
   type DsqlClientLike,
   type DsqlPoolLike,
-} from '../packages/adapters/src/aws-dsql-model-factory.js';
+} from '../packages/adapters/src/aws-dsql-compute.js';
 import { DsqlDeliveryRepository } from '../packages/adapters/src/aws-dsql-delivery.js';
 import type { CreateDeliveryTask } from '../packages/contracts/src/delivery.js';
-import type { CreateModelFactoryJob } from '../packages/contracts/src/model-factory.js';
+import type { CreateComputeJob } from '../packages/contracts/src/compute.js';
 import { computeAcceptanceTestDigest, DeliveryStore } from '../packages/core/src/delivery.js';
 import { SqliteDeliveryRepository } from '../packages/core/src/delivery-repository.js';
 import { importHistoryIfEmpty } from '../packages/core/src/document-repository.js';
-import { ModelFactoryStore } from '../packages/core/src/model-factory.js';
-import { SqliteModelFactoryRepository } from '../packages/core/src/model-factory-repository.js';
+import { ComputeStore } from '../packages/core/src/compute.js';
+import { SqliteComputeRepository } from '../packages/core/src/compute-repository.js';
 
 type Row = { value: Record<string, unknown>; version: number };
 
@@ -131,10 +131,10 @@ class FakeDsql implements DsqlPoolLike {
   async end(): Promise<void> {}
 }
 
-function jobInput(prefix: string, maxTotalCostMicros: number): CreateModelFactoryJob {
+function jobInput(prefix: string, maxTotalCostMicros: number): CreateComputeJob {
   return {
     title: 'DSQL repository test',
-    modelId: 'smf-tiny-v1',
+    workloadId: 'smf-tiny-v1',
     repository: 'roboco-io/silicon-model-factory',
     baseCommit: 'a'.repeat(40),
     compute: {
@@ -151,7 +151,7 @@ function jobInput(prefix: string, maxTotalCostMicros: number): CreateModelFactor
 }
 
 function makeRepository(db: FakeDsql) {
-  return new DsqlModelFactoryRepository({
+  return new DsqlComputeRepository({
     endpoint: 'example.dsql.ap-northeast-2.on.aws',
     region: 'ap-northeast-2',
     credentials: () => ({ accessKeyId: 'unused', secretAccessKey: 'unused' }),
@@ -162,36 +162,36 @@ function makeRepository(db: FakeDsql) {
 
 test('DSQL repository stores jobs and events, lists newest write first, and runs each DDL statement in its own transaction', async () => {
   const db = new FakeDsql();
-  const store = new ModelFactoryStore(makeRepository(db), { globalBudgetCapMicros: 1_000_000 });
+  const store = new ComputeStore(makeRepository(db), { globalBudgetCapMicros: 1_000_000 });
   assert.equal(store.storageBackend, 'aurora-dsql');
 
   const a = await store.create(jobInput('run-a', 100_000));
   const b = await store.create(jobInput('run-b', 100_000));
   assert.deepEqual((await store.list()).map((j) => j.id), [b.id, a.id]);
-  await store.approveTraining(a.id, a.approvalFingerprint, 'ok');
+  await store.approveLaunch(a.id, a.approvalFingerprint, 'ok');
   assert.deepEqual((await store.list()).map((j) => j.id), [a.id, b.id], 'an updated job moves to the front, like SQLite rowid order');
   assert.equal((await store.get(a.id)).cost.reservedMicros, 100_000);
   const events = await store.events();
-  assert.deepEqual(events.map((e) => e.type), ['model_factory.training_approved', 'model_factory.created', 'model_factory.created']);
+  assert.deepEqual(events.map((e) => e.type), ['compute.launch_approved', 'compute.created', 'compute.created']);
   assert.ok(events[0]!.sequence > events[1]!.sequence && events[1]!.sequence > events[2]!.sequence);
   assert.equal(db.ddlInsideTransactionWithOtherStatements, false);
   assert.equal(db.statements.filter((s) => s.startsWith('CREATE TABLE')).length, 3, 'schema is created once');
 
   // A throwing body writes nothing and is not retried.
   const jobsBefore = db.tables.hm_mf_jobs!.get(b.id)!.version;
-  await assert.rejects(() => store.approveTraining(b.id, '0'.repeat(64), 'bad'), /does not match/);
+  await assert.rejects(() => store.approveLaunch(b.id, '0'.repeat(64), 'bad'), /does not match/);
   assert.equal(db.tables.hm_mf_jobs!.get(b.id)!.version, jobsBefore);
 });
 
 test('two concurrent approvals cannot both pass the central cost cap on DSQL (write-skew guard)', async () => {
   const db = new FakeDsql();
-  const store = new ModelFactoryStore(makeRepository(db), { globalBudgetCapMicros: 500_000 });
+  const store = new ComputeStore(makeRepository(db), { globalBudgetCapMicros: 500_000 });
   const a = await store.create(jobInput('run-a', 400_000));
   const b = await store.create(jobInput('run-b', 400_000));
 
   const results = await Promise.allSettled([
-    store.approveTraining(a.id, a.approvalFingerprint, 'ok'),
-    store.approveTraining(b.id, b.approvalFingerprint, 'ok'),
+    store.approveLaunch(a.id, a.approvalFingerprint, 'ok'),
+    store.approveLaunch(b.id, b.approvalFingerprint, 'ok'),
   ]);
   assert.deepEqual(results.map((r) => r.status).sort(), ['fulfilled', 'rejected']);
   const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
@@ -205,12 +205,12 @@ test('two concurrent approvals cannot both pass the central cost cap on DSQL (wr
   // the reservations exceed the cap. This shows the result above depends on conflict detection.
   const lossy = new FakeDsql();
   lossy.detectConflicts = false;
-  const unguarded = new ModelFactoryStore(makeRepository(lossy), { globalBudgetCapMicros: 500_000 });
+  const unguarded = new ComputeStore(makeRepository(lossy), { globalBudgetCapMicros: 500_000 });
   const c = await unguarded.create(jobInput('run-c', 400_000));
   const d = await unguarded.create(jobInput('run-d', 400_000));
   const both = await Promise.allSettled([
-    unguarded.approveTraining(c.id, c.approvalFingerprint, 'ok'),
-    unguarded.approveTraining(d.id, d.approvalFingerprint, 'ok'),
+    unguarded.approveLaunch(c.id, c.approvalFingerprint, 'ok'),
+    unguarded.approveLaunch(d.id, d.approvalFingerprint, 'ok'),
   ]);
   assert.deepEqual(both.map((r) => r.status), ['fulfilled', 'fulfilled']);
   assert.equal((await unguarded.ledger()).totalReservedMicros, 800_000);
@@ -218,7 +218,7 @@ test('two concurrent approvals cannot both pass the central cost cap on DSQL (wr
 
 test('DSQL repository retries retryable commit errors and surfaces others', async () => {
   const db = new FakeDsql();
-  const store = new ModelFactoryStore(makeRepository(db), {});
+  const store = new ComputeStore(makeRepository(db), {});
   await store.create(jobInput('run-warmup', 1_000));
   db.failNextCommitWith = '40001';
   const created = await store.create(jobInput('run-retry', 1_000));
@@ -228,27 +228,27 @@ test('DSQL repository retries retryable commit errors and surfaces others', asyn
   assert.equal((await store.list()).length, 2);
 });
 
-test('importModelFactoryHistoryIfEmpty copies the SQLite ledger once and never overwrites an existing DSQL ledger', async () => {
-  const sqlite = new SqliteModelFactoryRepository(':memory:');
-  const local = new ModelFactoryStore(sqlite, { globalBudgetCapMicros: 1_000_000 });
+test('importComputeHistoryIfEmpty copies the SQLite ledger once and never overwrites an existing DSQL ledger', async () => {
+  const sqlite = new SqliteComputeRepository(':memory:');
+  const local = new ComputeStore(sqlite, { globalBudgetCapMicros: 1_000_000 });
   const a = await local.create(jobInput('run-a', 100_000));
   const b = await local.create(jobInput('run-b', 200_000));
-  await local.approveTraining(b.id, b.approvalFingerprint, 'ok');
+  await local.approveLaunch(b.id, b.approvalFingerprint, 'ok');
 
   const db = new FakeDsql();
   const target = makeRepository(db);
-  assert.equal(await importModelFactoryHistoryIfEmpty(sqlite, target), 2);
-  const moved = new ModelFactoryStore(target, { globalBudgetCapMicros: 1_000_000 });
+  assert.equal(await importComputeHistoryIfEmpty(sqlite, target), 2);
+  const moved = new ComputeStore(target, { globalBudgetCapMicros: 1_000_000 });
   assert.deepEqual((await moved.list()).map((j) => j.id), (await local.list()).map((j) => j.id));
   assert.equal((await moved.ledger()).totalReservedMicros, 200_000);
   assert.deepEqual((await moved.events()).map((e) => e.type), (await local.events()).map((e) => e.type));
-  assert.equal((await moved.get(a.id)).status, 'awaiting_training_approval');
+  assert.equal((await moved.get(a.id)).status, 'awaiting_launch_approval');
 
   // Second import is a no-op, even when the local file has changed since.
   await local.create(jobInput('run-c', 100_000));
-  assert.equal(await importModelFactoryHistoryIfEmpty(sqlite, target), 0);
+  assert.equal(await importComputeHistoryIfEmpty(sqlite, target), 0);
   assert.equal((await moved.list()).length, 2);
-  assert.equal(await importModelFactoryHistoryIfEmpty(new SqliteModelFactoryRepository(':memory:'), makeRepository(new FakeDsql())), 0);
+  assert.equal(await importComputeHistoryIfEmpty(new SqliteComputeRepository(':memory:'), makeRepository(new FakeDsql())), 0);
   await local.close();
 });
 

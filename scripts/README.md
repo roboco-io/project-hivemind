@@ -14,6 +14,13 @@
 
 `lib/aws-live.ts`는 실 AWS 실증 스크립트(`aws-*.ts`)가 함께 쓰는 Control Plane 기동·중지, SSM 터널, 유휴 상태 확인을 담는다.
 
+## 프로젝트 부트스트랩 (`npm run project:bootstrap`)
+
+`project-bootstrap.ts`와 `lib/project-bootstrap.ts`는 HIVEMIND 멀티 프로젝트 호스트에 새 프로젝트를 온보딩하는 멱등 CLI다([프로젝트 호스팅 가이드](../docs/guides/project-hosting.md)).
+
+- Control Plane `POST/PATCH /api/projects` 등록·갱신, `0600` 프로젝트 전용 에이전트 토큰 파일 발급(화면 미출력), 비활성 주기 자율 트리거 등록(`--with-trigger`), 대상 저장소 스캐폴딩(`--target-dir`: `hivemind.project.json`, `.mcp.json`, `.codex/config.toml`, `ops/autonomy/*`)과 수동 웹 체크리스트 보고를 수행한다.
+- `--dry-run`은 네트워크·파일 쓰기 없이 실행 계획만 출력한다. 테스트는 `tests/project-bootstrap.test.ts`에 있다.
+
 ## Interface
 
 - `configureHivemindMcp(options: HivemindMcpConfigOptions): HivemindMcpConfigResult`: Codex용 설정을 쓴다. `.codex/config.toml`에 `# BEGIN HIVEMIND MCP (managed)`와 `# END HIVEMIND MCP (managed)` 주석으로 감싼 `[mcp_servers.hivemind]` 블록을 추가하거나 교체한다. [configure-hivemind-mcp.ts:`configureHivemindMcp`]

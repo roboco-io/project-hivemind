@@ -1,20 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ModelFactoryOrchestrator } from '../apps/control-plane/src/model-factory-orchestrator.js';
+import { ComputeOrchestrator } from '../apps/control-plane/src/compute-orchestrator.js';
 import type { Ec2SpotTrainerPort, ExpiredSpotSweepResult } from '../packages/adapters/src/aws-ec2-spot-trainer.js';
 import type { S3ObjectPort } from '../packages/adapters/src/aws-s3-artifacts.js';
-import { runModelFactoryTtlGuard } from '../packages/adapters/src/model-factory-ttl-guard.js';
-import type { CreateModelFactoryJob, ModelFactoryJob } from '../packages/contracts/src/model-factory.js';
-import { calculateActualCostMicros, settleGuardTermination } from '../packages/core/src/model-factory-guard-settlement.js';
-import { ModelFactoryStore } from '../packages/core/src/model-factory.js';
-import type { ModelFactoryRepository } from '../packages/core/src/model-factory-repository.js';
+import { runComputeTtlGuard } from '../packages/adapters/src/compute-ttl-guard.js';
+import type { CreateComputeJob, ComputeJob } from '../packages/contracts/src/compute.js';
+import { calculateActualCostMicros, settleGuardTermination } from '../packages/core/src/compute-guard-settlement.js';
+import { ComputeStore } from '../packages/core/src/compute.js';
+import type { ComputeRepository } from '../packages/core/src/compute-repository.js';
 
 const T0 = Date.parse('2026-11-26T10:00:00.000Z');
 
-function jobInput(prefix: string): CreateModelFactoryJob {
+function jobInput(prefix: string): CreateComputeJob {
   return {
     title: 'TTL guard settlement',
-    modelId: 'smf-tiny-v1',
+    workloadId: 'smf-tiny-v1',
     repository: 'roboco-io/silicon-model-factory',
     baseCommit: 'a'.repeat(40),
     compute: {
@@ -30,9 +30,9 @@ function jobInput(prefix: string): CreateModelFactoryJob {
   };
 }
 
-async function runningJob(store: ModelFactoryStore, prefix: string, instanceId: string): Promise<ModelFactoryJob> {
+async function runningJob(store: ComputeStore, prefix: string, instanceId: string): Promise<ComputeJob> {
   const job = await store.create(jobInput(prefix));
-  await store.approveTraining(job.id, job.approvalFingerprint, 'ok');
+  await store.approveLaunch(job.id, job.approvalFingerprint, 'ok');
   return store.recordInstanceLaunched(job.id, {
     region: 'us-east-2',
     availabilityZone: 'us-east-2a',
@@ -59,7 +59,7 @@ function sweeper(byRegion: Record<string, ExpiredSpotSweepResult['terminated'] |
 
 test('TTL Guard settles a terminated job in the ledger, is idempotent, and ignores unknown jobs and mismatched instances', async () => {
   let clock = T0;
-  const store = new ModelFactoryStore(':memory:', { now: () => clock, globalBudgetCapMicros: 2_000_000 });
+  const store = new ComputeStore(':memory:', { now: () => clock, globalBudgetCapMicros: 2_000_000 });
   try {
     const job = await runningJob(store, 'run-a', 'i-0aaaaaaaaaaaaaaa1');
     const other = await runningJob(store, 'run-b', 'i-0bbbbbbbbbbbbbbb2');
@@ -74,7 +74,7 @@ test('TTL Guard settles a terminated job in the ledger, is idempotent, and ignor
         { instanceId: 'i-0eeeeeeeeeeeeeee5', jobId: null, expiresAt: null, reason: 'no job tag' },
       ],
     });
-    const [summary] = await runModelFactoryTtlGuard({ regions: ['us-east-2'], ec2, store, now: () => clock });
+    const [summary] = await runComputeTtlGuard({ regions: ['us-east-2'], ec2, store, now: () => clock });
     assert.deepEqual(summary!.errors, []);
     assert.equal(summary!.terminated.length, 4);
     assert.deepEqual(summary!.settlements.map((s) => s.outcome), ['settled', 'instance_mismatch', 'job_not_found']);
@@ -86,7 +86,7 @@ test('TTL Guard settles a terminated job in the ledger, is idempotent, and ignor
     assert.equal(settled.instance!.state, 'shutting-down');
     assert.match(settled.instance!.forcedTerminationReason ?? '', /^TTL Guard Lambda forced termination/);
     assert.equal(settled.nextWakeAt, null);
-    assert.equal(settled.status, 'training_running', 'the guard leaves receipt loading and failing to the Control Plane');
+    assert.equal(settled.status, 'running', 'the guard leaves receipt loading and failing to the Control Plane');
     assert.equal((await store.get(other.id)).cost.settledMicros, null);
     const ledger = await store.ledger();
     assert.equal(ledger.totalSettledMicros, 70_000);
@@ -107,7 +107,7 @@ test('TTL Guard settles a terminated job in the ledger, is idempotent, and ignor
         throw new Error(`NoSuchKey: ${key}`);
       },
     };
-    const orchestrator = new ModelFactoryOrchestrator({
+    const orchestrator = new ComputeOrchestrator({
       store,
       s3: emptyS3,
       now: () => clock,
@@ -136,20 +136,20 @@ test('TTL Guard settles a terminated job in the ledger, is idempotent, and ignor
 });
 
 test('TTL Guard keeps terminating when one region or the ledger fails, and works without a ledger', async () => {
-  const store = new ModelFactoryStore(':memory:', { now: () => T0 });
+  const store = new ComputeStore(':memory:', { now: () => T0 });
   const job = await runningJob(store, 'run-c', 'i-0fffffffffffffff6');
   const terminated = [{ instanceId: 'i-0fffffffffffffff6', jobId: job.id, expiresAt: null, reason: 'expired' }];
 
   // Region 1 fails to sweep; region 2 is still swept and settled.
   const partial = sweeper({ 'us-east-1': new Error('EC2 us-east-1 DescribeInstances HTTP 503'), 'us-east-2': terminated });
-  const summaries = await runModelFactoryTtlGuard({ regions: ['us-east-1', 'us-east-2'], ec2: partial.ec2, store, now: () => T0 + 120_000 });
+  const summaries = await runComputeTtlGuard({ regions: ['us-east-1', 'us-east-2'], ec2: partial.ec2, store, now: () => T0 + 120_000 });
   assert.deepEqual(partial.swept, ['us-east-1', 'us-east-2']);
   assert.match(summaries[0]!.errors[0]!, /^sweep: EC2 us-east-1/);
   assert.deepEqual(summaries[1]!.settlements.map((s) => s.outcome), ['settled']);
   await store.close();
 
   // Ledger unreachable: the instance is still reported as terminated and the error is recorded.
-  const brokenRepository: ModelFactoryRepository = {
+  const brokenRepository: ComputeRepository = {
     storageBackend: 'aurora-dsql',
     transaction: async () => {
       throw new Error('connect ETIMEDOUT');
@@ -164,14 +164,14 @@ test('TTL Guard keeps terminating when one region or the ledger fails, and works
     close: async () => undefined,
   };
   const down = sweeper({ 'us-east-2': terminated });
-  const [degraded] = await runModelFactoryTtlGuard({ regions: ['us-east-2'], ec2: down.ec2, store: new ModelFactoryStore(brokenRepository) });
+  const [degraded] = await runComputeTtlGuard({ regions: ['us-east-2'], ec2: down.ec2, store: new ComputeStore(brokenRepository) });
   assert.equal(degraded!.terminated.length, 1);
   assert.deepEqual(degraded!.settlements, []);
-  assert.match(degraded!.errors[0]!, /^settle mf-.*connect ETIMEDOUT/);
+  assert.match(degraded!.errors[0]!, /^settle cmp-.*connect ETIMEDOUT/);
 
   // No ledger configured: terminate only.
   const plain = sweeper({ 'us-east-2': terminated });
-  const [noLedger] = await runModelFactoryTtlGuard({ regions: ['us-east-2'], ec2: plain.ec2 });
+  const [noLedger] = await runComputeTtlGuard({ regions: ['us-east-2'], ec2: plain.ec2 });
   assert.equal(noLedger!.terminated.length, 1);
   assert.deepEqual(noLedger!.settlements, []);
   assert.deepEqual(noLedger!.errors, []);
@@ -182,7 +182,7 @@ test('calculateActualCostMicros applies the 60-second minimum and never exceeds 
     compute: { maxHourlyPriceUsd: 3.6 },
     instance: { launchedAt: new Date(T0).toISOString() },
     cost: { reservedMicros: 100_000 },
-  } as unknown as ModelFactoryJob;
+  } as unknown as ComputeJob;
   assert.deepEqual(calculateActualCostMicros(base, T0 + 5_000), { actualCostMicros: 60_000, instanceSeconds: 60 });
   assert.deepEqual(calculateActualCostMicros(base, T0 + 90_000), { actualCostMicros: 90_000, instanceSeconds: 90 });
   assert.deepEqual(calculateActualCostMicros(base, T0 + 3_600_000), { actualCostMicros: 100_000, instanceSeconds: 3600 });

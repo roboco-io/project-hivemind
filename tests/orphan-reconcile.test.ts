@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DeliveryOrchestrator } from '../apps/control-plane/src/delivery-orchestrator.js';
-import { ModelFactoryOrchestrator } from '../apps/control-plane/src/model-factory-orchestrator.js';
+import { ComputeOrchestrator } from '../apps/control-plane/src/compute-orchestrator.js';
 import type { Ec2SpotTrainerPort } from '../packages/adapters/src/aws-ec2-spot-trainer.js';
 import type { S3ObjectPort } from '../packages/adapters/src/aws-s3-artifacts.js';
 import type { CreateDeliveryTask } from '../packages/contracts/src/delivery.js';
-import type { CreateModelFactoryJob } from '../packages/contracts/src/model-factory.js';
+import type { CreateComputeJob } from '../packages/contracts/src/compute.js';
 import { computeAcceptanceTestDigest, DeliveryStore } from '../packages/core/src/delivery.js';
-import { ModelFactoryStore } from '../packages/core/src/model-factory.js';
+import { ComputeStore } from '../packages/core/src/compute.js';
 
 const T0 = Date.parse('2026-11-27T01:00:00.000Z');
 const emptyS3: S3ObjectPort = {
@@ -146,10 +146,10 @@ test('delivery reconcile leaves tasks without a recorded ECS task alone, and can
   }
 });
 
-function mfInput(): CreateModelFactoryJob {
+function mfInput(): CreateComputeJob {
   return {
     title: 'Vanished instance',
-    modelId: 'smf-tiny-v1',
+    workloadId: 'smf-tiny-v1',
     repository: 'roboco-io/silicon-model-factory',
     baseCommit: 'a'.repeat(40),
     compute: {
@@ -165,9 +165,9 @@ function mfInput(): CreateModelFactoryJob {
   };
 }
 
-test('Model Factory wake settles a job whose instance EC2 no longer lists, bounded by the expiry time, and rethrows other errors', async () => {
+test('Compute wake settles a job whose instance EC2 no longer lists, bounded by the expiry time, and rethrows other errors', async () => {
   const clock = { now: T0 };
-  const store = new ModelFactoryStore(':memory:', { now: () => clock.now });
+  const store = new ComputeStore(':memory:', { now: () => clock.now });
   let describeError: Error | null = new Error('EC2 instance i-0123456789abcdef0 not found in us-east-2');
   const terminated: string[] = [];
   const ec2: Ec2SpotTrainerPort = {
@@ -186,11 +186,11 @@ test('Model Factory wake settles a job whose instance EC2 no longer lists, bound
       return { region, checkedCount: 0, terminated: [] };
     },
   };
-  const orchestrator = new ModelFactoryOrchestrator({ store, ec2, s3: emptyS3, now: () => clock.now });
+  const orchestrator = new ComputeOrchestrator({ store, ec2, s3: emptyS3, now: () => clock.now });
   try {
     const job = await store.create(mfInput());
-    const launched = await orchestrator.approveAndLaunchTraining(job.id, job.approvalFingerprint, 'ok');
-    assert.equal(launched.status, 'training_running');
+    const launched = await orchestrator.approveAndLaunch(job.id, job.approvalFingerprint, 'ok');
+    assert.equal(launched.status, 'running');
 
     // A transient EC2 error is not evidence that the instance ended.
     clock.now = T0 + 60_000;

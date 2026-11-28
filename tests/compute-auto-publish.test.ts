@@ -2,23 +2,24 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import Fastify from 'fastify';
-import { registerModelFactoryRoutes } from '../apps/control-plane/src/model-factory-api.js';
-import { ModelFactoryOrchestrator, type TrustedHfReleasePublisherPort } from '../apps/control-plane/src/model-factory-orchestrator.js';
+import { registerComputeRoutes } from '../apps/control-plane/src/compute-api.js';
+import { ComputeOrchestrator, type TrustedHfReleasePublisherPort } from '../apps/control-plane/src/compute-orchestrator.js';
 import type { Ec2SpotTrainerPort } from '../packages/adapters/src/aws-ec2-spot-trainer.js';
 import type { S3ObjectPort } from '../packages/adapters/src/aws-s3-artifacts.js';
-import { createTrustedHfReleasePublisher } from '../packages/adapters/src/model-factory-hf-publisher.js';
-import type { CreateModelFactoryJob, ModelFactoryJob } from '../packages/contracts/src/model-factory.js';
-import { ModelFactoryStore, autoPublishAllowed, computeModelManifestDigest } from '../packages/core/src/model-factory.js';
+import { createTrustedHfReleasePublisher } from '../packages/adapters/src/compute-hf-publisher.js';
+import type { CreateComputeJob, ComputeJob } from '../packages/contracts/src/compute.js';
+import { ComputeStore, autoPublishAllowed, computeArtifactManifestDigest } from '../packages/core/src/compute.js';
+import { ProjectStore } from '../packages/core/src/projects.js';
 
 const OP = 'o'.repeat(32);
 const WK = 'w'.repeat(32);
 const PREFIX = 'models/smf-tiny-v1/runs/run-01';
 const sha = (text: string) => createHash('sha256').update(text).digest('hex');
 
-function jobInput(release: Partial<CreateModelFactoryJob['releasePolicy']> = {}): CreateModelFactoryJob {
+function jobInput(release: Partial<CreateComputeJob['releasePolicy']> = {}): CreateComputeJob {
   return {
     title: 'Auto publish',
-    modelId: 'smf-tiny-v1',
+    workloadId: 'smf-tiny-v1',
     repository: 'roboco-io/silicon-model-factory',
     baseCommit: 'a'.repeat(40),
     compute: {
@@ -50,7 +51,7 @@ const ec2: Ec2SpotTrainerPort = {
 };
 
 function harness(prefixes: string[] = ['roboco-io/']) {
-  const store = new ModelFactoryStore(':memory:', { globalBudgetCapMicros: 1_000_000, autoPublishRepoPrefixes: prefixes });
+  const store = new ComputeStore(':memory:', { globalBudgetCapMicros: 1_000_000, autoPublishRepoPrefixes: prefixes });
   const objects = new Map<string, Uint8Array>();
   const s3: S3ObjectPort = {
     async putObject(key, body) { objects.set(key, body); return { sha256: '' }; },
@@ -65,25 +66,26 @@ function harness(prefixes: string[] = ['roboco-io/']) {
       return { mode: 'hf_release', repository: job.releasePolicy.hfRepository!, revision: 'main', commitSha: 'f'.repeat(40), url: 'https://huggingface.co/x', manifestDigest: receipt.manifestDigest, publishedAt: '2026-11-28T00:00:00Z', verifiedFiles: receipt.files.length };
     },
   };
-  const orchestrator = new ModelFactoryOrchestrator({ store, ec2, s3, hfPublisher: publisher, notify: async (kind) => { notes.push(kind); } });
+  const orchestrator = new ComputeOrchestrator({ store, ec2, s3, hfPublisher: publisher, notify: async (kind) => { notes.push(kind); } });
+  const projects = new ProjectStore(':memory:');
   const app = Fastify();
-  registerModelFactoryRoutes(app, { store, operatorToken: OP, workerToken: WK, orchestrator });
+  registerComputeRoutes(app, { auth: { operatorToken: OP, workerToken: WK, projects }, store, projects, orchestrator });
   return { store, orchestrator, objects, calls, notes, app };
 }
 
 /** Trains a job to `evaluating` with a receipt in S3. */
-async function evaluating(h: ReturnType<typeof harness>, input = jobInput()): Promise<{ job: ModelFactoryJob; manifestDigest: string }> {
+async function evaluating(h: ReturnType<typeof harness>, input = jobInput()): Promise<{ job: ComputeJob; manifestDigest: string }> {
   const created = await h.store.create(input);
-  await h.orchestrator.approveAndLaunchTraining(created.id, created.approvalFingerprint, 'ok');
+  await h.orchestrator.approveAndLaunch(created.id, created.approvalFingerprint, 'ok');
   const files = [{ path: 'model.safetensors', sha256: sha('w'), sizeBytes: 1 }];
-  const manifestDigest = computeModelManifestDigest(files);
+  const manifestDigest = computeArtifactManifestDigest(files);
   h.objects.set(`${PREFIX}/receipt.json`, new TextEncoder().encode(JSON.stringify({ version: 1, jobId: created.id, s3Bucket: 'b', s3Prefix: PREFIX, manifestDigest, files, recordedAt: '2026-11-28T00:00:00Z' })));
   const job = await h.orchestrator.wakeJob(created.id);
   assert.equal(job.status, 'evaluating');
   return { job, manifestDigest };
 }
 
-async function settled(store: ModelFactoryStore, id: string, check: (job: ModelFactoryJob) => boolean): Promise<ModelFactoryJob> {
+async function settled(store: ComputeStore, id: string, check: (job: ComputeJob) => boolean): Promise<ComputeJob> {
   for (let i = 0; i < 100; i += 1) {
     const job = await store.get(id);
     if (check(job)) return job;
@@ -95,12 +97,12 @@ async function settled(store: ModelFactoryStore, id: string, check: (job: ModelF
 const attestation = (manifestDigest: string, passed = true) => ({ manifestDigest, releaseCheckPassed: passed, metrics: {}, summary: 'release-check', verifiedAt: '2026-11-28T00:00:00Z' });
 
 test('auto-publish is refused at registration outside the operator prefixes', async () => {
-  await assert.rejects(new ModelFactoryStore(':memory:').create(jobInput()), (e: { statusCode?: number }) => e.statusCode === 403);
-  await assert.rejects(new ModelFactoryStore(':memory:', { autoPublishRepoPrefixes: ['other-org/'] }).create(jobInput()), (e: { statusCode?: number }) => e.statusCode === 403);
-  const ok = await new ModelFactoryStore(':memory:', { autoPublishRepoPrefixes: ['roboco-io/'] }).create(jobInput());
+  await assert.rejects(new ComputeStore(':memory:').create(jobInput()), (e: { statusCode?: number }) => e.statusCode === 403);
+  await assert.rejects(new ComputeStore(':memory:', { autoPublishRepoPrefixes: ['other-org/'] }).create(jobInput()), (e: { statusCode?: number }) => e.statusCode === 403);
+  const ok = await new ComputeStore(':memory:', { autoPublishRepoPrefixes: ['roboco-io/'] }).create(jobInput());
   assert.equal(ok.releasePolicy.autoPublish, true);
   // Without autoPublish the fingerprint is the same as before the feature existed.
-  const plain = await new ModelFactoryStore(':memory:').create(jobInput({ autoPublish: undefined }));
+  const plain = await new ComputeStore(':memory:').create(jobInput({ autoPublish: undefined }));
   assert.equal('autoPublish' in plain.releasePolicy, false);
   assert.notEqual(ok.approvalFingerprint, plain.approvalFingerprint);
   assert.equal(autoPublishAllowed({ mode: 's3_artifact_only', visibility: 'private', releaseCheckCommand: ['x'], autoPublish: true }, []), true);
@@ -111,7 +113,7 @@ test('an independent verifier pass publishes without an operator, after creating
   const h = harness();
   t.after(() => h.app.close());
   const { job, manifestDigest } = await evaluating(h);
-  const res = await h.app.inject({ method: 'POST', url: `/api/model-factory/jobs/${job.id}/verifier-attestation`, headers: { authorization: `Bearer ${WK}` }, payload: attestation(manifestDigest) });
+  const res = await h.app.inject({ method: 'POST', url: `/api/compute/jobs/${job.id}/verifier-attestation`, headers: { authorization: `Bearer ${WK}` }, payload: attestation(manifestDigest) });
   assert.equal(res.statusCode, 200);
   const released = await settled(h.store, job.id, (j) => j.status === 'released');
   assert.equal(released.status, 'released');
@@ -119,7 +121,7 @@ test('an independent verifier pass publishes without an operator, after creating
   assert.equal(released.publication?.approvedBy, 'auto_publish_policy');
   assert.equal(released.publication?.verifiedFiles, 1);
   assert.match(String(released.releaseDecision?.reason), /Auto-publish policy/);
-  assert.ok((await h.store.events(job.id)).some((e) => e.type === 'model_factory.release_auto_approved'));
+  assert.ok((await h.store.events(job.id)).some((e) => e.type === 'compute.release_auto_approved'));
   assert.deepEqual(h.notes, ['release_published']);
 });
 
@@ -128,7 +130,7 @@ test('a failed check, an operator self-report, or a plain job is never published
     const h = harness();
     t.after(() => h.app.close());
     const { job, manifestDigest } = await evaluating(h, variant === 'plain' ? jobInput({ autoPublish: undefined }) : jobInput());
-    const url = variant === 'self-reported' ? `/api/model-factory/jobs/${job.id}/verify-release` : `/api/model-factory/jobs/${job.id}/verifier-attestation`;
+    const url = variant === 'self-reported' ? `/api/compute/jobs/${job.id}/verify-release` : `/api/compute/jobs/${job.id}/verifier-attestation`;
     const token = variant === 'self-reported' ? OP : WK;
     await h.app.inject({ method: 'POST', url, headers: { authorization: `Bearer ${token}` }, payload: attestation(manifestDigest, variant !== 'failed') });
     await h.orchestrator.wakeDueJobs();
@@ -150,7 +152,7 @@ test('a verifier pass recorded while nothing published it is picked up by the pe
 });
 
 test('narrowing the prefixes after registration stops an auto-publish', async () => {
-  const strict = new ModelFactoryStore(':memory:', { autoPublishRepoPrefixes: [] });
+  const strict = new ComputeStore(':memory:', { autoPublishRepoPrefixes: [] });
   const loose = harness();
   const { job, manifestDigest } = await evaluating(loose);
   await loose.store.recordReleaseAttestation(job.id, attestation(manifestDigest), 'independent_verifier');

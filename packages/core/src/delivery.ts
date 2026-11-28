@@ -27,6 +27,7 @@ import type {
 import type { RegionPlacementDecision, RegionRoutingPolicy } from '../../contracts/src/multi-region.js';
 import { validateRegionRoutingPolicy } from './multi-region.js';
 import { DomainError, text } from './store.js';
+import { DEFAULT_PROJECT_ID, validateProjectId } from './projects.js';
 
 const HEX40 = /^[a-f0-9]{40}$/;
 const HEX64 = /^[a-f0-9]{64}$/;
@@ -469,8 +470,9 @@ export class DeliveryStore {
     this.txState().newEvents.push({ taskId, type, at: this.timestamp(), data } as DeliveryEventDraft);
   }
 
-  async list(): Promise<DeliveryTask[]> {
-    return this.repository.listDocs();
+  async list(projectId?: string): Promise<DeliveryTask[]> {
+    const docs = await this.repository.listDocs();
+    return projectId ? docs.filter((t) => (t.projectId ?? DEFAULT_PROJECT_ID) === projectId) : docs;
   }
 
   async get(id: string): Promise<DeliveryTask> {
@@ -483,8 +485,15 @@ export class DeliveryStore {
     return (await this.repository.listEvents(200)).filter((event) => (taskId ? event.taskId === taskId : true));
   }
 
-  async create(input: CreateDeliveryTask): Promise<DeliveryTask> {
+  async create(
+    input: CreateDeliveryTask,
+    policyContext: { extraAutoMergeRepositories?: readonly string[]; allowAgentAccess?: boolean } = {},
+  ): Promise<DeliveryTask> {
     return this.tx(() => {
+      const projectId =
+        input.projectId === undefined || input.projectId === DEFAULT_PROJECT_ID
+          ? DEFAULT_PROJECT_ID
+          : validateProjectId(input.projectId);
       const title = text(input.title, 'title', 160);
       const instructions = text(input.instructions, 'instructions', 12_000);
       const provider = validateProvider(input.provider);
@@ -496,10 +505,18 @@ export class DeliveryStore {
       }
       const acceptance = validateAcceptanceTestSpec(input.acceptance);
       const delivery = validateDeliveryPolicy(input.delivery);
-      if (delivery.autoMerge && !this.autoMergeRepositories.includes(delivery.repository)) {
+      const allowedAutoMerge = new Set([
+        ...this.autoMergeRepositories,
+        ...(policyContext.extraAutoMergeRepositories ?? []),
+      ]);
+      if (delivery.autoMerge && !allowedAutoMerge.has(delivery.repository)) {
         throw new DomainError('delivery.autoMerge is not allowed for this repository on this Control Plane', 403);
       }
-      if ((input.executionPolicy as { hivemindAgentAccess?: unknown } | undefined)?.hivemindAgentAccess === true && !this.autoMergeRepositories.includes(delivery.repository)) {
+      if (
+        (input.executionPolicy as { hivemindAgentAccess?: unknown } | undefined)?.hivemindAgentAccess === true &&
+        !allowedAutoMerge.has(delivery.repository) &&
+        policyContext.allowAgentAccess !== true
+      ) {
         throw new DomainError('executionPolicy.hivemindAgentAccess is not allowed for this repository on this Control Plane', 403);
       }
       const bundle = input.bundle === undefined ? undefined : validateBundleManifest(input.bundle, acceptance.baseCommit);
@@ -520,6 +537,7 @@ export class DeliveryStore {
       const at = this.timestamp();
       const task: DeliveryTask = {
         id: `dlv-${randomUUID()}`,
+        projectId,
         title,
         instructions,
         provider,

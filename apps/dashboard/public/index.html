@@ -30,36 +30,42 @@
           <span class="nav-key">1</span>
           <span class="nav-label">개요 HUD</span>
         </button>
-        <button id="tab-inbox" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-inbox" data-tab="inbox">
+        <button id="tab-projects" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-projects" data-tab="projects">
           <span class="nav-key">2</span>
+          <span class="nav-label">프로젝트</span>
+          <span id="tab-badge-projects" class="nav-badge">0</span>
+        </button>
+        <button id="tab-inbox" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-inbox" data-tab="inbox">
+          <span class="nav-key">3</span>
           <span class="nav-label">승인 인박스</span>
           <span id="tab-badge-inbox" class="nav-badge badge-attention">0</span>
         </button>
         <button id="tab-delivery" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-delivery" data-tab="delivery">
-          <span class="nav-key">3</span>
+          <span class="nav-key">4</span>
           <span class="nav-label">SW 전달</span>
           <span id="tab-badge-delivery" class="nav-badge">0</span>
         </button>
-        <button id="tab-model-factory" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-model-factory" data-tab="model-factory">
-          <span class="nav-key">4</span>
-          <span class="nav-label">Model Factory</span>
-          <span id="tab-badge-mf" class="nav-badge">0</span>
+        <button id="tab-compute" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-compute" data-tab="compute">
+          <span class="nav-key">5</span>
+          <span class="nav-label">Spot 컴퓨팅</span>
+          <span id="tab-badge-compute" class="nav-badge">0</span>
         </button>
         <button id="tab-collab" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-collab" data-tab="collab">
-          <span class="nav-key">5</span>
+          <span class="nav-key">6</span>
           <span class="nav-label">병렬 협업</span>
           <span id="tab-badge-collab" class="nav-badge">0</span>
         </button>
         <button id="tab-costs" class="nav-item" type="button" role="tab" aria-selected="false" aria-controls="panel-costs" data-tab="costs">
-          <span class="nav-key">6</span>
+          <span class="nav-key">7</span>
           <span class="nav-label">비용 분석</span>
         </button>
       </nav>
 
       <div class="sidebar-storage" aria-label="저장소 연결 상태">
         <p class="sidebar-heading">저장소 백엔드</p>
+        <div class="storage-row"><span>프로젝트</span><strong id="monitor-backend-projects">확인 중</strong></div>
         <div class="storage-row"><span>SW 전달</span><strong id="monitor-backend-delivery">확인 중</strong></div>
-        <div class="storage-row"><span>Model Factory</span><strong id="monitor-backend-mf">확인 중</strong></div>
+        <div class="storage-row"><span>Spot 컴퓨팅</span><strong id="monitor-backend-compute">확인 중</strong></div>
         <div class="storage-row"><span>병렬 협업</span><strong id="monitor-backend-collab">확인 중</strong></div>
       </div>
 
@@ -68,7 +74,7 @@
           <span class="nav-label">로컬 · 레거시 도구</span>
           <span id="tab-badge-legacy" class="nav-badge">0</span>
         </button>
-        <p class="shortcut-hint">단축키: <kbd>r</kbd> 갱신 · <kbd>/</kbd> 검색 · <kbd>Esc</kbd> 닫기 · <kbd>1</kbd>-<kbd>6</kbd> 이동</p>
+        <p class="shortcut-hint">단축키: <kbd>r</kbd> 갱신 · <kbd>/</kbd> 검색 · <kbd>Esc</kbd> 닫기 · <kbd>1</kbd>-<kbd>7</kbd> 이동</p>
       </div>
     </aside>
 
@@ -78,6 +84,10 @@
       <header class="hud-topbar">
         <div class="hud-left">
           <h1 id="page-title" class="hud-title">개요 HUD</h1>
+          <label class="sr-only" for="project-filter">프로젝트 필터</label>
+          <select id="project-filter" class="hud-select hud-project-select" aria-label="호스트 프로젝트 필터">
+            <option value="all" selected>전체 프로젝트</option>
+          </select>
           <span id="monitor-mode-badge" class="pill">연결 확인 중</span>
           <div class="hud-conn">
             <span id="connection-status" role="status">연결 대기</span>
@@ -139,22 +149,22 @@
             <article class="kpi-card kpi-running">
               <p class="kpi-label">실행 중 워크로드</p>
               <strong id="kpi-active-total" class="kpi-value">0</strong>
-              <p id="kpi-active-detail" class="kpi-sub">SW 전달 0 · 학습 0 · 협업 활성 0</p>
+              <p id="kpi-active-detail" class="kpi-sub">SW 전달 0 · 컴퓨팅 0 · 협업 활성 0</p>
             </article>
             <article class="kpi-card kpi-card-attention">
               <p class="kpi-label">승인 · 검토 대기</p>
               <strong id="kpi-attention-total" class="kpi-value">0</strong>
-              <p id="kpi-attention-detail" class="kpi-sub">SW 전달 0 · Model Factory 0</p>
+              <p id="kpi-attention-detail" class="kpi-sub">SW 전달 0 · Spot 컴퓨팅 0</p>
             </article>
             <article class="kpi-card kpi-budget">
-              <p class="kpi-label">Model Factory 잔여 예산</p>
-              <strong id="kpi-mf-remaining" class="kpi-value">미확정</strong>
-              <p id="kpi-mf-cap-detail" class="kpi-sub">중앙 상한 확인 중</p>
+              <p class="kpi-label">Spot 컴퓨팅 잔여 예산</p>
+              <strong id="kpi-compute-remaining" class="kpi-value">미확정</strong>
+              <p id="kpi-compute-cap-detail" class="kpi-sub">중앙 상한 확인 중</p>
             </article>
             <article class="kpi-card">
-              <p class="kpi-label">Model Factory 정산 · 예약</p>
-              <strong id="kpi-mf-committed" class="kpi-value">미확정</strong>
-              <p id="kpi-mf-committed-detail" class="kpi-sub">정산 추정 $0.00 · 예약 상한 $0.00</p>
+              <p class="kpi-label">Spot 컴퓨팅 정산 · 예약</p>
+              <strong id="kpi-compute-committed" class="kpi-value">미확정</strong>
+              <p id="kpi-compute-committed-detail" class="kpi-sub">정산 추정 $0.00 · 예약 상한 $0.00</p>
             </article>
           </div>
 
@@ -177,7 +187,7 @@
             <section class="monitor-card" aria-labelledby="budget-monitor-title">
               <div class="section-title">
                 <div>
-                  <p class="context">중앙 예산 원장 · Model Factory</p>
+                  <p class="context">중앙 예산 원장 · Spot 컴퓨팅</p>
                   <h2 id="budget-monitor-title">예산 사용률 및 비용 추이</h2>
                 </div>
                 <div class="toolbar-actions">
@@ -218,11 +228,11 @@
                   </div>
                   <div class="subsystem-row">
                     <div class="subsystem-head">
-                      <strong>Model Factory (EC2 Spot · 검증 · 공개)</strong>
-                      <button id="jump-mf" type="button" class="secondary compact-btn">열기</button>
+                      <strong>Spot 컴퓨팅 (EC2 CPU/GPU · 검증 · 공개)</strong>
+                      <button id="jump-compute" type="button" class="secondary compact-btn">열기</button>
                     </div>
-                    <p id="overview-mf-instances" class="help">실행 중 인스턴스 확인 중</p>
-                    <div id="overview-mf-badges" class="status-badges"></div>
+                    <p id="overview-compute-instances" class="help">실행 중 인스턴스 확인 중</p>
+                    <div id="overview-compute-badges" class="status-badges"></div>
                   </div>
                   <div class="subsystem-row">
                     <div class="subsystem-head">
@@ -261,8 +271,9 @@
               <div class="event-controls">
                 <select id="events-source-filter" class="hud-select" aria-label="이벤트 서브시스템 필터">
                   <option value="all">전체 서브시스템</option>
+                  <option value="projects">프로젝트</option>
                   <option value="delivery">SW 전달</option>
-                  <option value="mf">Model Factory</option>
+                  <option value="compute">Spot 컴퓨팅</option>
                 </select>
                 <label class="inline-check" for="events-errors-only">
                   <input id="events-errors-only" type="checkbox">
@@ -277,13 +288,87 @@
           </section>
         </section>
 
-        <!-- 2. APPROVAL INBOX TAB -->
+        <!-- 2. HOSTED PROJECTS TAB -->
+        <section id="panel-projects" class="tab-panel" role="tabpanel" aria-labelledby="tab-projects" hidden>
+          <div class="toolbar">
+            <div id="projects-filters" class="filter-group" role="group" aria-label="프로젝트 상태 필터">
+              <button type="button" class="filter-btn active" data-filter="all">전체</button>
+              <button type="button" class="filter-btn" data-filter="active">활성</button>
+              <button type="button" class="filter-btn" data-filter="paused">일시정지</button>
+              <button type="button" class="filter-btn" data-filter="archived">보관</button>
+            </div>
+            <div class="toolbar-actions">
+              <span id="projects-count-label" class="quiet">0개 프로젝트</span>
+              <button id="projects-create-toggle" type="button" class="compact-btn">+ 새 프로젝트 등록</button>
+            </div>
+          </div>
+
+          <section id="project-token-banner" class="token-once-banner" role="status" hidden>
+            <div class="section-title">
+              <div>
+                <p class="context">프로젝트 전용 에이전트 토큰 (1회 표시 · 저장소에 보관하지 마세요)</p>
+                <strong id="project-token-banner-title"></strong>
+              </div>
+              <button id="project-token-dismiss" type="button" class="secondary compact-btn">닫고 지우기</button>
+            </div>
+            <code id="project-token-value" class="token-once-value"></code>
+            <p class="help">이 값은 지금 한 번만 표시됩니다. <code>~/.hivemind/projects/&lt;projectId&gt;/agent-token.json</code> (권한 0600)에 저장하세요.</p>
+          </section>
+
+          <section id="project-create-panel" class="monitor-card" hidden>
+            <div class="section-title">
+              <div>
+                <p class="context">멀티 프로젝트 호스트 등록</p>
+                <h2>새 호스트 프로젝트 등록</h2>
+              </div>
+              <button id="project-create-cancel" type="button" class="secondary compact-btn">접기</button>
+            </div>
+            <form id="project-create-form" class="project-form-grid">
+              <label for="proj-id">프로젝트 ID
+                <input id="proj-id" type="text" required pattern="[a-z0-9][a-z0-9-]{1,48}" placeholder="silicon-model-factory">
+              </label>
+              <label for="proj-name">표시 이름
+                <input id="proj-name" type="text" required maxlength="120" placeholder="Silicon Model Factory">
+              </label>
+              <label for="proj-template">템플릿 프리셋
+                <select id="proj-template">
+                  <option value="generic">generic (범용 에이전트·컴퓨팅)</option>
+                  <option value="model-factory">model-factory (GPU 학습·HF 공개·자율 루프)</option>
+                  <option value="sw-delivery">sw-delivery (SW 전달·PR·자율 루프)</option>
+                  <option value="research-collab">research-collab (조사·병렬 협업·배치)</option>
+                </select>
+              </label>
+              <label for="proj-budget">컴퓨팅 예산 상한 (USD)
+                <input id="proj-budget" type="number" min="0" max="10000" step="1" value="100">
+              </label>
+              <label class="wide" for="proj-repos">허용 GitHub 저장소 (쉼표 구분)
+                <input id="proj-repos" type="text" placeholder="roboco-io/my-project, roboco-io/another-repo">
+              </label>
+              <label class="wide" for="proj-desc">설명
+                <input id="proj-desc" type="text" maxlength="1000" placeholder="이 프로젝트가 HIVEMIND 위에서 수행하는 역할">
+              </label>
+              <label class="checkbox-label wide" for="proj-automerge">
+                <input id="proj-automerge" type="checkbox">
+                <span>등록한 저장소에서 보호 경로 외 자동 병합(autoMerge) 허용</span>
+              </label>
+              <div class="actions wide">
+                <button id="project-create-submit" type="submit">프로젝트 등록</button>
+              </div>
+            </form>
+          </section>
+
+          <div id="projects-list" class="project-cards-grid">
+            <p class="empty">등록된 호스트 프로젝트가 없습니다. 상단에서 등록하거나 <code>npm run project:bootstrap</code>을 실행하세요.</p>
+          </div>
+        </section>
+
+        <!-- 3. APPROVAL INBOX TAB -->
         <section id="panel-inbox" class="tab-panel" role="tabpanel" aria-labelledby="tab-inbox" hidden>
           <div class="toolbar">
             <div id="inbox-filters" class="filter-group" role="group" aria-label="승인 인박스 필터">
               <button type="button" class="filter-btn active" data-filter="all">전체 대기</button>
               <button type="button" class="filter-btn" data-filter="delivery">SW 전달</button>
-              <button type="button" class="filter-btn" data-filter="mf">Model Factory</button>
+              <button type="button" class="filter-btn" data-filter="compute">Spot 컴퓨팅</button>
             </div>
             <span id="inbox-count-label" class="quiet">0건 대기 중</span>
           </div>
@@ -409,82 +494,82 @@
           </div>
         </section>
 
-        <!-- 4. MODEL FACTORY TAB -->
-        <section id="panel-model-factory" class="tab-panel" role="tabpanel" aria-labelledby="tab-model-factory" hidden>
+        <!-- 5. SPOT COMPUTE TAB -->
+        <section id="panel-compute" class="tab-panel" role="tabpanel" aria-labelledby="tab-compute" hidden>
           <div class="toolbar">
-            <div id="mf-filters" class="filter-group" role="group" aria-label="Model Factory 상태 필터">
+            <div id="compute-filters" class="filter-group" role="group" aria-label="Spot 컴퓨팅 상태 필터">
               <button type="button" class="filter-btn active" data-filter="all">전체</button>
-              <button type="button" class="filter-btn" data-filter="active">학습 · 평가 중</button>
+              <button type="button" class="filter-btn" data-filter="active">실행 · 평가 중</button>
               <button type="button" class="filter-btn" data-filter="attention">승인 대기</button>
               <button type="button" class="filter-btn" data-filter="terminal">종료</button>
             </div>
             <div class="toolbar-actions">
-              <input id="mf-search" class="search-input" type="search" placeholder="모델·작업 검색…" aria-label="Model Factory 작업 검색">
-              <span id="mf-inline-budget" class="quiet">잔여 예산 확인 중</span>
-              <button id="mf-sweep-btn" type="button" class="secondary compact-btn">만료 정리 · 상태 갱신</button>
+              <input id="compute-search" class="search-input" type="search" placeholder="워크로드·프로젝트 검색…" aria-label="Spot 컴퓨팅 작업 검색">
+              <span id="compute-inline-budget" class="quiet">잔여 예산 확인 중</span>
+              <button id="compute-sweep-btn" type="button" class="secondary compact-btn">만료 정리 · 상태 갱신</button>
             </div>
           </div>
 
           <div class="workspace">
-            <aside class="task-sidebar" aria-label="Model Factory 작업 목록">
-              <div id="mf-list" class="task-list"><p class="empty">등록된 Model Factory 작업이 없습니다.</p></div>
+            <aside class="task-sidebar" aria-label="Spot 컴퓨팅 작업 목록">
+              <div id="compute-list" class="task-list"><p class="empty">등록된 Spot 컴퓨팅 작업이 없습니다.</p></div>
             </aside>
             <div class="main-panel">
-              <section id="mf-empty" class="panel empty-panel">
-                <h2>Model Factory 작업을 선택하세요</h2>
-                <p class="intro">왼쪽 목록에서 학습 작업을 선택하면 파이프라인 단계, 예약·정산 비용, EC2 스팟 인스턴스 수명(TTL), 배치 계획, 산출물 영수증, 독립 검증 결과와 승인·중단 제어를 확인할 수 있습니다.</p>
+              <section id="compute-empty" class="panel empty-panel">
+                <h2>Spot 컴퓨팅 작업을 선택하세요</h2>
+                <p class="intro">왼쪽 목록에서 작업을 선택하면 소속 프로젝트, 파이프라인 단계, 예약·정산 비용, EC2 스팟 인스턴스 수명(TTL), 배치 계획, 산출물 영수증, 독립 검증 결과와 승인·중단 제어를 확인할 수 있습니다.</p>
               </section>
-              <section id="mf-detail" class="panel" hidden>
+              <section id="compute-detail" class="panel" hidden>
                 <div class="panel-heading">
                   <div>
-                    <p id="mf-id" class="context"></p>
-                    <h2 id="mf-title"></h2>
+                    <p id="cmp-id" class="context"></p>
+                    <h2 id="cmp-title"></h2>
                   </div>
-                  <span id="mf-status" class="pill"></span>
+                  <span id="cmp-status" class="pill"></span>
                 </div>
-                <div id="mf-stepper" class="stepper-host"></div>
-                <p id="mf-wait-reason" class="help" hidden></p>
+                <div id="cmp-stepper" class="stepper-host"></div>
+                <p id="cmp-wait-reason" class="help" hidden></p>
 
                 <dl class="task-facts">
-                  <div><dt>모델 ID</dt><dd id="mf-model-id"></dd></div>
-                  <div><dt>저장소 · 기준 커밋</dt><dd id="mf-repo"></dd></div>
-                  <div><dt>인스턴스 유형 · 리전</dt><dd id="mf-compute"></dd></div>
-                  <div><dt>예약 상한 (최대 확보분)</dt><dd id="mf-reserved"></dd></div>
-                  <div><dt>정산 추정치 (실청구 아님)</dt><dd id="mf-settled"></dd></div>
-                  <div><dt>시간당 상한 · 실행 시간</dt><dd id="mf-rate"></dd></div>
-                  <div><dt>공개 정책</dt><dd id="mf-release-policy"></dd></div>
-                  <div><dt>다음 깨우기 시각</dt><dd id="mf-next-wake"></dd></div>
-                  <div><dt>최근 갱신</dt><dd id="mf-updated"></dd></div>
+                  <div><dt>프로젝트 · 워크로드 ID</dt><dd id="cmp-workload-id"></dd></div>
+                  <div><dt>저장소 · 기준 커밋</dt><dd id="cmp-repo"></dd></div>
+                  <div><dt>인스턴스 유형 · 리전</dt><dd id="cmp-compute"></dd></div>
+                  <div><dt>예약 상한 (최대 확보분)</dt><dd id="cmp-reserved"></dd></div>
+                  <div><dt>정산 추정치 (실청구 아님)</dt><dd id="cmp-settled"></dd></div>
+                  <div><dt>시간당 상한 · 실행 시간</dt><dd id="cmp-rate"></dd></div>
+                  <div><dt>공개 정책</dt><dd id="cmp-release-policy"></dd></div>
+                  <div><dt>다음 깨우기 시각</dt><dd id="cmp-next-wake"></dd></div>
+                  <div><dt>최근 갱신</dt><dd id="cmp-updated"></dd></div>
                 </dl>
 
-                <p id="mf-outcome-banner" class="evidence-warning" hidden></p>
+                <p id="cmp-outcome-banner" class="evidence-warning" hidden></p>
 
-                <section id="mf-action-section" class="decision-panel" hidden>
-                  <h3 id="mf-action-title">운영자 결정</h3>
-                  <p id="mf-action-desc"></p>
-                  <p id="mf-fingerprint-row" class="fingerprint-box" hidden></p>
-                  <div id="mf-quick-actions" class="actions" hidden>
-                    <button id="mf-btn-wake" type="button" class="secondary" hidden>인스턴스 상태 확인 (Wake)</button>
-                    <button id="mf-btn-verifier" type="button" class="secondary" hidden>독립 검증기 기동 (Fargate Spot)</button>
+                <section id="cmp-action-section" class="decision-panel" hidden>
+                  <h3 id="cmp-action-title">운영자 결정</h3>
+                  <p id="cmp-action-desc"></p>
+                  <p id="cmp-fingerprint-row" class="fingerprint-box" hidden></p>
+                  <div id="cmp-quick-actions" class="actions" hidden>
+                    <button id="cmp-btn-wake" type="button" class="secondary" hidden>인스턴스 상태 확인 (Wake)</button>
+                    <button id="cmp-btn-verifier" type="button" class="secondary" hidden>독립 검증기 기동 (Fargate Spot)</button>
                   </div>
-                  <form id="mf-action-form">
-                    <div id="mf-release-fields" class="inline-fields" hidden>
-                      <label class="checkbox-label" for="mf-opened-raw">
-                        <input id="mf-opened-raw" type="checkbox">
+                  <form id="cmp-action-form">
+                    <div id="cmp-release-fields" class="inline-fields" hidden>
+                      <label class="checkbox-label" for="cmp-opened-raw">
+                        <input id="cmp-opened-raw" type="checkbox">
                         <span>원본 산출물을 직접 열람했습니다 (openedRawArtifacts)</span>
                       </label>
-                      <label class="compact-input" for="mf-duration-min">검토 소요 시간 (분)
-                        <input id="mf-duration-min" type="number" min="0" max="10080" step="0.1" value="1">
+                      <label class="compact-input" for="cmp-duration-min">검토 소요 시간 (분)
+                        <input id="cmp-duration-min" type="number" min="0" max="10080" step="0.1" value="1">
                       </label>
                     </div>
-                    <label for="mf-reason">결정 사유
-                      <textarea id="mf-reason" rows="2" maxlength="2000" required placeholder="승인·반려·중단 사유를 기록하세요."></textarea>
+                    <label for="cmp-reason">결정 사유
+                      <textarea id="cmp-reason" rows="2" maxlength="2000" required placeholder="승인·반려·중단 사유를 기록하세요."></textarea>
                     </label>
                     <div class="actions">
-                      <button id="mf-btn-approve-training" type="submit" value="approve_training" hidden>학습 승인 (예산 예약·EC2 기동)</button>
-                      <button id="mf-btn-approve-release" type="submit" value="approve_release" hidden>공개 승인</button>
-                      <button id="mf-btn-reject-release" type="submit" value="reject_release" class="secondary" hidden>공개 반려</button>
-                      <button id="mf-btn-cancel" type="submit" value="cancel" class="danger" hidden>작업 중단</button>
+                      <button id="cmp-btn-approve-launch" type="submit" value="approve_launch" hidden>기동 승인 (예산 예약·EC2 Spot 기동)</button>
+                      <button id="cmp-btn-approve-release" type="submit" value="approve_release" hidden>공개 승인</button>
+                      <button id="cmp-btn-reject-release" type="submit" value="reject_release" class="secondary" hidden>공개 반려</button>
+                      <button id="cmp-btn-cancel" type="submit" value="cancel" class="danger" hidden>작업 중단</button>
                     </div>
                   </form>
                 </section>
@@ -492,51 +577,51 @@
                 <section class="execution-section">
                   <div class="section-title">
                     <h3>EC2 스팟 인스턴스 상태</h3>
-                    <span id="mf-instance-state" class="pill">미기동</span>
+                    <span id="cmp-instance-state" class="pill">미기동</span>
                   </div>
                   <dl class="repository-facts">
-                    <div><dt>인스턴스 ID</dt><dd id="mf-inst-id"></dd></div>
-                    <div><dt>리전 · AZ</dt><dd id="mf-inst-az"></dd></div>
-                    <div><dt>기동 시각</dt><dd id="mf-inst-launched"></dd></div>
-                    <div><dt>만료 시각 (TTL)</dt><dd id="mf-inst-expires"></dd></div>
-                    <div><dt>종료 시각</dt><dd id="mf-inst-terminated"></dd></div>
-                    <div><dt>강제 종료 사유</dt><dd id="mf-inst-forced"></dd></div>
+                    <div><dt>인스턴스 ID</dt><dd id="cmp-inst-id"></dd></div>
+                    <div><dt>리전 · AZ</dt><dd id="cmp-inst-az"></dd></div>
+                    <div><dt>기동 시각</dt><dd id="cmp-inst-launched"></dd></div>
+                    <div><dt>만료 시각 (TTL)</dt><dd id="cmp-inst-expires"></dd></div>
+                    <div><dt>종료 시각</dt><dd id="cmp-inst-terminated"></dd></div>
+                    <div><dt>강제 종료 사유</dt><dd id="cmp-inst-forced"></dd></div>
                   </dl>
-                  <div id="mf-diagnostics-block" hidden>
+                  <div id="cmp-diagnostics-block" hidden>
                     <h4>진단 기록</h4>
-                    <ul id="mf-diagnostics-list" class="diag-list"></ul>
+                    <ul id="cmp-diagnostics-list" class="diag-list"></ul>
                   </div>
                 </section>
 
                 <section class="execution-section">
                   <div class="section-title">
                     <h3>스팟 배치 계획</h3>
-                    <span id="mf-plan-status" class="pill">없음</span>
+                    <span id="cmp-plan-status" class="pill">없음</span>
                   </div>
-                  <p id="mf-plan-note" class="help"></p>
-                  <div id="mf-plan-regions"></div>
+                  <p id="cmp-plan-note" class="help"></p>
+                  <div id="cmp-plan-regions"></div>
                 </section>
 
                 <section class="execution-section">
                   <div class="section-title">
                     <h3>산출물 영수증 · 검증 · 공개</h3>
-                    <span id="mf-attest-source" class="pill">미검증</span>
+                    <span id="cmp-attest-source" class="pill">미검증</span>
                   </div>
-                  <p id="mf-attest-disclaimer" class="evidence-warning" hidden></p>
+                  <p id="cmp-attest-disclaimer" class="evidence-warning" hidden></p>
                   <dl class="repository-facts">
-                    <div class="wide"><dt>S3 산출물 경로</dt><dd id="mf-receipt-path"></dd></div>
-                    <div><dt>매니페스트 다이제스트</dt><dd id="mf-receipt-digest"></dd></div>
-                    <div><dt>파일 수</dt><dd id="mf-receipt-files"></dd></div>
-                    <div><dt>독립 검증기 작업</dt><dd id="mf-verifier-info"></dd></div>
-                    <div><dt>검증 결과</dt><dd id="mf-attest-result"></dd></div>
-                    <div class="wide"><dt>검증 지표 · 요약</dt><dd id="mf-attest-summary"></dd></div>
-                    <div class="wide"><dt>공개 결과</dt><dd id="mf-pub-info"></dd></div>
+                    <div class="wide"><dt>S3 산출물 경로</dt><dd id="cmp-receipt-path"></dd></div>
+                    <div><dt>매니페스트 다이제스트</dt><dd id="cmp-receipt-digest"></dd></div>
+                    <div><dt>파일 수</dt><dd id="cmp-receipt-files"></dd></div>
+                    <div><dt>독립 검증기 작업</dt><dd id="cmp-verifier-info"></dd></div>
+                    <div><dt>검증 결과</dt><dd id="cmp-attest-result"></dd></div>
+                    <div class="wide"><dt>검증 지표 · 요약</dt><dd id="cmp-attest-summary"></dd></div>
+                    <div class="wide"><dt>공개 결과</dt><dd id="cmp-pub-info"></dd></div>
                   </dl>
                 </section>
 
                 <section class="events-section">
                   <div class="section-title"><h3>작업 이벤트</h3><span class="quiet">최신 순</span></div>
-                  <ol id="mf-events" class="event-list"></ol>
+                  <ol id="cmp-events" class="event-list"></ol>
                 </section>
               </section>
             </div>
@@ -630,12 +715,12 @@
           </div>
         </section>
 
-        <!-- 6. COST ANALYTICS TAB -->
+        <!-- 7. COST ANALYTICS TAB -->
         <section id="panel-costs" class="tab-panel" role="tabpanel" aria-labelledby="tab-costs" hidden>
           <section class="monitor-card" aria-labelledby="costs-trend-title">
             <div class="section-title">
               <div>
-                <p class="context">순수 SVG 시계열 · Model Factory 원장</p>
+                <p class="context">순수 SVG 시계열 · Spot 컴퓨팅 원장</p>
                 <h2 id="costs-trend-title">작업별 및 누적 비용 추이</h2>
               </div>
               <span id="costs-summary-pill" class="pill">집계 중</span>
@@ -644,10 +729,14 @@
             <div id="costs-trend-chart" class="chart-host"></div>
           </section>
 
-          <div class="costs-three-col">
-            <section class="monitor-card" aria-labelledby="costs-model-title">
-              <h3 id="costs-model-title">모델별 비용 비중</h3>
-              <div id="costs-by-model"></div>
+          <div class="costs-four-col">
+            <section class="monitor-card" aria-labelledby="costs-project-title">
+              <h3 id="costs-project-title">프로젝트별 비용 비중</h3>
+              <div id="costs-by-project"></div>
+            </section>
+            <section class="monitor-card" aria-labelledby="costs-workload-title">
+              <h3 id="costs-workload-title">워크로드별 비용 비중</h3>
+              <div id="costs-by-workload"></div>
             </section>
             <section class="monitor-card" aria-labelledby="costs-region-title">
               <h3 id="costs-region-title">리전별 비용 비중</h3>
@@ -690,15 +779,15 @@
             <div class="section-title">
               <div>
                 <p class="context">상세 원장 (행 클릭 시 우측 드로어로 상세 확인)</p>
-                <h2 id="ledger-table-title">Model Factory 전체 비용 원장</h2>
+                <h2 id="ledger-table-title">Spot 컴퓨팅 전체 비용 원장</h2>
               </div>
             </div>
             <div class="table-wrap">
-              <table class="data-table" aria-label="Model Factory 비용 원장 목록">
+              <table class="data-table" aria-label="Spot 컴퓨팅 비용 원장 목록">
                 <thead>
                   <tr>
                     <th>작업 ID</th>
-                    <th>모델</th>
+                    <th>프로젝트 · 워크로드</th>
                     <th>상태</th>
                     <th>리전 · 인스턴스</th>
                     <th class="num">예약 상한</th>

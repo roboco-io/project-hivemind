@@ -8,7 +8,7 @@ HIVEMIND_ECS_CLUSTER ?= hivemind-runtime-cluster
 HIVEMIND_CONTROL_PLANE_SERVICE ?= hivemind-runtime-control-plane
 HIVEMIND_LOCAL_PORT ?= 4310
 
-.PHONY: help token operator-token open tunnel-stop aws-status aws-up aws-down aws-tunnel check
+.PHONY: help token operator-token open tunnel-stop project-bootstrap aws-status aws-up aws-down aws-tunnel check
 
 help: ## 사용 가능한 명령어 목록 표시
 	@printf "HIVEMIND 운영 단축 명령어\n\n"
@@ -28,6 +28,11 @@ open: ## 터널이 닫혀 있으면 자동 재연결 감시기로 열고, #token
 tunnel-stop: ## make open 이 실행한 백그라운드 SSM 터널 감시기 종료
 	@HIVEMIND_LOCAL_PORT="$(HIVEMIND_LOCAL_PORT)" \
 		node --import ./infrastructure/aws-runtime/node_modules/tsx/dist/loader.mjs scripts/aws-open-dashboard.ts --stop
+
+project-bootstrap: ## 새 호스트 프로젝트 등록·전용 토큰 발급·저장소 스캐폴딩 (ARGS="--id ... --name ... --repo ...")
+	@OPERATOR_TOKEN_FILE="$(OPERATOR_TOKEN_FILE)" \
+		HIVEMIND_API_URL="http://127.0.0.1:$(HIVEMIND_LOCAL_PORT)" \
+		node --import ./infrastructure/aws-runtime/node_modules/tsx/dist/loader.mjs scripts/project-bootstrap.ts $(ARGS)
 
 operator-token: ## AWS 운영자 토큰을 화면 출력 없이 클립보드에 복사
 	@set -euo pipefail; \

@@ -137,7 +137,7 @@ async function main(): Promise<void> {
       );
       const controlPlane = live.ControlPlane.fromOutputs(outputs, Number(process.env.HIVEMIND_BOOTSTRAP_VERIFY_PORT ?? '14391'));
       const token = live.loadOperatorToken(outputs);
-      const backends: Record<string, string | null> = { delivery: null, modelFactory: null, collab: null };
+      const backends: Record<string, string | null> = { projects: null, delivery: null, compute: null, collab: null };
       try {
         await controlPlane.start();
         const read = async (store: string, apiPath: string) => {
@@ -148,8 +148,9 @@ async function main(): Promise<void> {
             backends[store] = null;
           }
         };
+        await read('projects', '/api/projects');
         await read('delivery', '/api/delivery/tasks');
-        await read('modelFactory', '/api/model-factory/jobs');
+        await read('compute', '/api/compute/jobs');
         await read('collab', '/api/collab/sessions');
       } finally {
         await controlPlane.stop();

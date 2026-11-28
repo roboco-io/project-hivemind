@@ -643,3 +643,100 @@ pre { background: var(--pre-bg); border: 1px solid var(--line); border-radius: 6
   .search-input { width: 100%; }
   .event-list li { grid-template-columns: 82px minmax(0, 1fr); }
 }
+
+/* ==========================================================================
+   Multi-Project Host UI Additions
+   ========================================================================== */
+.hud-project-select {
+  min-width: 148px;
+  font-weight: 600;
+}
+.costs-four-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.project-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(310px, 1fr));
+  gap: 14px;
+}
+.project-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+.project-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+.project-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.project-cap-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.cap-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.project-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+.project-form-grid .wide {
+  grid-column: 1 / -1;
+}
+.token-once-banner {
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--warning);
+  background: rgba(245, 158, 11, 0.1);
+  margin-bottom: 14px;
+}
+.token-once-value {
+  display: block;
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 12px;
+  word-break: break-all;
+  user-select: all;
+}
+.token-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  margin-bottom: 6px;
+}
+@media (max-width: 960px) {
+  .costs-four-col,
+  .project-form-grid {
+    grid-template-columns: 1fr;
+  }
+}

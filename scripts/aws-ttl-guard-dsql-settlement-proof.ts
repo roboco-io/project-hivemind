@@ -1,8 +1,8 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DsqlModelFactoryRepository } from '../packages/adapters/src/aws-dsql-model-factory.js';
-import type { ModelFactoryJob } from '../packages/contracts/src/model-factory.js';
+import { DsqlComputeRepository } from '../packages/adapters/src/aws-dsql-compute.js';
+import type { ComputeJob } from '../packages/contracts/src/compute.js';
 import {
   apiJson,
   aws,
@@ -47,7 +47,7 @@ async function main(): Promise<void> {
   const amiId = aws(INSTANCE_REGION, ['ssm', 'get-parameter', '--name', '/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64', '--query', 'Parameter.Value', '--output', 'text']);
 
   // Read-only view of the production ledger tables, straight from DSQL (not through the Control Plane).
-  const ledger = new DsqlModelFactoryRepository({
+  const ledger = new DsqlComputeRepository({
     endpoint: runtimeOut.DsqlClusterEndpoint!,
     region: PRIMARY_REGION,
     allowedRegions: [PRIMARY_REGION],
@@ -61,14 +61,14 @@ async function main(): Promise<void> {
   try {
     // 1. Launch through the Control Plane.
     await controlPlane.start();
-    const listed = await apiJson<{ storageBackend?: string; jobs: unknown[] }>(`${controlPlane.baseUrl}/api/model-factory/jobs`, operatorToken);
+    const listed = await apiJson<{ storageBackend?: string; jobs: unknown[] }>(`${controlPlane.baseUrl}/api/compute/jobs`, operatorToken);
     summary.controlPlaneLedgerBackend = listed.storageBackend ?? null;
     summary.jobsVisibleAfterMigration = listed.jobs.length;
     if (listed.storageBackend !== 'aurora-dsql') throw new Error(`Control Plane ledger backend is ${String(listed.storageBackend)}, expected aurora-dsql`);
 
-    const created = await apiJson<ModelFactoryJob>(`${controlPlane.baseUrl}/api/model-factory/jobs`, operatorToken, {
+    const created = await apiJson<ComputeJob>(`${controlPlane.baseUrl}/api/compute/jobs`, operatorToken, {
       title: 'Issue #16 TTL Guard DSQL settlement proof',
-      modelId: 'smf-guard-dsql-proof',
+      workloadId: 'smf-guard-dsql-proof',
       repository: 'roboco-io/silicon-model-factory',
       baseCommit: 'a'.repeat(40),
       compute: {
@@ -84,11 +84,11 @@ async function main(): Promise<void> {
       releasePolicy: { mode: 's3_artifact_only', visibility: 'private', releaseCheckCommand: ['node', 'tools/release-check.mjs'] },
     });
     jobId = created.id;
-    const launched = await apiJson<ModelFactoryJob>(`${controlPlane.baseUrl}/api/model-factory/jobs/${encodeURIComponent(jobId)}/approve-training`, operatorToken, {
+    const launched = await apiJson<ComputeJob>(`${controlPlane.baseUrl}/api/compute/jobs/${encodeURIComponent(jobId)}/approve`, operatorToken, {
       approvalFingerprint: created.approvalFingerprint,
       reason: 'Issue #16 TTL Guard DSQL settlement proof',
     });
-    if (launched.status !== 'training_running' || !launched.instance) {
+    if (launched.status !== 'running' || !launched.instance) {
       throw new Error(`Launch failed: status=${launched.status} failureReason=${launched.failureReason ?? ''}`);
     }
     const instance = launched.instance;
@@ -177,16 +177,16 @@ async function main(): Promise<void> {
 
     // 5. The Control Plane finishes the job on its next start, without a second settlement.
     await controlPlane.start();
-    const woken = await apiJson<ModelFactoryJob>(`${controlPlane.baseUrl}/api/model-factory/jobs/${encodeURIComponent(jobId)}/wake`, operatorToken, {});
+    const woken = await apiJson<ComputeJob>(`${controlPlane.baseUrl}/api/compute/jobs/${encodeURIComponent(jobId)}/wake`, operatorToken, {});
     summary.afterControlPlaneWake = { status: woken.status, settledMicros: woken.cost.settledMicros, failureReason: (woken.failureReason ?? '').slice(0, 160) };
-    const events = await apiJson<{ events: { type: string }[] }>(`${controlPlane.baseUrl}/api/model-factory/jobs/${encodeURIComponent(jobId)}`, operatorToken);
-    summary.costSettledEvents = events.events.filter((e) => e.type === 'model_factory.cost_settled').length;
+    const events = await apiJson<{ events: { type: string }[] }>(`${controlPlane.baseUrl}/api/compute/jobs/${encodeURIComponent(jobId)}`, operatorToken);
+    summary.costSettledEvents = events.events.filter((e) => e.type === 'compute.cost_settled').length;
   } catch (error) {
     if (jobId) {
       // Best effort: make sure the instance does not outlive a failed proof. The guard schedule also covers it.
       try {
         if (controlPlane.runningTaskCount() === 0) await controlPlane.start();
-        await apiJson(`${controlPlane.baseUrl}/api/model-factory/jobs/${encodeURIComponent(jobId)}/cancel`, operatorToken, { reason: 'Cleanup after guard proof error' });
+        await apiJson(`${controlPlane.baseUrl}/api/compute/jobs/${encodeURIComponent(jobId)}/cancel`, operatorToken, { reason: 'Cleanup after guard proof error' });
       } catch {
         // reported below through runningManagedInstances
       }

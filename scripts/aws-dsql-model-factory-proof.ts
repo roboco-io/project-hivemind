@@ -1,12 +1,12 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { DsqlModelFactoryRepository } from '../packages/adapters/src/aws-dsql-model-factory.js';
+import { DsqlComputeRepository } from '../packages/adapters/src/aws-dsql-compute.js';
 import type { AwsEcsCredentials } from '../packages/adapters/src/aws-ecs-driver.js';
-import type { CreateModelFactoryJob } from '../packages/contracts/src/model-factory.js';
-import { ModelFactoryStore } from '../packages/core/src/model-factory.js';
+import type { CreateComputeJob } from '../packages/contracts/src/compute.js';
+import { ComputeStore } from '../packages/core/src/compute.js';
 
 /**
- * Live proof that ModelFactoryStore works on the real Amazon Aurora DSQL cluster in Seoul.
+ * Live proof that ComputeStore works on the real Amazon Aurora DSQL cluster in Seoul.
  *
  * It connects directly from this machine with the operator's AWS profile (IAM auth token), NOT through the
  * Control Plane, and uses its own tables (`hm_mfproof_*`) that it drops at the end. So it never touches the
@@ -30,10 +30,10 @@ function loadCredentials(): AwsEcsCredentials {
   };
 }
 
-function jobInput(prefix: string, maxTotalCostMicros: number): CreateModelFactoryJob {
+function jobInput(prefix: string, maxTotalCostMicros: number): CreateComputeJob {
   return {
     title: 'Issue #16 DSQL ledger proof',
-    modelId: 'smf-dsql-proof',
+    workloadId: 'smf-dsql-proof',
     repository: 'roboco-io/silicon-model-factory',
     baseCommit: 'a'.repeat(40),
     compute: {
@@ -57,14 +57,14 @@ async function main(): Promise<void> {
     >
   ).HivemindAwsRuntimeStack!;
   const endpoint = process.env.HIVEMIND_DSQL_ENDPOINT ?? runtimeOut.DsqlClusterEndpoint!;
-  const repository = new DsqlModelFactoryRepository({
+  const repository = new DsqlComputeRepository({
     endpoint,
     region: REGION,
     allowedRegions: [REGION],
     credentials: loadCredentials,
     tablePrefix: 'hm_mfproof',
   });
-  const store = new ModelFactoryStore(repository, { globalBudgetCapMicros: 500_000 });
+  const store = new ComputeStore(repository, { globalBudgetCapMicros: 500_000 });
   const stamp = Date.now();
   let summary: Record<string, unknown> = {};
   try {
@@ -75,8 +75,8 @@ async function main(): Promise<void> {
 
     // Two truly concurrent approvals; together they exceed the 500,000 micros cap.
     const settled = await Promise.allSettled([
-      store.approveTraining(a.id, a.approvalFingerprint, 'concurrent approval A'),
-      store.approveTraining(b.id, b.approvalFingerprint, 'concurrent approval B'),
+      store.approveLaunch(a.id, a.approvalFingerprint, 'concurrent approval A'),
+      store.approveLaunch(b.id, b.approvalFingerprint, 'concurrent approval B'),
     ]);
     const fulfilled = settled.filter((r) => r.status === 'fulfilled').length;
     const rejectedReasons = settled

@@ -1,31 +1,36 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  SqliteModelFactoryRepository,
-  type ModelFactoryEventDraft,
-  type ModelFactoryRepository,
-  type ModelFactoryTxState,
-} from './model-factory-repository.js';
-import type {
-  CreateModelFactoryJob,
-  Ec2InstanceLifecycleState,
-  ModelArtifactFile,
-  ModelArtifactReceipt,
-  ModelFactoryEvent,
-  ModelFactoryInstanceState,
-  ModelFactoryJob,
-  ModelFactoryJobStatus,
-  ModelFactoryLedgerSummary,
-  ModelReleaseAttestation,
-  ModelReleaseAttestationSource,
-  ModelReleaseDecision,
-  ModelReleasePolicy,
-  ModelReleasePublication,
-  ModelTrainingInputFile,
-  ModelTrainingInputSpec,
-  SubmitModelReleaseAttestation,
-  TrainingComputeSpec,
-  TrainingPlacementPlan,
-} from '../../contracts/src/model-factory.js';
+  COMPUTE_WORKLOAD_KINDS,
+  type ComputeArtifactFile,
+  type ComputeArtifactReceipt,
+  type ComputeEvent,
+  type ComputeInputFile,
+  type ComputeInputSpec,
+  type ComputeInstanceState,
+  type ComputeJob,
+  type ComputeJobStatus,
+  type ComputeLedgerSummary,
+  type ComputePlacementPlan,
+  type ComputeReleaseAttestation,
+  type ComputeReleaseAttestationSource,
+  type ComputeReleaseDecision,
+  type ComputeReleasePolicy,
+  type ComputeReleasePublication,
+  type ComputeSpec,
+  type ComputeWaitReason,
+  type ComputeWorkloadKind,
+  type CreateComputeJob,
+  type Ec2InstanceLifecycleState,
+  type ProjectComputeLedgerSummary,
+  type SubmitComputeReleaseAttestation,
+} from '../../contracts/src/compute.js';
+import {
+  SqliteComputeRepository,
+  type ComputeEventDraft,
+  type ComputeRepository,
+  type ComputeTxState,
+} from './compute-repository.js';
+import { DEFAULT_PROJECT_ID, validateProjectId } from './projects.js';
 import { DomainError, text } from './store.js';
 
 const HEX40 = /^[a-f0-9]{40}$/i;
@@ -40,10 +45,53 @@ const SUBNET_PATTERN = /^subnet-[a-f0-9]{8,17}$/;
 const SG_PATTERN = /^sg-[a-f0-9]{8,17}$/;
 const IAM_PROFILE_PATTERN = /^arn:aws:iam::\d{12}:instance-profile\/[A-Za-z0-9+=,.@_/ -]{1,128}$/;
 
-const TERMINAL_STATUSES = new Set<ModelFactoryJobStatus>(['released', 'failed', 'cancelled', 'rejected']);
+const TERMINAL_STATUSES = new Set<ComputeJobStatus>(['released', 'failed', 'cancelled', 'rejected']);
 const DEFAULT_GLOBAL_BUDGET_CAP_MICROS = 500_000_000; // $500 hard central default
 export const OPERATOR_SELF_REPORTED_DISCLAIMER =
   '이 검사 결과는 운영자/호출자가 직접 보고한 값이며, HIVEMIND가 releaseCheckCommand를 독립 격리 환경에서 실행해 검증하지 않았습니다.';
+
+const LEGACY_STATUS_MAP: Record<string, ComputeJobStatus> = {
+  awaiting_training_approval: 'awaiting_launch_approval',
+  training_queued: 'queued',
+  training_running: 'running',
+};
+
+const LEGACY_WAIT_REASON_MAP: Record<string, ComputeWaitReason> = {
+  awaiting_training_approval: 'awaiting_launch_approval',
+  training_in_progress: 'running_in_progress',
+};
+
+/**
+ * Transparently normalizes persisted pre-refactor Model Factory job records loaded from SQLite/Aurora DSQL
+ * into the universal ComputeJob shape so live history is preserved without downtime.
+ */
+export function normalizeComputeJob(raw: ComputeJob): ComputeJob {
+  const rec = structuredClone(raw) as unknown as Record<string, unknown>;
+  const rawStatus = String(rec.status ?? '');
+  const status = (LEGACY_STATUS_MAP[rawStatus] ?? rawStatus) as ComputeJobStatus;
+  const rawWait = rec.waitReason === null || rec.waitReason === undefined ? null : String(rec.waitReason);
+  const waitReason = rawWait ? ((LEGACY_WAIT_REASON_MAP[rawWait] ?? rawWait) as ComputeWaitReason) : null;
+  const workloadId =
+    typeof rec.workloadId === 'string' && rec.workloadId
+      ? rec.workloadId
+      : typeof rec.modelId === 'string' && rec.modelId
+        ? rec.modelId
+        : 'unknown-workload';
+  const projectId = typeof rec.projectId === 'string' && rec.projectId ? rec.projectId : DEFAULT_PROJECT_ID;
+  const workloadKind: ComputeWorkloadKind =
+    typeof rec.workloadKind === 'string' && (COMPUTE_WORKLOAD_KINDS as readonly string[]).includes(rec.workloadKind)
+      ? (rec.workloadKind as ComputeWorkloadKind)
+      : 'training';
+  delete rec.modelId;
+  return {
+    ...(rec as unknown as ComputeJob),
+    projectId,
+    workloadId,
+    workloadKind,
+    status,
+    waitReason,
+  };
+}
 
 function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -57,14 +105,6 @@ function normalizeRelativePath(raw: string, label: string): string {
   return cleaned;
 }
 
-/**
- * Order of the file list inside a digest. The training instance computes the artifact digest itself, in
- * whatever language its script uses, so the order must not depend on a locale. Paths are compared by
- * UTF-16 code unit, which for ASCII paths is plain byte order (`sorted()` in Python, `sort` with LC_ALL=C).
- * A locale comparison would put `model/config.json` before `model/README.md`, and a byte-order sort on the
- * instance would then produce a different digest and the receipt would be refused.
- */
-/** Cuts a message to a stored field's limit and marks the cut. */
 function clip(value: unknown, max: number): string {
   const str = (typeof value === 'string' ? value : String(value ?? '')).trim();
   return str.length <= max ? str : `${str.slice(0, max - 1)}…`;
@@ -74,7 +114,7 @@ function byPathCodeUnits(a: { path: string }, b: { path: string }): number {
   return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
 }
 
-export function computeTrainingInputsDigest(s3Prefix: string, files: ModelTrainingInputFile[]): string {
+export function computeInputsDigest(s3Prefix: string, files: ComputeInputFile[]): string {
   const cleanPrefix = normalizeRelativePath(s3Prefix, 'compute.inputs.s3Prefix');
   if (!Array.isArray(files) || files.length === 0 || files.length > 1000) {
     throw new DomainError('compute.inputs.files requires 1..1000 files', 400);
@@ -96,19 +136,36 @@ export function computeTrainingInputsDigest(s3Prefix: string, files: ModelTraini
   return sha256Hex(JSON.stringify({ version: 1, s3Prefix: cleanPrefix, files: normalized }));
 }
 
-export function validateTrainingInputSpec(
-  raw: Omit<ModelTrainingInputSpec, 'digest'> & { digest?: string },
-  modelId: string,
-): ModelTrainingInputSpec {
+function allowedInputRoots(projectId: string, workloadId: string, allowedPrefixes?: readonly string[]): string[] {
+  const roots: string[] = [];
+  const candidates =
+    allowedPrefixes && allowedPrefixes.length > 0
+      ? allowedPrefixes
+      : projectId === DEFAULT_PROJECT_ID
+        ? [`projects/${DEFAULT_PROJECT_ID}/`, 'models/']
+        : [`projects/${projectId}/`, 'models/'];
+  for (const prefix of candidates) {
+    const clean = prefix.replace(/^\/+|\/+$/g, '');
+    roots.push(`${clean}/${workloadId}/inputs`);
+  }
+  return [...new Set(roots)];
+}
+
+export function validateComputeInputSpec(
+  raw: Omit<ComputeInputSpec, 'digest'> & { digest?: string },
+  workloadId: string,
+  options: { projectId?: string; allowedPrefixes?: readonly string[] } = {},
+): ComputeInputSpec {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new DomainError('compute.inputs must be an object', 400);
   }
   const s3Prefix = normalizeRelativePath(raw.s3Prefix, 'compute.inputs.s3Prefix');
-  const expectedPrefixRoot = `models/${modelId}/inputs/`;
-  if (!s3Prefix.startsWith(expectedPrefixRoot) && s3Prefix !== `models/${modelId}/inputs`) {
-    throw new DomainError(`compute.inputs.s3Prefix must start with ${expectedPrefixRoot}`, 400);
+  const roots = allowedInputRoots(options.projectId ?? DEFAULT_PROJECT_ID, workloadId, options.allowedPrefixes);
+  const matchesRoot = roots.some((root) => s3Prefix === root || s3Prefix.startsWith(`${root}/`));
+  if (!matchesRoot) {
+    throw new DomainError(`compute.inputs.s3Prefix must start with one of: ${roots.map((r) => `${r}/`).join(', ')}`, 400);
   }
-  const computedDigest = computeTrainingInputsDigest(s3Prefix, raw.files);
+  const computedDigest = computeInputsDigest(s3Prefix, raw.files);
   if (raw.digest !== undefined) {
     const provided = text(raw.digest, 'compute.inputs.digest', 64).toLowerCase();
     if (provided !== computedDigest) {
@@ -125,9 +182,9 @@ export function validateTrainingInputSpec(
   return { s3Prefix, files, digest: computedDigest };
 }
 
-export function computeModelManifestDigest(files: ModelArtifactFile[]): string {
+export function computeArtifactManifestDigest(files: ComputeArtifactFile[]): string {
   if (!Array.isArray(files) || files.length === 0 || files.length > 1000) {
-    throw new DomainError('Model artifact receipt requires 1..1000 files', 400);
+    throw new DomainError('Artifact receipt requires 1..1000 files', 400);
   }
   const seen = new Set<string>();
   const normalized = files
@@ -146,12 +203,13 @@ export function computeModelManifestDigest(files: ModelArtifactFile[]): string {
   return sha256Hex(JSON.stringify({ version: 1, files: normalized }));
 }
 
-export function validateTrainingComputeSpec(
-  spec: CreateModelFactoryJob['compute'],
-  modelId?: string,
-): TrainingComputeSpec {
+export function validateComputeSpec(
+  spec: CreateComputeJob['compute'],
+  workloadId?: string,
+  options: { projectId?: string; allowedS3Prefixes?: readonly string[] } = {},
+): ComputeSpec {
   if (!spec || typeof spec !== 'object' || Array.isArray(spec)) {
-    throw new DomainError('Training compute specification is required', 400);
+    throw new DomainError('Compute specification is required', 400);
   }
   const region = text(spec.region, 'compute.region', 32).toLowerCase();
   if (!REGION_PATTERN.test(region)) {
@@ -168,7 +226,7 @@ export function validateTrainingComputeSpec(
       return clean;
     }))];
   }
-  let regionOverrides: TrainingComputeSpec['regionOverrides'];
+  let regionOverrides: ComputeSpec['regionOverrides'];
   if (spec.regionOverrides !== undefined) {
     if (!spec.regionOverrides || typeof spec.regionOverrides !== 'object' || Array.isArray(spec.regionOverrides)) {
       throw new DomainError('compute.regionOverrides must be an object', 400);
@@ -262,16 +320,38 @@ export function validateTrainingComputeSpec(
     userDataScript = spec.userDataScript;
   }
   const s3ArtifactPrefix = normalizeRelativePath(spec.s3ArtifactPrefix, 'compute.s3ArtifactPrefix');
-  if (!s3ArtifactPrefix.startsWith('models/') || s3ArtifactPrefix.split('/').includes('inputs')) {
-    throw new DomainError('compute.s3ArtifactPrefix must start with models/ and must not overlap inputs/', 400);
+  const projectId = options.projectId ?? DEFAULT_PROJECT_ID;
+  if (s3ArtifactPrefix.split('/').includes('inputs') || s3ArtifactPrefix.startsWith('staging/')) {
+    throw new DomainError('compute.s3ArtifactPrefix must not overlap inputs/ or staging/', 400);
   }
-  if (modelId && !s3ArtifactPrefix.startsWith(`models/${modelId}/`)) {
-    throw new DomainError(`compute.s3ArtifactPrefix must start with models/${modelId}/`, 400);
+  const allowedPrefixes =
+    options.allowedS3Prefixes && options.allowedS3Prefixes.length > 0
+      ? options.allowedS3Prefixes
+      : projectId === DEFAULT_PROJECT_ID
+        ? [`projects/${DEFAULT_PROJECT_ID}/`, 'models/']
+        : [`projects/${projectId}/`, 'models/'];
+  const matchesAllowedPrefix = allowedPrefixes.some((p) => {
+    const clean = p.replace(/^\/+/, '');
+    const withSlash = clean.endsWith('/') ? clean : `${clean}/`;
+    if (workloadId) {
+      return s3ArtifactPrefix.startsWith(`${withSlash}${workloadId}/`);
+    }
+    return s3ArtifactPrefix.startsWith(withSlash);
+  });
+  if (!matchesAllowedPrefix) {
+    const expected = workloadId
+      ? allowedPrefixes.map((p) => `${p.replace(/\/+$/, '')}/${workloadId}/`).join(', ')
+      : allowedPrefixes.join(', ');
+    throw new DomainError(`compute.s3ArtifactPrefix must start with one of: ${expected}`, 400);
   }
+
   const inputs =
     spec.inputs === undefined
       ? undefined
-      : validateTrainingInputSpec(spec.inputs, modelId ?? s3ArtifactPrefix.split('/')[1] ?? 'model');
+      : validateComputeInputSpec(spec.inputs, workloadId ?? s3ArtifactPrefix.split('/')[1] ?? 'workload', {
+          projectId,
+          allowedPrefixes: options.allowedS3Prefixes,
+        });
   const workloadClass =
     spec.workloadClass === undefined ? undefined : text(spec.workloadClass, 'compute.workloadClass', 64);
   if (spec.rootVolumeGb !== undefined && (!Number.isSafeInteger(spec.rootVolumeGb) || spec.rootVolumeGb < 8 || spec.rootVolumeGb > 2000)) {
@@ -299,9 +379,9 @@ export function validateTrainingComputeSpec(
   };
 }
 
-export function validateModelReleasePolicy(policy: ModelReleasePolicy): ModelReleasePolicy {
+export function validateComputeReleasePolicy(policy: ComputeReleasePolicy): ComputeReleasePolicy {
   if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
-    throw new DomainError('Model release policy is required', 400);
+    throw new DomainError('Release policy is required', 400);
   }
   if (policy.mode !== 'hf_release' && policy.mode !== 's3_artifact_only') {
     throw new DomainError('releasePolicy.mode must be hf_release or s3_artifact_only', 400);
@@ -339,29 +419,28 @@ export function validateModelReleasePolicy(policy: ModelReleasePolicy): ModelRel
   };
 }
 
-/**
- * Whether a release policy may publish without an operator (issue #20). An S3-only release may always;
- * a Hugging Face release only into a repository under one of the operator's prefixes (for example
- * `roboco-io/`). An empty prefix list allows none.
- */
-export function autoPublishAllowed(policy: ModelReleasePolicy, repoPrefixes: readonly string[]): boolean {
+export function autoPublishAllowed(policy: ComputeReleasePolicy, repoPrefixes: readonly string[]): boolean {
   if (policy.autoPublish !== true) return false;
   if (policy.mode === 's3_artifact_only') return true;
   const repo = policy.hfRepository ?? '';
   return repoPrefixes.some((prefix) => /^[A-Za-z0-9][A-Za-z0-9_.-]*\/$/.test(prefix) && repo.startsWith(prefix));
 }
 
-export function computeModelFactoryApprovalFingerprint(spec: {
-  modelId: string;
+export function computeJobApprovalFingerprint(spec: {
+  projectId: string;
+  workloadId: string;
+  workloadKind: ComputeWorkloadKind;
   repository: string;
   baseCommit: string;
-  compute: TrainingComputeSpec;
-  releasePolicy: ModelReleasePolicy;
+  compute: ComputeSpec;
+  releasePolicy: ComputeReleasePolicy;
 }): string {
   return sha256Hex(
     JSON.stringify({
-      version: 1,
-      modelId: spec.modelId,
+      version: 2,
+      projectId: spec.projectId,
+      workloadId: spec.workloadId,
+      workloadKind: spec.workloadKind,
       repository: spec.repository,
       baseCommit: spec.baseCommit,
       compute: {
@@ -386,36 +465,45 @@ export function computeModelFactoryApprovalFingerprint(spec: {
   );
 }
 
-export interface ModelFactoryStoreOptions {
+export interface ComputeCreatePolicyContext {
+  allowedS3Prefixes?: readonly string[];
+  autoPublishRepoPrefixes?: readonly string[];
+  maxLifetimeMs?: number;
+  maxSingleJobCostMicros?: number | null;
+}
+
+export interface ComputeApprovalBudgetContext {
+  /** Per-project hard compute budget ceiling in USD micros. */
+  projectBudgetCapMicros?: number;
+  /** Optional per-job ceiling in USD micros. */
+  maxSingleJobCostMicros?: number | null;
+}
+
+export interface ComputeStoreOptions {
   now?: () => number;
   globalBudgetCapMicros?: number;
-  /** Hugging Face repository prefixes where `autoPublish` is allowed (issue #20). Default: none. */
+  /** Host-level Hugging Face repository prefixes where `autoPublish` is allowed. Default: none. */
   autoPublishRepoPrefixes?: readonly string[];
 }
 
-export class ModelFactoryStore {
-  private readonly repository: ModelFactoryRepository;
+export class ComputeStore {
+  private readonly repository: ComputeRepository;
   private readonly now: () => number;
   private readonly globalBudgetCapMicros: number;
   private readonly autoPublishRepoPrefixes: readonly string[];
-  /** Set only while the synchronous body of a repository transaction runs. */
-  private activeTx: ModelFactoryTxState | null = null;
+  private activeTx: ComputeTxState | null = null;
 
-  /**
-   * @param storage A SQLite file path (local default) or any ModelFactoryRepository, for example the
-   *   Aurora DSQL repository on AWS.
-   */
-  constructor(storage: string | ModelFactoryRepository = ':memory:', options: ModelFactoryStoreOptions = {}) {
+  constructor(storage: string | ComputeRepository = ':memory:', options: ComputeStoreOptions = {}) {
     this.now = options.now ?? Date.now;
     this.globalBudgetCapMicros = options.globalBudgetCapMicros ?? DEFAULT_GLOBAL_BUDGET_CAP_MICROS;
     this.autoPublishRepoPrefixes = [...(options.autoPublishRepoPrefixes ?? [])];
     if (!Number.isSafeInteger(this.globalBudgetCapMicros) || this.globalBudgetCapMicros < 1) {
       throw new DomainError('Invalid globalBudgetCapMicros', 400);
     }
-    this.repository = typeof storage === 'string' ? new SqliteModelFactoryRepository(storage) : storage;
+    this.repository = typeof storage === 'string' ? new SqliteComputeRepository(storage) : storage;
   }
 
-  get storageBackend(): ModelFactoryRepository['storageBackend'] {
+  get storageBackend(): ComputeRepository['storageBackend'] {
     return this.repository.storageBackend;
   }
 
@@ -434,8 +522,8 @@ export class ModelFactoryStore {
     });
   }
 
-  private txState(): ModelFactoryTxState {
-    if (!this.activeTx) throw new Error('ModelFactoryStore state accessed outside a repository transaction');
+  private txState(): ComputeTxState {
+    if (!this.activeTx) throw new Error('ComputeStore state accessed outside a repository transaction');
     return this.activeTx;
   }
 
@@ -443,13 +531,13 @@ export class ModelFactoryStore {
     return new Date(this.now()).toISOString();
   }
 
-  private load(id: string): ModelFactoryJob {
+  private load(id: string): ComputeJob {
     const job = this.txState().docs.get(id);
-    if (!job) throw new DomainError('Model factory job not found', 404);
-    return structuredClone(job);
+    if (!job) throw new DomainError('Compute job not found', 404);
+    return normalizeComputeJob(job);
   }
 
-  private save(job: ModelFactoryJob): ModelFactoryJob {
+  private save(job: ComputeJob): ComputeJob {
     job.updatedAt = this.timestamp();
     const state = this.txState();
     state.docs.set(job.id, structuredClone(job));
@@ -457,86 +545,164 @@ export class ModelFactoryStore {
     return structuredClone(job);
   }
 
-  private emit(jobId: string, type: string, data: Record<string, unknown>): void {
-    this.txState().newEvents.push({ jobId, type, at: this.timestamp(), data } as ModelFactoryEventDraft);
+  private emit(jobId: string, type: string, data: Record<string, unknown>, projectId?: string): void {
+    this.txState().newEvents.push({
+      jobId,
+      ...(projectId ? { projectId } : {}),
+      type,
+      at: this.timestamp(),
+      data,
+    } as ComputeEventDraft);
   }
 
-  private computeLedgerLocked(): ModelFactoryLedgerSummary {
-    const jobs = [...this.txState().docs.values()];
+  private computeLedgerLocked(options: { projectId?: string; projectBudgetCaps?: Readonly<Record<string, number>> } = {}): ComputeLedgerSummary {
+    const allJobs = [...this.txState().docs.values()].map(normalizeComputeJob);
+    let globalReservedMicros = 0;
+    let globalSettledMicros = 0;
+    let globalActiveReservations = 0;
+    let globalSettledJobs = 0;
 
-    let totalReservedMicros = 0;
-    let totalSettledMicros = 0;
-    let activeReservations = 0;
-    let settledJobs = 0;
+    const projectBuckets = new Map<
+      string,
+      { reserved: number; settled: number; active: number; settledCount: number }
+    >();
 
-    const entries = jobs.map((job) => {
+    for (const job of allJobs) {
+      const bucket = projectBuckets.get(job.projectId) ?? { reserved: 0, settled: 0, active: 0, settledCount: 0 };
       if (job.cost.settledMicros !== null) {
-        totalSettledMicros += job.cost.settledMicros;
-        settledJobs += 1;
+        globalSettledMicros += job.cost.settledMicros;
+        globalSettledJobs += 1;
+        bucket.settled += job.cost.settledMicros;
+        bucket.settledCount += 1;
       } else if (job.cost.reservedMicros > 0) {
-        totalReservedMicros += job.cost.reservedMicros;
-        activeReservations += 1;
+        globalReservedMicros += job.cost.reservedMicros;
+        globalActiveReservations += 1;
+        bucket.reserved += job.cost.reservedMicros;
+        bucket.active += 1;
       }
-      return {
-        jobId: job.id,
-        modelId: job.modelId,
-        status: job.status,
-        region: job.compute.region,
-        instanceType: job.compute.instanceType,
-        reservedMicros: job.cost.reservedMicros,
-        settledMicros: job.cost.settledMicros,
-        createdAt: job.createdAt,
-        settledAt: job.cost.settledAt,
-      };
-    });
+      projectBuckets.set(job.projectId, bucket);
+    }
 
-    const committed = totalReservedMicros + totalSettledMicros;
+    const globalRemaining = Math.max(0, this.globalBudgetCapMicros - (globalReservedMicros + globalSettledMicros));
+    const byProject: Record<string, ProjectComputeLedgerSummary> = {};
+    const projectIds = new Set([...projectBuckets.keys(), ...Object.keys(options.projectBudgetCaps ?? {})]);
+    for (const pid of projectIds) {
+      const bucket = projectBuckets.get(pid) ?? { reserved: 0, settled: 0, active: 0, settledCount: 0 };
+      const cap = options.projectBudgetCaps?.[pid] ?? null;
+      const projectCommitted = bucket.reserved + bucket.settled;
+      const projectRemaining = cap === null ? globalRemaining : Math.min(globalRemaining, Math.max(0, cap - projectCommitted));
+      byProject[pid] = {
+        projectId: pid,
+        budgetCapMicros: cap,
+        totalReservedMicros: bucket.reserved,
+        totalSettledMicros: bucket.settled,
+        remainingBudgetMicros: projectRemaining,
+        activeReservations: bucket.active,
+        settledJobs: bucket.settledCount,
+      };
+    }
+
+    const filteredJobs = options.projectId ? allJobs.filter((j) => j.projectId === options.projectId) : allJobs;
+    const entries = filteredJobs.map((job) => ({
+      jobId: job.id,
+      projectId: job.projectId,
+      workloadId: job.workloadId,
+      workloadKind: job.workloadKind,
+      status: job.status,
+      region: job.compute.region,
+      instanceType: job.compute.instanceType,
+      reservedMicros: job.cost.reservedMicros,
+      settledMicros: job.cost.settledMicros,
+      createdAt: job.createdAt,
+      settledAt: job.cost.settledAt,
+    }));
+
+    if (options.projectId) {
+      const summary = byProject[options.projectId] ?? {
+        projectId: options.projectId,
+        budgetCapMicros: options.projectBudgetCaps?.[options.projectId] ?? null,
+        totalReservedMicros: 0,
+        totalSettledMicros: 0,
+        remainingBudgetMicros:
+          options.projectBudgetCaps?.[options.projectId] !== undefined
+            ? Math.min(globalRemaining, options.projectBudgetCaps[options.projectId]!)
+            : globalRemaining,
+        activeReservations: 0,
+        settledJobs: 0,
+      };
+      return {
+        globalBudgetCapMicros: summary.budgetCapMicros ?? this.globalBudgetCapMicros,
+        totalReservedMicros: summary.totalReservedMicros,
+        totalSettledMicros: summary.totalSettledMicros,
+        remainingBudgetMicros: summary.remainingBudgetMicros,
+        activeReservations: summary.activeReservations,
+        settledJobs: summary.settledJobs,
+        byProject: { [options.projectId]: summary },
+        jobs: entries,
+      };
+    }
+
     return {
       globalBudgetCapMicros: this.globalBudgetCapMicros,
-      totalReservedMicros,
-      totalSettledMicros,
-      remainingBudgetMicros: Math.max(0, this.globalBudgetCapMicros - committed),
-      activeReservations,
-      settledJobs,
+      totalReservedMicros: globalReservedMicros,
+      totalSettledMicros: globalSettledMicros,
+      remainingBudgetMicros: globalRemaining,
+      activeReservations: globalActiveReservations,
+      settledJobs: globalSettledJobs,
+      byProject,
       jobs: entries,
     };
   }
 
-  async list(): Promise<ModelFactoryJob[]> {
-    return this.repository.listDocs();
+  async list(projectId?: string): Promise<ComputeJob[]> {
+    const docs = (await this.repository.listDocs()).map(normalizeComputeJob);
+    return projectId ? docs.filter((j) => j.projectId === projectId) : docs;
   }
 
-  async get(id: string): Promise<ModelFactoryJob> {
+  async get(id: string): Promise<ComputeJob> {
     const job = await this.repository.getDoc(id);
-    if (!job) throw new DomainError('Model factory job not found', 404);
-    return job;
+    if (!job) throw new DomainError('Compute job not found', 404);
+    return normalizeComputeJob(job);
   }
 
-  async events(jobId?: string): Promise<ModelFactoryEvent[]> {
-    return (await this.repository.listEvents(200)).filter((event) => (jobId ? event.jobId === jobId : true));
+  async events(jobId?: string, projectId?: string): Promise<ComputeEvent[]> {
+    const all = await this.repository.listEvents(200);
+    return all.filter((event) => {
+      if (jobId && event.jobId !== jobId) return false;
+      if (projectId && event.projectId && event.projectId !== projectId) return false;
+      return true;
+    });
   }
 
-  ledger(): Promise<ModelFactoryLedgerSummary> {
-    return this.tx(() => this.computeLedgerLocked());
+  ledger(options?: { projectId?: string; projectBudgetCaps?: Readonly<Record<string, number>> }): Promise<ComputeLedgerSummary> {
+    return this.tx(() => this.computeLedgerLocked(options));
   }
 
-  async listDueWakeJobs(nowMs = this.now()): Promise<ModelFactoryJob[]> {
+  async listDueWakeJobs(nowMs = this.now()): Promise<ComputeJob[]> {
     return (await this.list()).filter((job) => {
-      const needsTrainingWake = job.status === 'training_running';
+      const needsWake = job.status === 'running';
       const needsCostSettlement = Boolean(job.instance && job.cost.settledMicros === null && !TERMINAL_STATUSES.has(job.status));
-      if (!needsTrainingWake && !needsCostSettlement) return false;
+      if (!needsWake && !needsCostSettlement) return false;
       const wakeDue = job.nextWakeAt ? Date.parse(job.nextWakeAt) <= nowMs : true;
       const ttlDue = job.instance?.expiresAt ? Date.parse(job.instance.expiresAt) <= nowMs : false;
       return wakeDue || ttlDue;
     });
   }
 
-  async create(input: CreateModelFactoryJob): Promise<ModelFactoryJob> {
+  async create(input: CreateComputeJob, policyContext: ComputeCreatePolicyContext = {}): Promise<ComputeJob> {
     return this.tx(() => {
+      const projectId =
+        input.projectId === undefined || input.projectId === DEFAULT_PROJECT_ID
+          ? DEFAULT_PROJECT_ID
+          : validateProjectId(input.projectId);
       const title = text(input.title, 'title', 160);
-      const modelId = text(input.modelId, 'modelId', 120);
-      if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/.test(modelId)) {
-        throw new DomainError(`Invalid modelId: ${input.modelId}`, 400);
+      const workloadId = text(input.workloadId, 'workloadId', 120);
+      if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/.test(workloadId)) {
+        throw new DomainError(`Invalid workloadId: ${input.workloadId}`, 400);
+      }
+      const workloadKind: ComputeWorkloadKind = input.workloadKind ?? 'batch';
+      if (!(COMPUTE_WORKLOAD_KINDS as readonly string[]).includes(workloadKind)) {
+        throw new DomainError(`Invalid workloadKind: ${String(input.workloadKind)}`, 400);
       }
       const repository = text(input.repository, 'repository', 200);
       if (!REPO_PATTERN.test(repository)) {
@@ -546,27 +712,53 @@ export class ModelFactoryStore {
       if (!HEX40.test(baseCommit)) {
         throw new DomainError('Invalid baseCommit (40-char hex SHA required)', 400);
       }
-      const compute = validateTrainingComputeSpec(input.compute, modelId);
-      const releasePolicy = validateModelReleasePolicy(input.releasePolicy);
-      if (releasePolicy.autoPublish && !autoPublishAllowed(releasePolicy, this.autoPublishRepoPrefixes)) {
+      const compute = validateComputeSpec(input.compute, workloadId, {
+        projectId,
+        allowedS3Prefixes: policyContext.allowedS3Prefixes,
+      });
+      if (policyContext.maxLifetimeMs !== undefined && compute.maxLifetimeMs > policyContext.maxLifetimeMs) {
+        throw new DomainError(
+          `compute.maxLifetimeMs (${compute.maxLifetimeMs}) exceeds project limit (${policyContext.maxLifetimeMs})`,
+          403,
+        );
+      }
+      if (
+        policyContext.maxSingleJobCostMicros !== undefined &&
+        policyContext.maxSingleJobCostMicros !== null &&
+        compute.maxTotalCostMicros > policyContext.maxSingleJobCostMicros
+      ) {
+        throw new DomainError(
+          `compute.maxTotalCostMicros (${compute.maxTotalCostMicros}) exceeds project single-job limit (${policyContext.maxSingleJobCostMicros})`,
+          403,
+        );
+      }
+      const releasePolicy = validateComputeReleasePolicy(input.releasePolicy);
+      const effectiveAutoPublishPrefixes = [
+        ...new Set([...this.autoPublishRepoPrefixes, ...(policyContext.autoPublishRepoPrefixes ?? [])]),
+      ];
+      if (releasePolicy.autoPublish && !autoPublishAllowed(releasePolicy, effectiveAutoPublishPrefixes)) {
         throw new DomainError('releasePolicy.autoPublish is not allowed for this repository on this Control Plane', 403);
       }
-      const approvalFingerprint = computeModelFactoryApprovalFingerprint({
-        modelId,
+      const approvalFingerprint = computeJobApprovalFingerprint({
+        projectId,
+        workloadId,
+        workloadKind,
         repository,
         baseCommit,
         compute,
         releasePolicy,
       });
       const at = this.timestamp();
-      const job: ModelFactoryJob = {
-        id: `mf-${randomUUID()}`,
+      const job: ComputeJob = {
+        id: `cmp-${randomUUID()}`,
+        projectId,
         title,
-        modelId,
+        workloadId,
+        workloadKind,
         repository,
         baseCommit,
-        status: 'awaiting_training_approval',
-        waitReason: 'awaiting_training_approval',
+        status: 'awaiting_launch_approval',
+        waitReason: 'awaiting_launch_approval',
         diagnostics: [],
         approvalFingerprint,
         compute,
@@ -592,55 +784,131 @@ export class ModelFactoryStore {
         failureReason: null,
       };
       const saved = this.save(job);
-      this.emit(saved.id, 'model_factory.created', {
-        modelId,
-        region: compute.region,
-        instanceType: compute.instanceType,
-        amiId: compute.amiId,
-        maxTotalCostMicros: compute.maxTotalCostMicros,
-        approvalFingerprint,
-      });
+      this.emit(
+        saved.id,
+        'compute.created',
+        {
+          projectId,
+          workloadId,
+          workloadKind,
+          region: compute.region,
+          instanceType: compute.instanceType,
+          amiId: compute.amiId,
+          maxTotalCostMicros: compute.maxTotalCostMicros,
+          approvalFingerprint,
+        },
+        projectId,
+      );
       return saved;
     });
   }
 
-  async approveTraining(id: string, approvalFingerprint: string, reason: string): Promise<ModelFactoryJob> {
-    const result = await this.tx((): { ok: true; job: ModelFactoryJob } | { ok: false; error: DomainError } => {
+  async approveLaunch(
+    id: string,
+    approvalFingerprint: string,
+    reason: string,
+    budgetContext: ComputeApprovalBudgetContext = {},
+  ): Promise<ComputeJob> {
+    const result = await this.tx((): { ok: true; job: ComputeJob } | { ok: false; error: DomainError } => {
       const job = this.load(id);
-      if (job.status !== 'awaiting_training_approval') {
-        throw new DomainError(`Cannot approve training in state ${job.status}`, 409);
+      if (job.status !== 'awaiting_launch_approval') {
+        throw new DomainError(`Cannot approve launch in state ${job.status}`, 409);
       }
       const submitted = text(approvalFingerprint, 'approvalFingerprint', 64).toLowerCase();
       if (submitted !== job.approvalFingerprint) {
-        throw new DomainError('Training approvalFingerprint does not match job specification', 409);
+        throw new DomainError('Launch approvalFingerprint does not match job specification', 409);
       }
       const cleanReason = text(reason, 'reason', 1000);
 
-      // Hard central cost reservation check (B4) — persist diagnostic & audit event before returning 409.
-      const ledger = this.computeLedgerLocked();
-      if (job.compute.maxTotalCostMicros > ledger.remainingBudgetMicros) {
-        const message = `Central cost cap exceeded: requested ${job.compute.maxTotalCostMicros} micros, remaining ${ledger.remainingBudgetMicros} micros (global cap ${ledger.globalBudgetCapMicros})`;
+      // Single-job cap check
+      if (
+        budgetContext.maxSingleJobCostMicros !== undefined &&
+        budgetContext.maxSingleJobCostMicros !== null &&
+        job.compute.maxTotalCostMicros > budgetContext.maxSingleJobCostMicros
+      ) {
+        const message = `Project single-job cost cap exceeded: requested ${job.compute.maxTotalCostMicros} micros, limit ${budgetContext.maxSingleJobCostMicros} micros (project ${job.projectId})`;
         job.diagnostics.push(message);
         this.save(job);
-        this.emit(job.id, 'model_factory.cost_cap_rejected', {
-          requestedMicros: job.compute.maxTotalCostMicros,
-          remainingBudgetMicros: ledger.remainingBudgetMicros,
-          globalBudgetCapMicros: ledger.globalBudgetCapMicros,
-        });
+        this.emit(
+          job.id,
+          'compute.cost_cap_rejected',
+          {
+            scope: 'single_job',
+            projectId: job.projectId,
+            requestedMicros: job.compute.maxTotalCostMicros,
+            maxSingleJobCostMicros: budgetContext.maxSingleJobCostMicros,
+          },
+          job.projectId,
+        );
         return { ok: false, error: new DomainError(message, 409) };
       }
 
-      job.status = 'training_queued';
+      // Hard two-tier budget reservation check (host global ceiling + per-project ceiling)
+      const caps =
+        budgetContext.projectBudgetCapMicros !== undefined
+          ? { [job.projectId]: budgetContext.projectBudgetCapMicros }
+          : undefined;
+      const globalLedger = this.computeLedgerLocked({ projectBudgetCaps: caps });
+      if (job.compute.maxTotalCostMicros > globalLedger.remainingBudgetMicros) {
+        const message = `Central cost cap exceeded: requested ${job.compute.maxTotalCostMicros} micros, remaining ${globalLedger.remainingBudgetMicros} micros (global cap ${globalLedger.globalBudgetCapMicros})`;
+        job.diagnostics.push(message);
+        this.save(job);
+        this.emit(
+          job.id,
+          'compute.cost_cap_rejected',
+          {
+            scope: 'global',
+            projectId: job.projectId,
+            requestedMicros: job.compute.maxTotalCostMicros,
+            remainingBudgetMicros: globalLedger.remainingBudgetMicros,
+            globalBudgetCapMicros: globalLedger.globalBudgetCapMicros,
+          },
+          job.projectId,
+        );
+        return { ok: false, error: new DomainError(message, 409) };
+      }
+
+      if (budgetContext.projectBudgetCapMicros !== undefined) {
+        const projectLedger = globalLedger.byProject[job.projectId];
+        const projectCommitted = (projectLedger?.totalReservedMicros ?? 0) + (projectLedger?.totalSettledMicros ?? 0);
+        const projectRemaining = Math.max(0, budgetContext.projectBudgetCapMicros - projectCommitted);
+        if (job.compute.maxTotalCostMicros > projectRemaining) {
+          const message = `Project '${job.projectId}' budget cap exceeded: requested ${job.compute.maxTotalCostMicros} micros, remaining ${projectRemaining} micros (project cap ${budgetContext.projectBudgetCapMicros})`;
+          job.diagnostics.push(message);
+          this.save(job);
+          this.emit(
+            job.id,
+            'compute.cost_cap_rejected',
+            {
+              scope: 'project',
+              projectId: job.projectId,
+              requestedMicros: job.compute.maxTotalCostMicros,
+              remainingProjectBudgetMicros: projectRemaining,
+              projectBudgetCapMicros: budgetContext.projectBudgetCapMicros,
+            },
+            job.projectId,
+          );
+          return { ok: false, error: new DomainError(message, 409) };
+        }
+      }
+
+      job.status = 'queued';
       job.waitReason = 'spot_capacity_retry';
       job.approvedAt = this.timestamp();
       job.approvalReason = cleanReason;
       job.cost.reservedMicros = job.compute.maxTotalCostMicros;
       const saved = this.save(job);
-      this.emit(saved.id, 'model_factory.training_approved', {
-        approvalFingerprint: submitted,
-        reservedMicros: saved.cost.reservedMicros,
-        reason: cleanReason,
-      });
+      this.emit(
+        saved.id,
+        'compute.launch_approved',
+        {
+          projectId: saved.projectId,
+          approvalFingerprint: submitted,
+          reservedMicros: saved.cost.reservedMicros,
+          reason: cleanReason,
+        },
+        saved.projectId,
+      );
       return { ok: true, job: saved };
     });
     if (!result.ok) throw result.error;
@@ -658,10 +926,10 @@ export class ModelFactoryStore {
       expiresAt: string;
       nextWakeAt: string;
     },
-  ): Promise<ModelFactoryJob> {
+  ): Promise<ComputeJob> {
     return this.tx(() => {
       const job = this.load(id);
-      if (job.status !== 'training_queued') {
+      if (job.status !== 'queued') {
         throw new DomainError(`Cannot record launched instance in state ${job.status}`, 409);
       }
       const instanceId = text(input.instanceId, 'instanceId', 32).toLowerCase();
@@ -669,7 +937,7 @@ export class ModelFactoryStore {
         throw new DomainError(`Invalid EC2 instanceId: ${input.instanceId}`, 400);
       }
       const launchedAt = this.timestamp();
-      const instance: ModelFactoryInstanceState = {
+      const instance: ComputeInstanceState = {
         region: text(input.region, 'region', 32).toLowerCase(),
         availabilityZone: input.availabilityZone ? text(input.availabilityZone, 'availabilityZone', 32) : null,
         instanceId,
@@ -682,18 +950,24 @@ export class ModelFactoryStore {
         forcedTerminationReason: null,
       };
       job.instance = instance;
-      job.status = 'training_running';
-      job.waitReason = 'training_in_progress';
+      job.status = 'running';
+      job.waitReason = 'running_in_progress';
       job.nextWakeAt = text(input.nextWakeAt, 'nextWakeAt', 64);
       const saved = this.save(job);
-      this.emit(saved.id, 'model_factory.instance_launched', {
-        region: instance.region,
-        availabilityZone: instance.availabilityZone,
-        instanceId: instance.instanceId,
-        instanceType: instance.instanceType,
-        amiId: instance.amiId,
-        expiresAt: instance.expiresAt,
-      });
+      this.emit(
+        saved.id,
+        'compute.instance_launched',
+        {
+          projectId: saved.projectId,
+          region: instance.region,
+          availabilityZone: instance.availabilityZone,
+          instanceId: instance.instanceId,
+          instanceType: instance.instanceType,
+          amiId: instance.amiId,
+          expiresAt: instance.expiresAt,
+        },
+        saved.projectId,
+      );
       return saved;
     });
   }
@@ -705,10 +979,9 @@ export class ModelFactoryStore {
       nextWakeAt: string | null;
       forcedTerminationReason?: string;
       diagnostic?: string;
-      /** When the instance really ended, if known. Otherwise the time of this update is recorded. */
       endedAt?: string;
     },
-  ): Promise<ModelFactoryJob> {
+  ): Promise<ComputeJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (!job.instance) {
@@ -724,17 +997,22 @@ export class ModelFactoryStore {
       }
       if (update.state === 'terminated' || update.state === 'shutting-down' || update.state === 'stopped') {
         job.instance.terminatedAt = job.instance.terminatedAt ?? update.endedAt ?? this.timestamp();
-        if (job.status === 'training_running') {
+        if (job.status === 'running') {
           job.waitReason = job.cost.settledMicros === null ? 'awaiting_cost_settlement' : null;
         }
       }
       const saved = this.save(job);
-      this.emit(saved.id, 'model_factory.wake_checked', {
-        instanceId: job.instance.instanceId,
-        state: update.state,
-        nextWakeAt: update.nextWakeAt,
-        forcedTerminationReason: job.instance.forcedTerminationReason,
-      });
+      this.emit(
+        saved.id,
+        'compute.wake_checked',
+        {
+          instanceId: job.instance.instanceId,
+          state: update.state,
+          nextWakeAt: update.nextWakeAt,
+          forcedTerminationReason: job.instance.forcedTerminationReason,
+        },
+        saved.projectId,
+      );
       return saved;
     });
   }
@@ -742,7 +1020,7 @@ export class ModelFactoryStore {
   async settleCost(
     id: string,
     input: { actualCostMicros: number; instanceSeconds: number; diagnostic?: string },
-  ): Promise<ModelFactoryJob> {
+  ): Promise<ComputeJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (!Number.isSafeInteger(input.actualCostMicros) || input.actualCostMicros < 0 || input.actualCostMicros > 10_000_000_000) {
@@ -761,25 +1039,31 @@ export class ModelFactoryStore {
         job.waitReason = null;
       }
       const saved = this.save(job);
-      this.emit(saved.id, 'model_factory.cost_settled', {
-        reservedMicros: saved.cost.reservedMicros,
-        settledMicros: saved.cost.settledMicros,
-        instanceSeconds: saved.cost.instanceSeconds,
-      });
+      this.emit(
+        saved.id,
+        'compute.cost_settled',
+        {
+          projectId: saved.projectId,
+          reservedMicros: saved.cost.reservedMicros,
+          settledMicros: saved.cost.settledMicros,
+          instanceSeconds: saved.cost.instanceSeconds,
+        },
+        saved.projectId,
+      );
       return saved;
     });
   }
 
-  async recordArtifactReceipt(id: string, receipt: ModelArtifactReceipt): Promise<ModelFactoryJob> {
+  async recordArtifactReceipt(id: string, receipt: ComputeArtifactReceipt): Promise<ComputeJob> {
     return this.tx(() => {
       const job = this.load(id);
-      if (job.status !== 'training_running' && job.status !== 'evaluating') {
+      if (job.status !== 'running' && job.status !== 'evaluating') {
         throw new DomainError(`Cannot record artifact receipt in state ${job.status}`, 409);
       }
       if (receipt.version !== 1 || receipt.jobId !== job.id) {
         throw new DomainError('Artifact receipt version or jobId mismatch', 409);
       }
-      const expectedDigest = computeModelManifestDigest(receipt.files);
+      const expectedDigest = computeArtifactManifestDigest(receipt.files);
       const submittedDigest = text(receipt.manifestDigest, 'manifestDigest', 64).toLowerCase();
       if (submittedDigest !== expectedDigest) {
         throw new DomainError('Artifact receipt manifestDigest does not match file SHA-256 hashes', 409);
@@ -804,24 +1088,29 @@ export class ModelFactoryStore {
       };
       job.status = 'evaluating';
       job.nextWakeAt = null;
-      if (job.waitReason === 'training_in_progress') {
+      if (job.waitReason === 'running_in_progress') {
         job.waitReason = job.cost.settledMicros === null ? 'awaiting_cost_settlement' : null;
       }
       const saved = this.save(job);
-      this.emit(saved.id, 'model_factory.receipt_recorded', {
-        manifestDigest: expectedDigest,
-        fileCount: job.receipt.files.length,
-        s3Prefix,
-      });
+      this.emit(
+        saved.id,
+        'compute.receipt_recorded',
+        {
+          manifestDigest: expectedDigest,
+          fileCount: job.receipt.files.length,
+          s3Prefix,
+        },
+        saved.projectId,
+      );
       return saved;
     });
   }
 
   async recordReleaseAttestation(
     id: string,
-    attestation: SubmitModelReleaseAttestation,
-    source: ModelReleaseAttestationSource = 'operator_self_reported',
-  ): Promise<ModelFactoryJob> {
+    attestation: SubmitComputeReleaseAttestation,
+    source: ComputeReleaseAttestationSource = 'operator_self_reported',
+  ): Promise<ComputeJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (job.status !== 'evaluating' || !job.receipt) {
@@ -831,9 +1120,9 @@ export class ModelFactoryStore {
       if (digest !== job.receipt.manifestDigest) {
         throw new DomainError('Release attestation manifestDigest does not match S3 artifact receipt', 409);
       }
-      const normalizedSource: ModelReleaseAttestationSource =
+      const normalizedSource: ComputeReleaseAttestationSource =
         source === 'independent_verifier' ? 'independent_verifier' : 'operator_self_reported';
-      const normalized: ModelReleaseAttestation = {
+      const normalized: ComputeReleaseAttestation = {
         manifestDigest: digest,
         releaseCheckPassed: Boolean(attestation.releaseCheckPassed),
         metrics: attestation.metrics && typeof attestation.metrics === 'object' ? { ...attestation.metrics } : {},
@@ -854,18 +1143,22 @@ export class ModelFactoryStore {
         job.diagnostics.push(job.failureReason);
       }
       const saved = this.save(job);
-      this.emit(saved.id, 'model_factory.release_attested', {
-        manifestDigest: digest,
-        releaseCheckPassed: normalized.releaseCheckPassed,
-        attestationSource: normalized.attestationSource,
-        nextStatus: saved.status,
-      });
+      this.emit(
+        saved.id,
+        'compute.release_attested',
+        {
+          manifestDigest: digest,
+          releaseCheckPassed: normalized.releaseCheckPassed,
+          attestationSource: normalized.attestationSource,
+          nextStatus: saved.status,
+        },
+        saved.projectId,
+      );
       return saved;
     });
   }
 
-  /** Records that an independent verifier task was started. Allowed only while the job awaits verification. */
-  async recordVerifierDispatched(id: string, ecsTaskArn: string): Promise<ModelFactoryJob> {
+  async recordVerifierDispatched(id: string, ecsTaskArn: string): Promise<ComputeJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (job.status !== 'evaluating' || !job.receipt) {
@@ -873,16 +1166,12 @@ export class ModelFactoryStore {
       }
       job.releaseVerifier = { ecsTaskArn: text(ecsTaskArn, 'ecsTaskArn', 512), dispatchedAt: this.timestamp() };
       const saved = this.save(job);
-      this.emit(saved.id, 'model_factory.release_verifier_dispatched', { ecsTaskArn: job.releaseVerifier.ecsTaskArn });
+      this.emit(saved.id, 'compute.release_verifier_dispatched', { ecsTaskArn: job.releaseVerifier.ecsTaskArn }, saved.projectId);
       return saved;
     });
   }
 
-  /**
-   * Stores the region and AZ order planned from the Spot placement score feed. The plan only reorders the
-   * regions the job lists, so it is not part of the approval fingerprint.
-   */
-  async recordPlacementPlan(id: string, plan: TrainingPlacementPlan): Promise<ModelFactoryJob> {
+  async recordPlacementPlan(id: string, plan: ComputePlacementPlan): Promise<ComputeJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (TERMINAL_STATUSES.has(job.status)) {
@@ -895,22 +1184,29 @@ export class ModelFactoryStore {
       job.placementPlan = structuredClone(plan);
       const saved = this.save(job);
       const first = plan.regions[0];
-      this.emit(saved.id, 'model_factory.placement_planned', {
-        status: plan.status,
-        feedPool: plan.feedPool,
-        feedGeneratedAt: plan.feedGeneratedAt,
-        regionOrder: plan.regions.map((entry) => entry.region),
-        firstAzId: first?.azs[0]?.azId ?? null,
-      });
+      this.emit(
+        saved.id,
+        'compute.placement_planned',
+        {
+          status: plan.status,
+          feedPool: plan.feedPool,
+          feedGeneratedAt: plan.feedGeneratedAt,
+          regionOrder: plan.regions.map((entry) => entry.region),
+          firstAzId: first?.azs[0]?.azId ?? null,
+        },
+        saved.projectId,
+      );
       return saved;
     });
   }
 
-  /** True when the job may be approved by the auto-publish policy right now (issue #20). */
-  isAutoPublishEligible(job: ModelFactoryJob): boolean {
+  isAutoPublishEligible(job: ComputeJob, projectAutoPublishPrefixes?: readonly string[]): boolean {
+    const prefixes = [
+      ...new Set([...this.autoPublishRepoPrefixes, ...(projectAutoPublishPrefixes ?? [])]),
+    ];
     return (
       job.status === 'awaiting_release_approval' &&
-      autoPublishAllowed(job.releasePolicy, this.autoPublishRepoPrefixes) &&
+      autoPublishAllowed(job.releasePolicy, prefixes) &&
       job.releaseAttestation?.attestationSource === 'independent_verifier' &&
       job.releaseAttestation.releaseCheckPassed === true &&
       Boolean(job.receipt) &&
@@ -918,15 +1214,10 @@ export class ModelFactoryStore {
     );
   }
 
-  /**
-   * Approves the release on behalf of the auto-publish policy. Allowed only when the policy asked for it,
-   * the repository is under an allowed prefix (checked again now, in case the operator narrowed it), and
-   * the independent verifier passed the release check on the receipted artifacts.
-   */
-  async recordAutoReleaseDecision(id: string): Promise<ModelFactoryJob> {
+  async recordAutoReleaseDecision(id: string, projectAutoPublishPrefixes?: readonly string[]): Promise<ComputeJob> {
     return this.tx(() => {
       const job = this.load(id);
-      if (!this.isAutoPublishEligible(job)) {
+      if (!this.isAutoPublishEligible(job, projectAutoPublishPrefixes)) {
         throw new DomainError(`Job ${id} is not eligible for automatic publication`, 409);
       }
       job.releaseDecision = {
@@ -939,15 +1230,20 @@ export class ModelFactoryStore {
       job.status = 'release_approved';
       job.waitReason = null;
       const saved = this.save(job);
-      this.emit(saved.id, 'model_factory.release_auto_approved', {
-        repository: job.releasePolicy.hfRepository ?? null,
-        manifestDigest: job.receipt!.manifestDigest,
-      });
+      this.emit(
+        saved.id,
+        'compute.release_auto_approved',
+        {
+          repository: job.releasePolicy.hfRepository ?? null,
+          manifestDigest: job.receipt!.manifestDigest,
+        },
+        saved.projectId,
+      );
       return saved;
     });
   }
 
-  async recordReleaseDecision(id: string, input: Omit<ModelReleaseDecision, 'decidedAt'>): Promise<ModelFactoryJob> {
+  async recordReleaseDecision(id: string, input: Omit<ComputeReleaseDecision, 'decidedAt'>): Promise<ComputeJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (job.status !== 'awaiting_release_approval' || !job.releaseAttestation?.releaseCheckPassed) {
@@ -973,20 +1269,21 @@ export class ModelFactoryStore {
       job.status = input.decision === 'approve' ? 'release_approved' : 'rejected';
       job.waitReason = null;
       const saved = this.save(job);
-      this.emit(saved.id, 'model_factory.release_decided', {
-        decision: input.decision,
-        openedRawArtifacts: input.openedRawArtifacts,
-        durationMinutes: input.durationMinutes,
-      });
+      this.emit(
+        saved.id,
+        'compute.release_decided',
+        {
+          decision: input.decision,
+          openedRawArtifacts: input.openedRawArtifacts,
+          durationMinutes: input.durationMinutes,
+        },
+        saved.projectId,
+      );
       return saved;
     });
   }
 
-  /**
-   * Records a failed publication attempt. The job stays release_approved so the approved release can be
-   * published again; the reason goes to diagnostics and an event.
-   */
-  async recordPublicationFailure(id: string, reason: string): Promise<ModelFactoryJob> {
+  async recordPublicationFailure(id: string, reason: string): Promise<ComputeJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (job.status !== 'release_approved' || job.publication) {
@@ -995,23 +1292,22 @@ export class ModelFactoryStore {
       const clipped = reason.length > 500 ? `${reason.slice(0, 497)}...` : reason;
       job.diagnostics = [...job.diagnostics, `Release publication failed: ${clipped}`].slice(-20);
       const saved = this.save(job);
-      this.emit(saved.id, 'model_factory.release_publish_failed', { reason: clipped });
+      this.emit(saved.id, 'compute.release_publish_failed', { reason: clipped }, saved.projectId);
       return saved;
     });
   }
 
-  /** Marks the start of a publication attempt, for the audit trail. */
   async recordPublicationStarted(id: string): Promise<void> {
     await this.tx(() => {
       const job = this.load(id);
       if (job.status !== 'release_approved' || job.publication) {
         throw new DomainError(`Cannot publish in state ${job.status}`, 409);
       }
-      this.emit(job.id, 'model_factory.release_publish_started', { mode: job.releasePolicy.mode });
+      this.emit(job.id, 'compute.release_publish_started', { mode: job.releasePolicy.mode }, job.projectId);
     });
   }
 
-  async recordReleasePublication(id: string, publication: ModelReleasePublication): Promise<ModelFactoryJob> {
+  async recordReleasePublication(id: string, publication: ComputeReleasePublication): Promise<ComputeJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (job.status !== 'release_approved' || !job.receipt || !job.releaseAttestation) {
@@ -1043,23 +1339,26 @@ export class ModelFactoryStore {
       job.status = 'released';
       job.waitReason = null;
       const saved = this.save(job);
-      this.emit(saved.id, 'model_factory.released', {
-        mode: publication.mode,
-        repository: publication.repository ?? null,
-        manifestDigest: digest,
-      });
+      this.emit(
+        saved.id,
+        'compute.released',
+        {
+          mode: publication.mode,
+          repository: publication.repository ?? null,
+          manifestDigest: digest,
+        },
+        saved.projectId,
+      );
       return saved;
     });
   }
 
-  async fail(id: string, reason: string, diagnostic?: string): Promise<ModelFactoryJob> {
+  async fail(id: string, reason: string, diagnostic?: string): Promise<ComputeJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (TERMINAL_STATUSES.has(job.status)) {
-        throw new DomainError(`Cannot fail model factory job in terminal state ${job.status}`, 409);
+        throw new DomainError(`Cannot fail compute job in terminal state ${job.status}`, 409);
       }
-      // Recording a failure must not fail itself. A reason that is too long is cut, not refused: a refused
-      // reason would leave the job in its previous state with its budget still reserved.
       const cleanReason = text(clip(reason, 1000) || 'Failed without a reason', 'reason', 1000);
       job.status = 'failed';
       job.waitReason = null;
@@ -1073,16 +1372,16 @@ export class ModelFactoryStore {
         job.cost.settledAt = this.timestamp();
       }
       const saved = this.save(job);
-      this.emit(saved.id, 'model_factory.failed', { reason: cleanReason });
+      this.emit(saved.id, 'compute.failed', { reason: cleanReason }, saved.projectId);
       return saved;
     });
   }
 
-  async cancel(id: string, reason: string): Promise<ModelFactoryJob> {
+  async cancel(id: string, reason: string): Promise<ComputeJob> {
     return this.tx(() => {
       const job = this.load(id);
       if (TERMINAL_STATUSES.has(job.status)) {
-        throw new DomainError(`Cannot cancel model factory job in terminal state ${job.status}`, 409);
+        throw new DomainError(`Cannot cancel compute job in terminal state ${job.status}`, 409);
       }
       const cleanReason = text(reason, 'reason', 1000);
       job.status = 'cancelled';
@@ -1095,7 +1394,7 @@ export class ModelFactoryStore {
         job.cost.settledAt = this.timestamp();
       }
       const saved = this.save(job);
-      this.emit(saved.id, 'model_factory.cancelled', { reason: cleanReason });
+      this.emit(saved.id, 'compute.cancelled', { reason: cleanReason }, saved.projectId);
       return saved;
     });
   }

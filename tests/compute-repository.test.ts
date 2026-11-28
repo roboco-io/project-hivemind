@@ -4,15 +4,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
-import type { CreateModelFactoryJob, ModelFactoryEvent, ModelFactoryJob } from '../packages/contracts/src/model-factory.js';
-import { ModelFactoryStore } from '../packages/core/src/model-factory.js';
+import type { CreateComputeJob, ComputeEvent, ComputeJob } from '../packages/contracts/src/compute.js';
+import { ComputeStore } from '../packages/core/src/compute.js';
 import { newDocumentTxState } from '../packages/core/src/document-repository.js';
-import type { ModelFactoryRepository, ModelFactoryTxState } from '../packages/core/src/model-factory-repository.js';
+import type { ComputeRepository, ComputeTxState } from '../packages/core/src/compute-repository.js';
 
-function jobInput(prefix: string, maxTotalCostMicros = 400_000): CreateModelFactoryJob {
+function jobInput(prefix: string, maxTotalCostMicros = 400_000): CreateComputeJob {
   return {
     title: 'Repository port test',
-    modelId: 'smf-tiny-v1',
+    workloadId: 'smf-tiny-v1',
     repository: 'roboco-io/silicon-model-factory',
     baseCommit: 'a'.repeat(40),
     compute: {
@@ -32,15 +32,15 @@ function jobInput(prefix: string, maxTotalCostMicros = 400_000): CreateModelFact
  * In-memory repository that behaves like a backend with optimistic concurrency control: it runs every
  * transaction body `attempts` times and keeps only the last run, as a retry after a conflict would.
  */
-class RetryingMemoryRepository implements ModelFactoryRepository {
+class RetryingMemoryRepository implements ComputeRepository {
   readonly storageBackend = 'aurora-dsql' as const;
-  jobs = new Map<string, ModelFactoryJob>();
-  events: ModelFactoryEvent[] = [];
+  jobs = new Map<string, ComputeJob>();
+  events: ComputeEvent[] = [];
   bodyRuns = 0;
   constructor(private readonly attempts: number) {}
 
-  async transaction<T>(fn: (state: ModelFactoryTxState) => T): Promise<T> {
-    let state!: ModelFactoryTxState;
+  async transaction<T>(fn: (state: ComputeTxState) => T): Promise<T> {
+    let state!: ComputeTxState;
     let result!: T;
     for (let i = 0; i < this.attempts; i += 1) {
       state = newDocumentTxState([...this.jobs.values()].map((job) => structuredClone(job)));
@@ -64,30 +64,30 @@ class RetryingMemoryRepository implements ModelFactoryRepository {
   async close() {}
 }
 
-test('ModelFactoryStore runs unchanged on a non-SQLite repository and stays correct when a transaction body is re-run', async () => {
+test('ComputeStore runs unchanged on a non-SQLite repository and stays correct when a transaction body is re-run', async () => {
   const repository = new RetryingMemoryRepository(3);
-  const store = new ModelFactoryStore(repository, { globalBudgetCapMicros: 500_000 });
+  const store = new ComputeStore(repository, { globalBudgetCapMicros: 500_000 });
   assert.equal(store.storageBackend, 'aurora-dsql');
 
   const job = await store.create(jobInput('run-a'));
   assert.equal(repository.jobs.size, 1);
   assert.equal(repository.events.length, 1, 'a re-run body must not duplicate events');
 
-  const approved = await store.approveTraining(job.id, job.approvalFingerprint, 'ok');
-  assert.equal(approved.status, 'training_queued');
+  const approved = await store.approveLaunch(job.id, job.approvalFingerprint, 'ok');
+  assert.equal(approved.status, 'queued');
   assert.equal((await store.ledger()).totalReservedMicros, 400_000);
 
   // The cost cap is evaluated against every job on each run of the body.
   const second = await store.create(jobInput('run-b'));
-  await assert.rejects(() => store.approveTraining(second.id, second.approvalFingerprint, 'ok'), /Central cost cap exceeded/);
+  await assert.rejects(() => store.approveLaunch(second.id, second.approvalFingerprint, 'ok'), /Central cost cap exceeded/);
   const rejected = await store.get(second.id);
-  assert.equal(rejected.status, 'awaiting_training_approval');
+  assert.equal(rejected.status, 'awaiting_launch_approval');
   assert.equal(rejected.diagnostics.length, 1, 'the rejection diagnostic is stored once, not once per run');
-  assert.equal((await store.events(second.id)).filter((e) => e.type === 'model_factory.cost_cap_rejected').length, 1);
+  assert.equal((await store.events(second.id)).filter((e) => e.type === 'compute.cost_cap_rejected').length, 1);
 
   // A body that throws writes nothing.
   const before = repository.events.length;
-  await assert.rejects(() => store.approveTraining(job.id, '0'.repeat(64), 'ok'), /Cannot approve training/);
+  await assert.rejects(() => store.approveLaunch(job.id, '0'.repeat(64), 'ok'), /Cannot approve launch/);
   await assert.rejects(() => store.get('mf-00000000-0000-4000-8000-000000000000'), /not found/);
   assert.equal(repository.events.length, before);
   assert.ok(repository.bodyRuns >= 12);
@@ -98,20 +98,20 @@ test('SQLite repository persists across reopen, rolls back a throwing transactio
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, 'nested', 'mf.sqlite');
 
-  const first = new ModelFactoryStore(path);
+  const first = new ComputeStore(path);
   assert.equal(first.storageBackend, 'sqlite');
   const job = await first.create(jobInput('run-persist'));
-  await assert.rejects(() => first.approveTraining(job.id, 'f'.repeat(64), 'wrong fingerprint'), /does not match/);
+  await assert.rejects(() => first.approveLaunch(job.id, 'f'.repeat(64), 'wrong fingerprint'), /does not match/);
   assert.equal((await first.events(job.id)).length, 1);
-  await first.approveTraining(job.id, job.approvalFingerprint, 'ok');
+  await first.approveLaunch(job.id, job.approvalFingerprint, 'ok');
   await first.close();
 
-  const reopened = new ModelFactoryStore(path);
+  const reopened = new ComputeStore(path);
   const loaded = await reopened.get(job.id);
-  assert.equal(loaded.status, 'training_queued');
+  assert.equal(loaded.status, 'queued');
   assert.deepEqual(
     (await reopened.events(job.id)).map((e) => e.type),
-    ['model_factory.training_approved', 'model_factory.created'],
+    ['compute.launch_approved', 'compute.created'],
   );
   assert.equal((await reopened.list()).length, 1);
   await reopened.close();
@@ -124,9 +124,9 @@ test('SQLite repository persists across reopen, rolls back a throwing transactio
   legacy.prepare('INSERT INTO model_factory_jobs (id, data) VALUES (?, ?)').run(loaded.id, JSON.stringify(loaded));
   legacy
     .prepare('INSERT INTO model_factory_events (data) VALUES (?)')
-    .run(JSON.stringify({ jobId: loaded.id, type: 'model_factory.created', at: loaded.createdAt, data: {} }));
+    .run(JSON.stringify({ jobId: loaded.id, type: 'compute.created', at: loaded.createdAt, data: {} }));
   legacy.close();
-  const fromLegacy = new ModelFactoryStore(legacyPath);
+  const fromLegacy = new ComputeStore(legacyPath);
   assert.equal((await fromLegacy.get(loaded.id)).cost.reservedMicros, 400_000);
   assert.equal((await fromLegacy.ledger()).activeReservations, 1);
   assert.equal((await fromLegacy.events()).length, 1);
@@ -136,17 +136,17 @@ test('SQLite repository persists across reopen, rolls back a throwing transactio
 test('buildApp serves the Model Factory API from an injected repository and reports its backend', async () => {
   const { buildApp } = await import('../apps/control-plane/src/app.js');
   const repository = new RetryingMemoryRepository(1);
-  const app = buildApp({ operatorToken: 'op-repo-token', workerToken: 'wk-repo-token', modelFactoryRepository: repository });
+  const app = buildApp({ operatorToken: 'op-repo-token', workerToken: 'wk-repo-token', computeRepository: repository });
   try {
     const created = await app.inject({
       method: 'POST',
-      url: '/api/model-factory/jobs',
+      url: '/api/compute/jobs',
       headers: { authorization: 'Bearer op-repo-token' },
       payload: jobInput('run-api'),
     });
     assert.equal(created.statusCode, 201);
     assert.equal(repository.jobs.size, 1, 'the job is written to the injected repository, not to SQLite');
-    const listed = await app.inject({ method: 'GET', url: '/api/model-factory/jobs', headers: { authorization: 'Bearer op-repo-token' } });
+    const listed = await app.inject({ method: 'GET', url: '/api/compute/jobs', headers: { authorization: 'Bearer op-repo-token' } });
     assert.equal(listed.json().storageBackend, 'aurora-dsql');
     assert.equal(listed.json().jobs[0].id, created.json().id);
   } finally {

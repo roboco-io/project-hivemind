@@ -16,10 +16,10 @@ test('buildDsqlAccessPlan creates tables first, then roles, IAM mappings and tab
   const plan = buildDsqlAccessPlan({ controlPlaneIamRoleArn: CP_ARN, ttlGuardIamRoleArn: GUARD_ARN });
   const sql = plan.map((s) => s.sql.replace(/\s+/g, ' ').trim());
 
-  // 4 collab + 3 model factory + 3 delivery + 3 autonomy trigger tables come before any role statement.
+  // 4 collab + 3 compute + 3 delivery + 3 autonomy trigger + 3 projects tables come before any role statement.
   const firstRole = sql.findIndex((s) => s.startsWith('CREATE ROLE'));
-  assert.equal(sql.slice(0, firstRole).filter((s) => s.startsWith('CREATE TABLE IF NOT EXISTS')).length, 13);
-  assert.equal(firstRole, 13);
+  assert.equal(sql.slice(0, firstRole).filter((s) => s.startsWith('CREATE TABLE IF NOT EXISTS')).length, 16);
+  assert.equal(firstRole, 16);
 
   assert.ok(sql.includes(`CREATE ROLE ${CONTROL_PLANE_DB_ROLE} WITH LOGIN`));
   assert.ok(sql.includes(`AWS IAM GRANT ${CONTROL_PLANE_DB_ROLE} TO '${CP_ARN}'`));
@@ -31,17 +31,17 @@ test('buildDsqlAccessPlan creates tables first, then roles, IAM mappings and tab
   ]);
 
   const grants = sql.filter((s) => s.startsWith('GRANT '));
-  assert.equal(grants.filter((s) => s.endsWith(`TO ${CONTROL_PLANE_DB_ROLE}`)).length, 13);
+  assert.equal(grants.filter((s) => s.endsWith(`TO ${CONTROL_PLANE_DB_ROLE}`)).length, 16);
   assert.deepEqual(grants.filter((s) => s.endsWith(`TO ${TTL_GUARD_DB_ROLE}`)).sort(), [
     `GRANT INSERT ON hm_mf_events TO ${TTL_GUARD_DB_ROLE}`,
     `GRANT SELECT, INSERT, UPDATE ON hm_mf_jobs TO ${TTL_GUARD_DB_ROLE}`,
     `GRANT SELECT, INSERT, UPDATE ON hm_mf_meta TO ${TTL_GUARD_DB_ROLE}`,
   ]);
-  // No role may delete rows, change schema, or pass its rights on; the guard sees no collab or delivery table.
+  // No role may delete rows, change schema, or pass its rights on; the guard sees no collab, delivery, or projects table.
   for (const statement of sql) {
     assert.doesNotMatch(statement, /\b(DELETE|TRUNCATE|DROP|ALTER|ALL PRIVILEGES|WITH GRANT OPTION|SUPERUSER|CREATEROLE)\b/, statement);
   }
-  assert.ok(!Object.keys(DSQL_ROLE_GRANTS[TTL_GUARD_DB_ROLE]!).some((t) => t.startsWith('hm_collab') || t.startsWith('hm_delivery')));
+  assert.ok(!Object.keys(DSQL_ROLE_GRANTS[TTL_GUARD_DB_ROLE]!).some((t) => t.startsWith('hm_collab') || t.startsWith('hm_delivery') || t.startsWith('hm_projects')));
   // Every upserted table has UPDATE next to INSERT (an upsert needs both); the append-only guard event insert does not.
   for (const [role, tables] of Object.entries(DSQL_ROLE_GRANTS)) {
     for (const [table, privileges] of Object.entries(tables)) {

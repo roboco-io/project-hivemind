@@ -1,11 +1,11 @@
 import type {
-  ModelArtifactReceipt,
-  ModelFactoryJob,
-  ModelReleaseAttestation,
-  ModelReleaseDecision,
-  ModelReleasePublication,
-  TrainingPlacementPlan,
-} from '../../../packages/contracts/src/model-factory.js';
+  ComputeArtifactReceipt,
+  ComputeJob,
+  ComputePlacementPlan,
+  ComputeReleaseAttestation,
+  ComputeReleaseDecision,
+  ComputeReleasePublication,
+} from '../../../packages/contracts/src/compute.js';
 import type {
   Ec2SpotTrainerPort,
   ExpiredSpotSweepResult,
@@ -16,36 +16,31 @@ import {
   type PublicAmiResolverPort,
 } from '../../../packages/adapters/src/aws-ssm-public-ami.js';
 import type { SpotPlacementFeedPort } from '../../../packages/adapters/src/spot-placement-feed.js';
-import type { ModelFactoryStore } from '../../../packages/core/src/model-factory.js';
-import { DomainError } from '../../../packages/core/src/store.js';
-import { calculateActualCostMicros } from '../../../packages/core/src/model-factory-guard-settlement.js';
+import type { ComputeApprovalBudgetContext, ComputeStore } from '../../../packages/core/src/compute.js';
+import { calculateActualCostMicros } from '../../../packages/core/src/compute-guard-settlement.js';
 import {
+  computeCandidateRegions,
   type LivePlacementScores,
   orderSubnetsByPlannedAzs,
-  planTrainingPlacement,
-  trainingCandidateRegions,
-} from '../../../packages/core/src/model-factory-placement.js';
+  planComputePlacement,
+} from '../../../packages/core/src/compute-placement.js';
+import { DEFAULT_PROJECT_ID, type ProjectStore } from '../../../packages/core/src/projects.js';
+import { DomainError } from '../../../packages/core/src/store.js';
 
 export interface TrustedHfReleasePublisherPort {
   publish(input: {
-    job: ModelFactoryJob;
-    receipt: ModelArtifactReceipt;
-    attestation: ModelReleaseAttestation;
+    job: ComputeJob;
+    receipt: ComputeArtifactReceipt;
+    attestation: ComputeReleaseAttestation;
     signal?: AbortSignal;
-  }): Promise<ModelReleasePublication>;
-  /** Creates the Hugging Face repository when it does not exist yet (auto-publish only). */
+  }): Promise<ComputeReleasePublication>;
   ensureRepository?(repository: string, visibility: 'private' | 'public', signal?: AbortSignal): Promise<'exists' | 'created'>;
 }
 
-/**
- * Operator-configured network and AMI defaults for one region.
- * A job uses these when it names the region in `candidateRegions` but gives no `regionOverrides` entry for it.
- */
 export interface RegionNetworkDefaults {
   subnetIds?: string[];
   securityGroupIds?: string[];
   amiId?: string;
-  /** AWS-owned public SSM parameter (`/aws/service/...`) that holds the latest AMI ID for this region. */
   amiSsmParameter?: string;
 }
 
@@ -65,10 +60,6 @@ function registryIdList(value: unknown, pattern: RegExp, label: string, max: num
   });
 }
 
-/**
- * Parses `HIVEMIND_MF_REGION_NETWORKS_JSON`. Fails closed: an unknown region, an unknown field or a
- * malformed ID rejects the whole registry, so a typo cannot silently send an instance to a wrong network.
- */
 export function parseRegionNetworkRegistry(
   raw: string | undefined,
   allowedRegions: string[],
@@ -130,8 +121,9 @@ export interface PlacementAttemptRecord {
   detail?: string;
 }
 
-export interface ModelFactoryOrchestratorOptions {
-  store: ModelFactoryStore;
+export interface ComputeOrchestratorOptions {
+  store: ComputeStore;
+  projects?: ProjectStore;
   ec2: Ec2SpotTrainerPort;
   s3: S3ObjectPort;
   artifactsBucket?: string;
@@ -140,35 +132,21 @@ export interface ModelFactoryOrchestratorOptions {
   allowedInstanceProfileArns?: string[];
   hfPublisher?: TrustedHfReleasePublisherPort;
   spotFeed?: SpotPlacementFeedPort;
-  /** Starts the independent verifier task. Without it `dispatchReleaseVerifier` is unavailable. */
   verifierLauncher?: {
     launchModelReleaseVerifier(input: { jobId: string; specBase64: string }, signal?: AbortSignal): Promise<{ taskArn: string }>;
   };
-  /** Per-region network and AMI defaults; a job's own `regionOverrides` entry always wins. */
   regionNetworks?: Record<string, RegionNetworkDefaults>;
-  /** Resolves `RegionNetworkDefaults.amiSsmParameter`; without it that field is ignored. */
   amiResolver?: PublicAmiResolverPort;
-  /**
-   * Called once per placement attempt so an operator can audit which regions were tried and why a region
-   * was skipped. The detail is the provider error text truncated to 200 characters; it never holds secrets.
-   */
   onPlacementAttempt?: (attempt: PlacementAttemptRecord) => void;
   wakeIntervalMs?: number;
   now?: () => number;
-  /**
-   * Role ID (AROA...) of the training instance role. When set, instances write only to
-   * `staging/<role id>:<instance id>/` and the Control Plane copies checked artifacts to the job prefix.
-   */
   trainingRoleId?: string;
-  /** Best-effort notification of release and budget events (issue #20). Never throws. */
   notify?: (kind: 'release_published' | 'release_failed' | 'budget_exhausted', subject: string, message: string) => Promise<void>;
 }
 
-const MAX_INLINE_INPUT_VERIFY_BYTES = 5 * 1024 * 1024; // 5 MiB full SHA-256 preflight; larger verified via HEAD size + instance-side SHA-256
-
+const MAX_INLINE_INPUT_VERIFY_BYTES = 5 * 1024 * 1024;
 const STAGING_ROLE_ID = /^AROA[A-Z0-9]{12,124}$/;
 
-/** `staging/<role id>:` — followed by the instance ID, this equals `staging/${aws:userid}` for the instance role. */
 export function stagingPrefixBase(roleId: string): string {
   return `staging/${roleId}:`;
 }
@@ -178,19 +156,21 @@ function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-export function composeTrainingUserData(
-  job: ModelFactoryJob,
+export function composeComputeUserData(
+  job: ComputeJob,
   envMeta: { artifactsBucket?: string; artifactsRegion?: string; stagingRoleId?: string },
 ): string | undefined {
   if (job.compute.userDataScript === undefined) return undefined;
   const lines = [
     `export HIVEMIND_JOB_ID=${shellSingleQuote(job.id)}`,
-    `export HIVEMIND_MODEL_ID=${shellSingleQuote(job.modelId)}`,
+    `export HIVEMIND_PROJECT_ID=${shellSingleQuote(job.projectId)}`,
+    `export HIVEMIND_WORKLOAD_ID=${shellSingleQuote(job.workloadId)}`,
+    `export HIVEMIND_WORKLOAD_KIND=${shellSingleQuote(job.workloadKind)}`,
+    // Kept for training scripts migrated from Model Factory
+    `export HIVEMIND_MODEL_ID=${shellSingleQuote(job.workloadId)}`,
   ];
   if (envMeta.stagingRoleId) {
-    // The instance role may write only under staging/<role id>:<instance id>/ (IAM variable aws:userid).
-    // The job's own prefix is filled by the Control Plane after it checks the receipt.
-    if (!STAGING_ROLE_ID.test(envMeta.stagingRoleId)) throw new Error('Invalid training instance role ID');
+    if (!STAGING_ROLE_ID.test(envMeta.stagingRoleId)) throw new Error('Invalid compute instance role ID');
     lines.push(
       `export HIVEMIND_JOB_ARTIFACT_PREFIX=${shellSingleQuote(job.compute.s3ArtifactPrefix)}`,
       `HIVEMIND_IMDS_TOKEN=$(curl -sS -m 5 -X PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' http://169.254.169.254/latest/api/token)`,
@@ -231,13 +211,13 @@ export function composeTrainingUserData(
 
 const PUBLISH_TIMEOUT_MS = 30 * 60_000;
 
-export class ModelFactoryOrchestrator {
+export class ComputeOrchestrator {
   private readonly publishing = new Set<string>();
   private readonly wakeIntervalMs: number;
   private readonly now: () => number;
 
-  constructor(private readonly options: ModelFactoryOrchestratorOptions) {
-    this.wakeIntervalMs = options.wakeIntervalMs ?? 300_000; // 5m default long-running wake interval
+  constructor(private readonly options: ComputeOrchestratorOptions) {
+    this.wakeIntervalMs = options.wakeIntervalMs ?? 300_000;
     this.now = options.now ?? Date.now;
   }
 
@@ -248,9 +228,7 @@ export class ModelFactoryOrchestrator {
     ]);
     if (requested) {
       if (allowed.size === 0 || !allowed.has(requested)) {
-        throw new Error(
-          `Requested instanceProfileArn is not in Control Plane allowlist: ${requested}`,
-        );
+        throw new Error(`Requested instanceProfileArn is not in Control Plane allowlist: ${requested}`);
       }
       return requested;
     }
@@ -265,11 +243,11 @@ export class ModelFactoryOrchestrator {
         ...(attempt.detail !== undefined ? { detail: attempt.detail.slice(0, 600) } : {}),
       });
     } catch {
-      // An audit sink failure must never change the launch result.
+      // Audit sink failure never changes launch result.
     }
   }
 
-  private async verifyPinnedInputsInS3(job: ModelFactoryJob, signal?: AbortSignal): Promise<void> {
+  private async verifyPinnedInputsInS3(job: ComputeJob, signal?: AbortSignal): Promise<void> {
     if (!job.compute.inputs) return;
     const { s3Prefix, files } = job.compute.inputs;
     for (const file of files) {
@@ -288,29 +266,24 @@ export class ModelFactoryOrchestrator {
     }
   }
 
-  /**
-   * Plans the region and AZ order from the Spot placement score feed trend and the live EC2 scores of the
-   * job's instance type. Either source may be missing. Never throws.
-   */
-  async planPlacement(job: ModelFactoryJob, signal?: AbortSignal): Promise<TrainingPlacementPlan> {
+  async planPlacement(job: ComputeJob, signal?: AbortSignal): Promise<ComputePlacementPlan> {
     const feed = this.options.spotFeed;
     const [snapshot, live] = await Promise.all([
       feed ? feed.getSnapshot(signal).catch(() => null) : Promise.resolve(null),
       this.liveScores(job, signal),
     ]);
-    return planTrainingPlacement(snapshot, job.compute, this.now(), feed?.feedUrl ?? null, live);
+    return planComputePlacement(snapshot, job.compute, this.now(), feed?.feedUrl ?? null, live);
   }
 
-  private async liveScores(job: ModelFactoryJob, signal?: AbortSignal): Promise<LivePlacementScores | null> {
+  private async liveScores(job: ComputeJob, signal?: AbortSignal): Promise<LivePlacementScores | null> {
     const ec2 = this.options.ec2;
     if (!ec2.getSpotPlacementScores) return null;
     const query = {
       endpointRegion: job.compute.region,
       instanceType: job.compute.instanceType,
-      regions: trainingCandidateRegions(job.compute).slice(0, 10),
+      regions: computeCandidateRegions(job.compute).slice(0, 10),
     };
     const at = new Date(this.now()).toISOString();
-    // Regional and per-AZ scores are separate EC2 answers; keep whichever one succeeds.
     const [regional, perAz] = await Promise.all([
       ec2.getSpotPlacementScores({ ...query, singleAvailabilityZone: false }, signal).catch(() => []),
       ec2.getSpotPlacementScores({ ...query, singleAvailabilityZone: true }, signal).catch(() => []),
@@ -319,8 +292,7 @@ export class ModelFactoryOrchestrator {
     return scores.length ? { at, scores } : null;
   }
 
-  /** Plans the placement for a newly registered job and stores it. Returns the job unchanged when that fails. */
-  async planAtRegistration(job: ModelFactoryJob, signal?: AbortSignal): Promise<ModelFactoryJob> {
+  async planAtRegistration(job: ComputeJob, signal?: AbortSignal): Promise<ComputeJob> {
     try {
       return await this.options.store.recordPlacementPlan(job.id, await this.planPlacement(job, signal));
     } catch {
@@ -328,23 +300,45 @@ export class ModelFactoryOrchestrator {
     }
   }
 
-  async approveAndLaunchTraining(
+  private async resolveProjectBudget(jobId: string): Promise<ComputeApprovalBudgetContext> {
+    if (!this.options.projects) return {};
+    const job = await this.options.store.get(jobId);
+    if (!job.projectId || job.projectId === DEFAULT_PROJECT_ID) return {};
+    const project = await this.options.projects.find(job.projectId);
+    if (!project) return {};
+    return {
+      projectBudgetCapMicros: project.budget.computeBudgetCapMicros,
+      maxSingleJobCostMicros: project.budget.maxSingleJobCostMicros,
+    };
+  }
+
+  private async resolveAutoPublishPrefixes(job: ComputeJob): Promise<string[] | undefined> {
+    if (!this.options.projects || job.projectId === DEFAULT_PROJECT_ID) return undefined;
+    return this.options.projects.autoPublishPrefixesFor(job.projectId);
+  }
+
+  async approveAndLaunch(
     jobId: string,
     approvalFingerprint: string,
     reason: string,
     signal?: AbortSignal,
-  ): Promise<ModelFactoryJob> {
-    let approved: ModelFactoryJob;
+    budgetContext?: ComputeApprovalBudgetContext,
+  ): Promise<ComputeJob> {
+    const effectiveBudget = budgetContext ?? (await this.resolveProjectBudget(jobId));
+    let approved: ComputeJob;
     try {
-      approved = await this.options.store.approveTraining(jobId, approvalFingerprint, reason);
+      approved = await this.options.store.approveLaunch(jobId, approvalFingerprint, reason, effectiveBudget);
     } catch (error) {
-      if (error instanceof Error && /Central cost cap exceeded/.test(error.message)) {
-        await this.options.notify?.('budget_exhausted', 'HIVEMIND Model Factory budget cap reached', `Training approval for ${jobId} was refused: ${error.message.slice(0, 500)}`);
+      if (error instanceof Error && /cost cap exceeded|budget cap exceeded/i.test(error.message)) {
+        await this.options.notify?.(
+          'budget_exhausted',
+          'HIVEMIND Compute budget cap reached',
+          `Launch approval for ${jobId} was refused: ${error.message.slice(0, 500)}`,
+        );
       }
       throw error;
     }
-    // Rank the approved regions and their AZs by Spot placement score stability with the newest feed.
-    // When the feed cannot rank them now, keep the plan made at registration, if that one was ranked.
+
     let plan = await this.planPlacement(approved, signal);
     if (plan.status !== 'ranked' && approved.placementPlan?.status === 'ranked') {
       plan = approved.placementPlan;
@@ -352,7 +346,7 @@ export class ModelFactoryOrchestrator {
       try {
         await this.options.store.recordPlacementPlan(approved.id, plan);
       } catch {
-        // Recording the plan is for audit only; it must not block the launch.
+        // Audit only.
       }
     }
     const rankedTargets: { region: string; azIds: string[] }[] = plan.regions.map((entry) => ({
@@ -370,7 +364,7 @@ export class ModelFactoryOrchestrator {
     try {
       const instanceProfileArn = this.resolveApprovedInstanceProfileArn(approved.compute.instanceProfileArn);
       await this.verifyPinnedInputsInS3(approved, signal);
-      const userDataScript = composeTrainingUserData(approved, {
+      const userDataScript = composeComputeUserData(approved, {
         artifactsBucket: this.options.artifactsBucket,
         artifactsRegion: this.options.artifactsRegion,
         ...(this.options.trainingRoleId ? { stagingRoleId: this.options.trainingRoleId } : {}),
@@ -378,6 +372,7 @@ export class ModelFactoryOrchestrator {
 
       const extraTags: Record<string, string> = {
         'hivemind:artifact-prefix': approved.compute.s3ArtifactPrefix,
+        'hivemind:workload-kind': approved.workloadKind,
         ...(this.options.artifactsBucket ? { 'hivemind:artifact-bucket': this.options.artifactsBucket } : {}),
         ...(this.options.artifactsRegion ? { 'hivemind:artifact-region': this.options.artifactsRegion } : {}),
         ...(approved.compute.inputs
@@ -390,9 +385,6 @@ export class ModelFactoryOrchestrator {
 
       const attemptErrors: string[] = [];
       for (const target of rankedTargets) {
-        // Precedence per region: the job's regionOverrides entry, then the job's own top-level values
-        // (they describe the job's primary region only), then the operator registry, then the legacy
-        // fallback to the job's top-level values.
         const override = approved.compute.regionOverrides?.[target.region];
         const defaults = this.options.regionNetworks?.[target.region];
         const isPrimaryRegion = target.region === approved.compute.region;
@@ -436,7 +428,7 @@ export class ModelFactoryOrchestrator {
             const subnetAzIds = await this.options.ec2.describeSubnetAzIds(target.region, listedSubnets, signal);
             orderedSubnets = orderSubnetsByPlannedAzs(listedSubnets, subnetAzIds, target.azIds);
           } catch {
-            // Without AZ IDs the subnets keep their listed order; every subnet is still tried.
+            // Keep listed order.
           }
         }
 
@@ -445,7 +437,9 @@ export class ModelFactoryOrchestrator {
             const launched = await this.options.ec2.launchSpotInstance(
               {
                 jobId: approved.id,
-                modelId: approved.modelId,
+                projectId: approved.projectId,
+                workloadId: approved.workloadId,
+                modelId: approved.workloadId,
                 region: target.region,
                 ...(!subnetId && target.azIds[0] ? { availabilityZoneId: target.azIds[0] } : {}),
                 instanceType: approved.compute.instanceType,
@@ -480,10 +474,8 @@ export class ModelFactoryOrchestrator {
             });
           } catch (attemptError) {
             const msg = attemptError instanceof Error ? attemptError.message : String(attemptError);
-            // Short form for the job record: place and AWS error code. The full text goes to the log event below.
             const code = /\(([A-Za-z.]+)\)/.exec(msg)?.[1] ?? msg.slice(0, 80);
             attemptErrors.push(`${target.region}${subnetId ? `/${subnetId}` : ''}: ${code}`);
-            // Only fail over on capacity/spot availability errors; immediately rethrow IAM/parameter/auth errors.
             const failover = /InsufficientInstanceCapacity|SpotMaxPriceTooLow|Unsupported|MaxSpotInstanceCountExceeded/i.test(msg);
             this.reportPlacementAttempt({
               jobId: approved.id,
@@ -507,11 +499,10 @@ export class ModelFactoryOrchestrator {
     }
   }
 
-  /** Reads and size-checks a receipt under one prefix. Null when it is absent or does not match. */
-  private async readReceiptAt(prefix: string, signal?: AbortSignal): Promise<ModelArtifactReceipt | null> {
+  private async readReceiptAt(prefix: string, signal?: AbortSignal): Promise<ComputeArtifactReceipt | null> {
     try {
       const raw = await this.options.s3.getObject(`${prefix}/receipt.json`, undefined, signal);
-      const parsed = JSON.parse(Buffer.from(raw).toString('utf8')) as ModelArtifactReceipt;
+      const parsed = JSON.parse(Buffer.from(raw).toString('utf8')) as ComputeArtifactReceipt;
       if (this.options.s3.headObject && Array.isArray(parsed.files)) {
         for (const file of parsed.files) {
           const objKey = `${prefix}/${file.path}`;
@@ -527,13 +518,11 @@ export class ModelFactoryOrchestrator {
     }
   }
 
-  private async tryLoadS3Receipt(job: ModelFactoryJob, signal?: AbortSignal): Promise<ModelArtifactReceipt | null> {
-    // Jobs launched before per-instance staging wrote straight to the job prefix.
+  private async tryLoadS3Receipt(job: ComputeJob, signal?: AbortSignal): Promise<ComputeArtifactReceipt | null> {
     const direct = await this.readReceiptAt(job.compute.s3ArtifactPrefix, signal);
     if (direct) return direct;
     const roleId = this.options.trainingRoleId;
     if (!roleId || !job.instance || !this.options.s3.copyObject) return null;
-    // The staging folder is derived from the instance the Control Plane launched, never from the receipt.
     const staging = `${stagingPrefixBase(roleId)}${job.instance.instanceId}`;
     const staged = await this.readReceiptAt(staging, signal);
     if (!staged || staged.s3Prefix !== staging || staged.jobId !== job.id || !Array.isArray(staged.files)) return null;
@@ -541,7 +530,7 @@ export class ModelFactoryOrchestrator {
       for (const file of staged.files) {
         await this.options.s3.copyObject(`${staging}/${file.path}`, `${job.compute.s3ArtifactPrefix}/${file.path}`, signal);
       }
-      const promoted: ModelArtifactReceipt = { ...staged, s3Prefix: job.compute.s3ArtifactPrefix };
+      const promoted: ComputeArtifactReceipt = { ...staged, s3Prefix: job.compute.s3ArtifactPrefix };
       await this.options.s3.putObject(
         `${job.compute.s3ArtifactPrefix}/receipt.json`,
         new TextEncoder().encode(JSON.stringify(promoted, null, 2)),
@@ -551,7 +540,7 @@ export class ModelFactoryOrchestrator {
       return promoted;
     } catch (error) {
       console.error(JSON.stringify({
-        event: 'hivemind.mf_staging_copy.error',
+        event: 'hivemind.compute_staging_copy.error',
         jobId: job.id,
         message: (error instanceof Error ? error.message : String(error)).slice(0, 300),
       }));
@@ -559,18 +548,16 @@ export class ModelFactoryOrchestrator {
     }
   }
 
-  async wakeJob(jobId: string, signal?: AbortSignal): Promise<ModelFactoryJob> {
+  async wakeJob(jobId: string, signal?: AbortSignal): Promise<ComputeJob> {
     let job = await this.options.store.get(jobId);
-    const needsTrainingWake = job.status === 'training_running';
+    const needsWake = job.status === 'running';
     const needsSettlementWake = Boolean(job.instance && job.cost.settledMicros === null);
-    if (!job.instance || (!needsTrainingWake && !needsSettlementWake)) {
+    if (!job.instance || (!needsWake && !needsSettlementWake)) {
       return job;
     }
 
     const nowMs = this.now();
     const expiresAtMs = Date.parse(job.instance.expiresAt);
-    // EC2 stops listing a terminated instance after about an hour. An instance that is no longer listed has
-    // ended, so it is settled like a terminated one. Any other describe error is rethrown.
     let described: Awaited<ReturnType<Ec2SpotTrainerPort['describeInstance']>>;
     let vanished = false;
     try {
@@ -602,9 +589,6 @@ export class ModelFactoryOrchestrator {
     const isEnded = effectiveState === 'terminated' || effectiveState === 'shutting-down' || effectiveState === 'stopped';
     const nextWakeAt = isEnded ? null : new Date(Math.min(nowMs + this.wakeIntervalMs, expiresAtMs)).toISOString();
 
-    // The instance usually ended some time before this check noticed it. EC2 reports that time; without it
-    // the run would be counted up to now, which with a 5-minute check interval can be several times too long.
-    // The time is used only when it lies between the launch and now, and never for a forced termination.
     const launchedMs = Date.parse(job.instance.launchedAt);
     const reportedMs = described.stateTransitionTime ? Date.parse(described.stateTransitionTime) : Number.NaN;
     const knownEndMs = isEnded && !forcedReason && !vanished && reportedMs >= launchedMs && reportedMs <= nowMs ? reportedMs : null;
@@ -624,8 +608,6 @@ export class ModelFactoryOrchestrator {
     }
 
     if (isEnded && job.cost.settledMicros === null) {
-      // For a vanished instance the real end time is unknown. It cannot have outlived its expiry tag by
-      // more than one guard interval, so the expiry time bounds the estimate.
       const endedMs = vanished ? Math.min(nowMs, expiresAtMs) : (knownEndMs ?? nowMs);
       const settlement = calculateActualCostMicros(job, endedMs);
       job = await this.options.store.settleCost(job.id, {
@@ -638,7 +620,7 @@ export class ModelFactoryOrchestrator {
       });
     }
 
-    if (isEnded && !job.receipt && job.status === 'training_running') {
+    if (isEnded && !job.receipt && job.status === 'running') {
       const reason =
         forcedReason ??
         `EC2 Spot instance ${job.instance!.instanceId} ended (${effectiveState}) without S3 artifact receipt${described.stateReason ? `: ${described.stateReason}` : ''}`;
@@ -648,18 +630,17 @@ export class ModelFactoryOrchestrator {
     return job;
   }
 
-  async wakeDueJobs(signal?: AbortSignal): Promise<{ woken: ModelFactoryJob[]; sweeps: ExpiredSpotSweepResult[] }> {
+  async wakeDueJobs(signal?: AbortSignal): Promise<{ woken: ComputeJob[]; sweeps: ExpiredSpotSweepResult[] }> {
     const due = await this.options.store.listDueWakeJobs(this.now());
-    const woken: ModelFactoryJob[] = [];
+    const woken: ComputeJob[] = [];
     const activeRegions = new Set<string>();
     for (const job of due) {
       if (job.instance?.region) activeRegions.add(job.instance.region);
       woken.push(await this.wakeJob(job.id, signal));
     }
-    // Auto-publish recovery: a verifier result that arrived while the Control Plane was being replaced, or a
-    // publication that failed, is picked up here (at most three publication attempts per job).
     for (const job of await this.options.store.list()) {
-      if (this.options.store.isAutoPublishEligible(job)) {
+      const projectPrefixes = await this.resolveAutoPublishPrefixes(job);
+      if (this.options.store.isAutoPublishEligible(job, projectPrefixes)) {
         await this.autoReleaseIfEligible(job.id, signal).catch(() => undefined);
       } else if (
         job.status === 'release_approved' &&
@@ -683,7 +664,7 @@ export class ModelFactoryOrchestrator {
     return this.options.ec2.sweepExpiredSpotInstances(region, this.now(), signal);
   }
 
-  async cancelJob(jobId: string, reason: string, signal?: AbortSignal): Promise<ModelFactoryJob> {
+  async cancelJob(jobId: string, reason: string, signal?: AbortSignal): Promise<ComputeJob> {
     const current = await this.options.store.get(jobId);
     if (current.instance && current.instance.state !== 'terminated') {
       await this.options.ec2.terminateInstance(current.instance.region, current.instance.instanceId, signal);
@@ -699,13 +680,7 @@ export class ModelFactoryOrchestrator {
     return cancelled;
   }
 
-  /**
-   * Starts the independent verifier for a job that has a verified artifact receipt. The verifier task
-   * downloads the artifacts and the pinned inputs, checks their hashes, runs the job's approved
-   * `releaseCheckCommand`, and reports through the worker-token endpoint, which records the attestation
-   * as `independent_verifier`. This method only starts it; the job changes state when the report arrives.
-   */
-  async dispatchReleaseVerifier(jobId: string, signal?: AbortSignal): Promise<ModelFactoryJob> {
+  async dispatchReleaseVerifier(jobId: string, signal?: AbortSignal): Promise<ComputeJob> {
     if (!this.options.verifierLauncher) {
       throw new Error('Independent release verifier is not configured');
     }
@@ -727,9 +702,9 @@ export class ModelFactoryOrchestrator {
 
   async approveAndPublishRelease(
     jobId: string,
-    decision: Omit<ModelReleaseDecision, 'decidedAt'>,
+    decision: Omit<ComputeReleaseDecision, 'decidedAt'>,
     signal?: AbortSignal,
-  ): Promise<ModelFactoryJob> {
+  ): Promise<ComputeJob> {
     const decided = await this.options.store.recordReleaseDecision(jobId, decision);
     if (decided.status !== 'release_approved') {
       return decided;
@@ -737,12 +712,7 @@ export class ModelFactoryOrchestrator {
     return await this.publishApproved(decided, signal);
   }
 
-  /**
-   * Records the release decision and starts a Hugging Face publication in the background. Uploading a
-   * model can take minutes, longer than an HTTP client waits; the caller reads the result from the job.
-   * An S3-only release is recorded at once.
-   */
-  async approveAndStartPublishRelease(jobId: string, decision: Omit<ModelReleaseDecision, 'decidedAt'>): Promise<ModelFactoryJob> {
+  async approveAndStartPublishRelease(jobId: string, decision: Omit<ComputeReleaseDecision, 'decidedAt'>): Promise<ComputeJob> {
     const decided = await this.options.store.recordReleaseDecision(jobId, decision);
     if (decided.status !== 'release_approved') return decided;
     if (decided.releasePolicy.mode === 's3_artifact_only' || !this.options.hfPublisher) {
@@ -751,8 +721,7 @@ export class ModelFactoryOrchestrator {
     return await this.startBackgroundPublish(decided);
   }
 
-  /** Publishes again a release that was approved but whose publication failed. */
-  async startPublishRelease(jobId: string): Promise<ModelFactoryJob> {
+  async startPublishRelease(jobId: string): Promise<ComputeJob> {
     const job = await this.options.store.get(jobId);
     if (job.status !== 'release_approved' || job.publication) {
       throw new DomainError(`Only an approved, unpublished release can be published (state: ${job.status})`, 409);
@@ -763,38 +732,34 @@ export class ModelFactoryOrchestrator {
     return await this.startBackgroundPublish(job);
   }
 
-  /**
-   * Publishes a job whose release policy asks for it, once the independent verifier passed (issue #20).
-   * Creates the Hugging Face repository first when it is missing. Returns null when the job is not eligible.
-   */
-  async autoReleaseIfEligible(jobId: string, signal?: AbortSignal): Promise<ModelFactoryJob | null> {
+  async autoReleaseIfEligible(jobId: string, signal?: AbortSignal): Promise<ComputeJob | null> {
     const job = await this.options.store.get(jobId);
-    if (!this.options.store.isAutoPublishEligible(job)) return null;
+    const projectPrefixes = await this.resolveAutoPublishPrefixes(job);
+    if (!this.options.store.isAutoPublishEligible(job, projectPrefixes)) return null;
     if (job.releasePolicy.mode === 'hf_release') {
       const publisher = this.options.hfPublisher;
       if (!publisher) return null;
       if (publisher.ensureRepository) {
         try {
           const outcome = await publisher.ensureRepository(job.releasePolicy.hfRepository!, job.releasePolicy.visibility, signal);
-          console.log(JSON.stringify({ event: 'hivemind.mf_auto_publish.repository', jobId, repository: job.releasePolicy.hfRepository, outcome }));
+          console.log(JSON.stringify({ event: 'hivemind.compute_auto_publish.repository', jobId, projectId: job.projectId, repository: job.releasePolicy.hfRepository, outcome }));
         } catch (error) {
           const reason = error instanceof Error ? error.message : String(error);
-          await this.options.notify?.('release_failed', `HIVEMIND release failed: ${job.modelId}`, `Repository ${job.releasePolicy.hfRepository} could not be prepared for job ${job.id}: ${reason.slice(0, 300)}`);
+          await this.options.notify?.('release_failed', `HIVEMIND release failed [${job.projectId}]: ${job.workloadId}`, `Repository ${job.releasePolicy.hfRepository} could not be prepared for job ${job.id}: ${reason.slice(0, 300)}`);
           throw error;
         }
       }
     }
-    const approved = await this.options.store.recordAutoReleaseDecision(jobId);
+    const approved = await this.options.store.recordAutoReleaseDecision(jobId, projectPrefixes);
     if (approved.releasePolicy.mode === 's3_artifact_only') return this.publishApproved(approved);
     return this.startBackgroundPublish(approved);
   }
 
-  /** True while a publication for the job runs in this process. */
   isPublishing(jobId: string): boolean {
     return this.publishing.has(jobId);
   }
 
-  private async startBackgroundPublish(job: ModelFactoryJob): Promise<ModelFactoryJob> {
+  private async startBackgroundPublish(job: ComputeJob): Promise<ComputeJob> {
     if (this.publishing.has(job.id)) {
       throw new DomainError('A publication for this job is already running', 409);
     }
@@ -806,7 +771,7 @@ export class ModelFactoryOrchestrator {
     return job;
   }
 
-  private async publishApproved(decided: ModelFactoryJob, signal?: AbortSignal, alreadyMarked = false): Promise<ModelFactoryJob> {
+  private async publishApproved(decided: ComputeJob, signal?: AbortSignal, alreadyMarked = false): Promise<ComputeJob> {
     if (decided.releasePolicy.mode === 's3_artifact_only') {
       return await this.options.store.recordReleasePublication(decided.id, {
         mode: 's3_artifact_only',
@@ -823,7 +788,7 @@ export class ModelFactoryOrchestrator {
     }
 
     if (!alreadyMarked) await this.options.store.recordPublicationStarted(decided.id);
-    let publication: ModelReleasePublication;
+    let publication: ComputeReleasePublication;
     try {
       publication = await this.options.hfPublisher.publish({
         job: decided,
@@ -832,18 +797,17 @@ export class ModelFactoryOrchestrator {
         signal,
       });
     } catch (error) {
-      // The job stays release_approved so the same approved release can be published again.
       const reason = error instanceof Error ? error.message : String(error);
-      console.error(JSON.stringify({ event: 'hivemind.mf_release_publish.error', jobId: decided.id, message: reason.slice(0, 500) }));
+      console.error(JSON.stringify({ event: 'hivemind.compute_release_publish.error', jobId: decided.id, projectId: decided.projectId, message: reason.slice(0, 500) }));
       await this.options.store.recordPublicationFailure(decided.id, reason);
-      await this.options.notify?.('release_failed', `HIVEMIND release failed: ${decided.modelId}`, `Job ${decided.id} (${decided.releasePolicy.hfRepository ?? 's3'}) could not be published: ${reason.slice(0, 500)}`);
+      await this.options.notify?.('release_failed', `HIVEMIND release failed [${decided.projectId}]: ${decided.workloadId}`, `Job ${decided.id} (${decided.releasePolicy.hfRepository ?? 's3'}) could not be published: ${reason.slice(0, 500)}`);
       throw new DomainError(`Release publication failed: ${reason.slice(0, 300)}`, 502);
     }
     const approvedBy = decided.releaseDecision?.reason.startsWith('Auto-publish policy') ? 'auto_publish_policy' : 'operator';
     const released = await this.options.store.recordReleasePublication(decided.id, { ...publication, approvedBy });
     await this.options.notify?.(
       'release_published',
-      `HIVEMIND released ${decided.modelId}`,
+      `HIVEMIND released [${decided.projectId}] ${decided.workloadId}`,
       `Job ${decided.id} was published to ${publication.url ?? publication.repository ?? 'S3'} (manifest ${publication.manifestDigest.slice(0, 12)}).`,
     );
     return released;

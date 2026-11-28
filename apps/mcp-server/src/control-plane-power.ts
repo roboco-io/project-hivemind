@@ -58,7 +58,7 @@ export interface ControlPlanePowerOptions {
 export type PowerState = 'not_configured' | 'stopped' | 'starting' | 'running' | 'unknown';
 export interface InProgressWork {
   deliveryTasks: number;
-  modelFactoryJobs: number;
+  computeJobs: number;
   collabSubtasks: number;
   /** Ids of the records that count as in progress (at most 10), so the operator can look at or cancel them. */
   blockingIds?: string[];
@@ -211,7 +211,7 @@ export class ControlPlanePower {
   }
 
   async reachable(): Promise<boolean> {
-    return (await this.api('GET', '/api/model-factory/ledger', 4_000)) !== null;
+    return (await this.api('GET', '/api/compute/ledger', 4_000)) !== null;
   }
 
   private async desiredCount(): Promise<number | null> {
@@ -356,7 +356,7 @@ export class ControlPlanePower {
   async inProgress(): Promise<InProgressWork | null> {
     const settled = await this.api('POST', '/api/delivery/reconcile', 35_000);
     const delivery = await this.api('GET', '/api/delivery/tasks');
-    const jobs = await this.api('GET', '/api/model-factory/jobs');
+    const jobs = await this.api('GET', '/api/compute/jobs');
     const collab = await this.api('GET', '/api/collab/sessions');
     if (!delivery || !jobs || !collab) return null;
     const ID = /^[a-z]{2,4}-[0-9a-f-]{36}$/;
@@ -380,15 +380,13 @@ export class ControlPlanePower {
       collabSubtasks += count(snapshot.subtasks, 'running');
     }
     const deliveryTasks = count(delivery.tasks, 'running');
-    const modelFactoryJobs = count(jobs.jobs, 'training_running');
-    // A record with no evidence about its worker is never failed automatically. It is named here, because
-    // it keeps the Control Plane up until the operator cancels it.
+    const computeJobs = count(jobs.jobs, 'running');
     const unverifiable = (Array.isArray(settled?.untouched) ? settled.untouched : [])
       .map((entry) => entry as { taskId?: unknown; reason?: unknown })
       .filter((entry): entry is { taskId: string; reason: string } => typeof entry.taskId === 'string' && ID.test(entry.taskId) && typeof entry.reason === 'string')
       .slice(0, 10)
       .map((entry) => ({ id: entry.taskId, reason: entry.reason.slice(0, 160) }));
-    return { deliveryTasks, modelFactoryJobs, collabSubtasks, ...(blockingIds.length ? { blockingIds } : {}), ...(unverifiable.length ? { unverifiable } : {}) };
+    return { deliveryTasks, computeJobs, collabSubtasks, ...(blockingIds.length ? { blockingIds } : {}), ...(unverifiable.length ? { unverifiable } : {}) };
   }
 
   /**
@@ -427,7 +425,7 @@ export class ControlPlanePower {
     } else if (!force) {
       const work = await this.inProgress();
       if (!work) return { stopped: false, reason: '진행 중인 작업을 확인하지 못했습니다. 그래도 내리려면 force: true 로 호출하세요.' };
-      if (work.deliveryTasks + work.modelFactoryJobs + work.collabSubtasks > 0) {
+      if (work.deliveryTasks + work.computeJobs + work.collabSubtasks > 0) {
         return { stopped: false, inProgress: work, reason: '진행 중인 작업이 있어 내리지 않았습니다. 실행 중인 워커는 결과를 Control Plane에 보고합니다. 작업이 끝난 뒤 다시 호출하거나, 그래도 내리려면 force: true 로 호출하세요.' };
       }
     }

@@ -4,7 +4,7 @@
 
 이 디렉터리는 HIVEMIND의 중앙 core다. 승인, 취소, 비용 정책과 작업 상태 전이를 이곳에서 결정하고 SQLite(`node:sqlite`의 `DatabaseSync`)에 저장한다. 프로젝트 규칙은 UI와 모델 어댑터가 이 정책을 우회하지 못하게 하고, 워커가 SQLite 파일을 직접 열지 않고 HTTP API만 쓰도록 정한다.
 
-파일은 실행 경로별로 나뉜다. `store.ts`는 로컬 워커가 claim하는 작업을 관리한다. `cloudflare-store.ts`는 Cloudflare 런타임으로 보내는 작업을 관리하고, 원격 호출은 주입받은 `CloudPort`에 맡긴다. `cloud-workflow-store.ts`는 Codex와 Claude가 함께 수행하는 워크플로의 등록 정보를 관리하고, 원격 호출은 주입받은 `CloudWorkflowPort`에 맡긴다. 계약 타입은 [`../../contracts/src/README.md`](../../contracts/src/README.md)에 있다.
+파일은 실행 경로별로 나뉜다. AWS 멀티 프로젝트 호스트 경로는 `projects.ts`(중앙 프로젝트 레지스트리·템플릿·해시 토큰 인증·정책 가드), `compute.ts`(범용 Spot 컴퓨팅 상태 전이·2단계 예산 원장), `delivery.ts`(SW 전달), `agent-collab.ts`(병렬 협업), `autonomy-trigger.ts`(주기 자율 트리거), `agent-credential-purposes.ts`(프로젝트 범위 AWS 자격 증명 정책)로 구성된다. `store.ts`는 로컬 워커가 claim하는 작업을 관리한다. `cloudflare-store.ts`는 Cloudflare 런타임으로 보내는 작업을 관리하고, 원격 호출은 주입받은 `CloudPort`에 맡긴다. `cloud-workflow-store.ts`는 Codex와 Claude가 함께 수행하는 워크플로의 등록 정보를 관리하고, 원격 호출은 주입받은 `CloudWorkflowPort`에 맡긴다. 계약 타입은 [`../../contracts/src/README.md`](../../contracts/src/README.md)에 있다.
 
 ## Interface
 

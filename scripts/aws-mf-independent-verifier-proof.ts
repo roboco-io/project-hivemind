@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { createAwsS3ArtifactsPort } from '../packages/adapters/src/aws-s3-artifacts.js';
-import type { ModelFactoryJob } from '../packages/contracts/src/model-factory.js';
-import { computeTrainingInputsDigest } from '../packages/core/src/model-factory.js';
+import type { ComputeJob } from '../packages/contracts/src/compute.js';
+import { computeInputsDigest } from '../packages/core/src/compute.js';
 import {
   apiJson,
   aws,
@@ -71,7 +71,7 @@ async function main(): Promise<void> {
     await s3.putObject(`${inputsPrefix}/${path}`, bytes, 'application/octet-stream');
     inputFiles.push({ path, sha256: sha256(bytes), sizeBytes: bytes.byteLength });
   }
-  const inputsDigest = computeTrainingInputsDigest(inputsPrefix, inputFiles);
+  const inputsDigest = computeInputsDigest(inputsPrefix, inputFiles);
 
   const userDataScript = `#!/bin/bash
 set -euo pipefail
@@ -149,9 +149,9 @@ PY
     await controlPlane.start();
     const api = <T>(path: string, body?: unknown) => apiJson<T>(`${controlPlane.baseUrl}${path}`, operatorToken, body);
 
-    const created = await api<ModelFactoryJob>('/api/model-factory/jobs', {
+    const created = await api<ComputeJob>('/api/compute/jobs', {
       title: 'Independent release verifier live proof',
-      modelId,
+      workloadId: modelId,
       repository: 'roboco-io/silicon-model-factory',
       baseCommit: 'a'.repeat(40),
       compute: {
@@ -168,20 +168,20 @@ PY
       releasePolicy: { mode: 's3_artifact_only', visibility: 'private', releaseCheckCommand: ['node', 'release-check.cjs'] },
     });
     jobId = created.id;
-    const launched = await api<ModelFactoryJob>(`/api/model-factory/jobs/${jobId}/approve-training`, {
+    const launched = await api<ComputeJob>(`/api/compute/jobs/${jobId}/approve`, {
       approvalFingerprint: created.approvalFingerprint,
       reason: 'Independent release verifier live proof',
     });
-    if (launched.status !== 'training_running' || !launched.instance) {
+    if (launched.status !== 'running' || !launched.instance) {
       throw new Error(`Launch failed: status=${launched.status} failureReason=${launched.failureReason ?? ''}`);
     }
     console.log(JSON.stringify({ phase: 'launched', jobId, instanceId: launched.instance.instanceId }));
 
     // Wait for the instance to upload its receipt and shut down.
-    let job: ModelFactoryJob = launched;
+    let job: ComputeJob = launched;
     for (const deadline = Date.now() + 290_000; Date.now() < deadline; ) {
       await sleep(15_000);
-      job = await api<ModelFactoryJob>(`/api/model-factory/jobs/${jobId}/wake`, {});
+      job = await api<ComputeJob>(`/api/compute/jobs/${jobId}/wake`, {});
       console.log(JSON.stringify({ phase: 'wake', status: job.status, instanceState: job.instance?.state ?? null, hasReceipt: Boolean(job.receipt) }));
       if ((job.status === 'evaluating' && job.cost.settledMicros !== null) || job.status === 'failed') break;
     }
@@ -191,14 +191,14 @@ PY
     summary.receipt = { manifestDigest: job.receipt.manifestDigest, files: job.receipt.files.map((f) => f.path) };
     summary.attestationBeforeVerifier = job.releaseAttestation;
 
-    const dispatched = await api<ModelFactoryJob>(`/api/model-factory/jobs/${jobId}/dispatch-verifier`, {});
+    const dispatched = await api<ComputeJob>(`/api/compute/jobs/${jobId}/dispatch-verifier`, {});
     const verifierTaskArn = dispatched.releaseVerifier?.ecsTaskArn ?? null;
     summary.verifierTask = verifierTaskArn ? verifierTaskArn.split('/').pop() : null;
     console.log(JSON.stringify({ phase: 'verifier_dispatched', statusAfterDispatch: dispatched.status }));
 
     for (const deadline = Date.now() + 420_000; Date.now() < deadline; ) {
       await sleep(15_000);
-      job = (await api<{ job: ModelFactoryJob }>(`/api/model-factory/jobs/${jobId}`)).job;
+      job = (await api<{ job: ComputeJob }>(`/api/compute/jobs/${jobId}`)).job;
       console.log(JSON.stringify({ phase: 'poll', status: job.status, attested: Boolean(job.releaseAttestation) }));
       if (job.status !== 'evaluating') break;
     }
@@ -229,7 +229,7 @@ PY
   } catch (error) {
     summary.error = error instanceof Error ? error.message : String(error);
     if (jobId) {
-      await apiJson(`${controlPlane.baseUrl}/api/model-factory/jobs/${jobId}/cancel`, operatorToken, { reason: 'Cleanup after verifier proof error' }).catch(() => undefined);
+      await apiJson(`${controlPlane.baseUrl}/api/compute/jobs/${jobId}/cancel`, operatorToken, { reason: 'Cleanup after verifier proof error' }).catch(() => undefined);
     }
   } finally {
     await controlPlane.stop().catch((error) => {

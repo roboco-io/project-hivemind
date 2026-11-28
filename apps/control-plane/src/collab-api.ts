@@ -7,18 +7,26 @@ import type {
   PostCollabMessage,
 } from '../../../packages/contracts/src/agent-collab.js';
 import type { AgentCollabService } from '../../../packages/core/src/agent-collab.js';
+import {
+  assertProjectCapability,
+  DEFAULT_PROJECT_ID,
+  type ProjectStore,
+} from '../../../packages/core/src/projects.js';
 import { DomainError, equalSecret } from '../../../packages/core/src/store.js';
+import { authenticateRequest, getPrincipal, type HostAuthContext } from './auth.js';
 import type { CollabOrchestrator } from './collab-orchestrator.js';
 
 export interface CollabApiOptions {
   service: AgentCollabService;
+  projects?: ProjectStore;
+  auth?: HostAuthContext;
   operatorToken: string;
   workerToken: string;
   orchestrator?: CollabOrchestrator;
 }
 
 export function registerCollabRoutes(app: FastifyInstance, options: CollabApiOptions): void {
-  const { service, operatorToken, workerToken, orchestrator } = options;
+  const { service, projects, auth, operatorToken, workerToken, orchestrator } = options;
 
   const operatorOnly = async (request: FastifyRequest, reply: FastifyReply) => {
     if (!equalSecret(request.headers.authorization ?? '', `Bearer ${operatorToken}`)) {
@@ -26,28 +34,91 @@ export function registerCollabRoutes(app: FastifyInstance, options: CollabApiOpt
     }
   };
 
+  const operatorOrCollabRead = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (auth) {
+      const p = await authenticateRequest(request, auth);
+      if (p?.role === 'operator') return;
+      if (p?.role === 'project_agent') {
+        if (!p.scopes.has('collab:read')) return reply.code(403).send({ error: "Project token lacks required scope 'collab:read'" });
+        return;
+      }
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
+    return operatorOnly(request, reply);
+  };
+
+  const operatorOrCollabWrite = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (auth) {
+      const p = await authenticateRequest(request, auth);
+      if (p?.role === 'operator') return;
+      if (p?.role === 'project_agent') {
+        if (!p.scopes.has('collab:write')) return reply.code(403).send({ error: "Project token lacks required scope 'collab:write'" });
+        return;
+      }
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
+    return operatorOnly(request, reply);
+  };
+
   const operatorOrWorker = async (request: FastifyRequest, reply: FastifyReply) => {
-    const auth = request.headers.authorization ?? '';
-    if (!equalSecret(auth, `Bearer ${operatorToken}`) && !equalSecret(auth, `Bearer ${workerToken}`)) {
+    if (auth) {
+      const p = await authenticateRequest(request, auth);
+      if (p?.role === 'operator' || p?.role === 'worker') return;
+      if (p?.role === 'project_agent' && p.scopes.has('collab:read')) return;
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
+    const header = request.headers.authorization ?? '';
+    if (!equalSecret(header, `Bearer ${operatorToken}`) && !equalSecret(header, `Bearer ${workerToken}`)) {
       return reply.code(401).send({ error: 'Unauthorized' });
     }
   };
 
-  app.get('/api/collab/sessions', { onRequest: operatorOnly }, async () => ({
-    storageBackend: service.storageBackend,
-    sessions: await service.listSessions(),
-  }));
+  app.get<{ Querystring: { projectId?: string } }>('/api/collab/sessions', { onRequest: operatorOrCollabRead }, async (request) => {
+    const principal = getPrincipal(request);
+    const filterProject =
+      principal?.role === 'project_agent'
+        ? principal.projectId
+        : request.query.projectId?.trim() || undefined;
+    const sessions = await service.listSessions();
+    return {
+      storageBackend: service.storageBackend,
+      sessions: filterProject ? sessions.filter((s) => (s.projectId ?? DEFAULT_PROJECT_ID) === filterProject) : sessions,
+    };
+  });
 
   app.post<{ Body: CreateCollabSession }>(
     '/api/collab/sessions',
-    { onRequest: operatorOnly, bodyLimit: 65536 },
-    async (request, reply) => reply.code(201).send(await service.createSession(request.body)),
+    { onRequest: operatorOrCollabWrite, bodyLimit: 65536 },
+    async (request, reply) => {
+      const principal = getPrincipal(request);
+      let targetProjectId = request.body.projectId;
+      if (principal?.role === 'project_agent') {
+        if (targetProjectId && targetProjectId !== principal.projectId) {
+          throw new DomainError(`Project token for '${principal.projectId}' cannot create sessions under '${targetProjectId}'`, 403);
+        }
+        targetProjectId = principal.projectId;
+      }
+      if (projects && targetProjectId && targetProjectId !== DEFAULT_PROJECT_ID) {
+        const project = await projects.get(targetProjectId);
+        assertProjectCapability(project, 'collab');
+      }
+      return reply.code(201).send(
+        await service.createSession({ ...request.body, ...(targetProjectId ? { projectId: targetProjectId } : {}) }),
+      );
+    },
   );
 
   app.get<{ Params: { id: string } }>(
     '/api/collab/sessions/:id',
     { onRequest: operatorOrWorker },
-    async (request) => service.getSnapshot(request.params.id),
+    async (request) => {
+      const snapshot = await service.getSnapshot(request.params.id);
+      const principal = getPrincipal(request);
+      if (principal?.role === 'project_agent' && (snapshot.session.projectId ?? DEFAULT_PROJECT_ID) !== principal.projectId) {
+        throw new DomainError('Collaboration session not found', 404);
+      }
+      return snapshot;
+    },
   );
 
   app.post<{ Params: { id: string }; Body: { status: 'completed' | 'failed' | 'cancelled' } }>(

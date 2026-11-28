@@ -11,18 +11,21 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { HiveStore, DomainError, equalSecret, text } from '../../../packages/core/src/store.js';
 import { DeliveryStore } from '../../../packages/core/src/delivery.js';
-import { ModelFactoryStore } from '../../../packages/core/src/model-factory.js';
-import type { ModelFactoryRepository } from '../../../packages/core/src/model-factory-repository.js';
+import { ComputeStore } from '../../../packages/core/src/compute.js';
+import type { ComputeRepository } from '../../../packages/core/src/compute-repository.js';
+import { ProjectStore, type ProjectRepository } from '../../../packages/core/src/projects.js';
 import type { DeliveryRepository } from '../../../packages/core/src/delivery-repository.js';
 import {
   AgentCollabService,
   SqliteCollaborationRepository,
   type CollaborationStoragePort,
 } from '../../../packages/core/src/agent-collab.js';
+import type { HostAuthContext } from './auth.js';
 import { registerCollabRoutes } from './collab-api.js';
 import type { CollabOrchestrator } from './collab-orchestrator.js';
 import { registerDeliveryRoutes } from './delivery-api.js';
-import { registerModelFactoryRoutes } from './model-factory-api.js';
+import { registerComputeRoutes } from './compute-api.js';
+import { registerProjectRoutes } from './projects-api.js';
 import { registerAgentCredentialRoutes, type AgentCredentialsApiOptions } from './agent-access-api.js';
 import { registerNotificationRoutes, type NotificationGate } from './notifications-api.js';
 import { registerAutonomyRoutes } from './autonomy-api.js';
@@ -30,13 +33,55 @@ import type { AutonomyDispatcher } from './autonomy-dispatcher.js';
 import { AutonomyTriggerStore, type AutonomyTriggerRepository } from '../../../packages/core/src/autonomy-trigger.js';
 import type { DeliveryTask } from '../../../packages/contracts/src/delivery.js';
 import type { DeliveryOrchestrator } from './delivery-orchestrator.js';
-import type { ModelFactoryOrchestrator } from './model-factory-orchestrator.js';
+import type { ComputeOrchestrator } from './compute-orchestrator.js';
 import type { CreateTask, RunResult, RepositoryPolicy, Provider, Runtime } from '../../../packages/contracts/src/index.js';
 import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js';
 
 import {projectTeamResponse,type CloudWorkflowControl} from '../../../packages/contracts/src/workflow.js';
 
-export interface AppOptions { /** Storage for DeliveryStore. Default: SQLite at dbPath. */ deliveryRepository?: DeliveryRepository; /** Storage for ModelFactoryStore. Default: SQLite at dbPath. */ modelFactoryRepository?: ModelFactoryRepository; autonomousCloudProxy?:AutonomousCloudProxy; localExternalService?:AutonomousExternalService; dbPath?: string; operatorToken?: string; workerToken?: string; /** Model Factory agent token; see registerModelFactoryRoutes. */ agentToken?: string; nativeReporterToken?: string; now?: () => number; repository?: RepositoryPolicy; cloudflare?: CloudControl; workflows?: CloudWorkflowControl; deliveryOrchestratorFactory?: (store: DeliveryStore) => DeliveryOrchestrator; modelFactoryOrchestratorFactory?: (store: ModelFactoryStore) => ModelFactoryOrchestrator; modelFactoryBudgetCapMicros?: number; /** Repositories whose delivery tasks may auto-merge (issue #20). */ deliveryAutoMergeRepositories?: string[]; /** Hugging Face repository prefixes where releasePolicy.autoPublish is allowed (issue #20). */ modelFactoryAutoPublishRepoPrefixes?: string[]; modelFactoryWakePollMs?: number; collabRepo?: CollaborationStoragePort; collabOrchestratorFactory?: (service: AgentCollabService) => CollabOrchestrator; /** Scoped AWS credentials for agents. Absent: the routes are not registered. */ agentCredentials?: Omit<AgentCredentialsApiOptions, 'operatorToken'>; /** SNS notifications (issue #20). Absent: the route is not registered. */ notifications?: NotificationGate; /** Periodic autonomy triggers (issue #20). Storage defaults to SQLite at dbPath. */ autonomy?: { repository?: AutonomyTriggerRepository; dispatcherFactory?: (store: AutonomyTriggerStore, delivery: DeliveryStore, orchestrator?: DeliveryOrchestrator) => AutonomyDispatcher | undefined; tickMs?: number; hooks?: { onAutoMergeRefused?: (task: DeliveryTask, reason: string) => Promise<void> } } }
+export interface AppOptions {
+  /** Storage for ProjectStore. Default: SQLite at dbPath. */
+  projectRepository?: ProjectRepository;
+  /** Storage for DeliveryStore. Default: SQLite at dbPath. */
+  deliveryRepository?: DeliveryRepository;
+  /** Storage for ComputeStore. Default: SQLite at dbPath. */
+  computeRepository?: ComputeRepository;
+  autonomousCloudProxy?: AutonomousCloudProxy;
+  localExternalService?: AutonomousExternalService;
+  dbPath?: string;
+  operatorToken?: string;
+  workerToken?: string;
+  /** Optional host-level legacy agent token; prefer per-project tokens issued via /api/projects/:id/tokens. */
+  agentToken?: string;
+  /** Optional projectId associated with the legacy agent token. */
+  legacyAgentProjectId?: string;
+  nativeReporterToken?: string;
+  now?: () => number;
+  repository?: RepositoryPolicy;
+  cloudflare?: CloudControl;
+  workflows?: CloudWorkflowControl;
+  deliveryOrchestratorFactory?: (store: DeliveryStore) => DeliveryOrchestrator;
+  computeOrchestratorFactory?: (store: ComputeStore, projects: ProjectStore) => ComputeOrchestrator;
+  computeBudgetCapMicros?: number;
+  /** Repositories whose delivery tasks may auto-merge at host level (projects may also declare their own). */
+  deliveryAutoMergeRepositories?: string[];
+  /** Hugging Face repository prefixes where releasePolicy.autoPublish is allowed at host level. */
+  computeAutoPublishRepoPrefixes?: string[];
+  computeWakePollMs?: number;
+  collabRepo?: CollaborationStoragePort;
+  collabOrchestratorFactory?: (service: AgentCollabService) => CollabOrchestrator;
+  /** Scoped AWS credentials for agents. Absent: the routes are not registered. */
+  agentCredentials?: Omit<AgentCredentialsApiOptions, 'operatorToken' | 'auth'>;
+  /** SNS notifications. Absent: the route is not registered. */
+  notifications?: NotificationGate;
+  /** Periodic autonomy triggers. Storage defaults to SQLite at dbPath. */
+  autonomy?: {
+    repository?: AutonomyTriggerRepository;
+    dispatcherFactory?: (store: AutonomyTriggerStore, delivery: DeliveryStore, orchestrator?: DeliveryOrchestrator, projects?: ProjectStore) => AutonomyDispatcher | undefined;
+    tickMs?: number;
+    hooks?: { onAutoMergeRefused?: (task: DeliveryTask, reason: string) => Promise<void> };
+  };
+}
 const string = {type:'string',minLength:1,maxLength:4000};
 const credentials = {workerId:{...string,maxLength:120},leaseToken:{...string,maxLength:120}};
 const body = (properties: Record<string,unknown>, required = Object.keys(properties)) => ({body:{type:'object',additionalProperties:false,required,properties}});
@@ -66,20 +111,22 @@ export function buildApp(options: AppOptions = {}) {
   if (agentToken !== undefined && (agentToken.trim().length < 24 || equalSecret(agentToken,operatorToken) || equalSecret(agentToken,workerToken))) throw new Error('Agent token must be at least 24 characters and distinct from the operator and worker tokens');
   const app = Fastify({bodyLimit:2000000,logger:false,ajv:{customOptions:{coerceTypes:false,removeAdditional:false}}});
   const store = new HiveStore(options.dbPath ?? ':memory:',options.now,options.repository);
+  const projectStore = new ProjectStore(options.projectRepository ?? options.dbPath ?? ':memory:', { now: options.now });
+  const auth: HostAuthContext = { operatorToken, workerToken, ...(agentToken ? { agentToken } : {}), ...(options.legacyAgentProjectId ? { legacyAgentProjectId: options.legacyAgentProjectId } : {}), projects: projectStore };
   const deliveryStore = new DeliveryStore(options.deliveryRepository ?? options.dbPath ?? ':memory:',options.now,options.deliveryAutoMergeRepositories ?? []);
-  const modelFactoryStore = new ModelFactoryStore(options.modelFactoryRepository ?? options.dbPath ?? ':memory:',{now:options.now,globalBudgetCapMicros:options.modelFactoryBudgetCapMicros,...(options.modelFactoryAutoPublishRepoPrefixes?{autoPublishRepoPrefixes:options.modelFactoryAutoPublishRepoPrefixes}:{})});
+  const computeStore = new ComputeStore(options.computeRepository ?? options.dbPath ?? ':memory:',{now:options.now,globalBudgetCapMicros:options.computeBudgetCapMicros,...(options.computeAutoPublishRepoPrefixes?{autoPublishRepoPrefixes:options.computeAutoPublishRepoPrefixes}:{})});
   const autonomousStore=createAutonomousStore(options.dbPath ?? ':memory:');
   const autonomousService=createAutonomousApiService(autonomousStore,options.now);
   // Worker-reported tool calls live in their own file so they never touch the task store's locks.
   const toolAuditDb=new DatabaseSync(options.dbPath&&options.dbPath!==':memory:'?options.dbPath+'.tool-audit':':memory:');
   const toolAuditStore=createToolAuditStore({exec:(query,...binds)=>toolAuditDb.prepare(query).all(...binds) as Record<string,unknown>[],transactionSync:fn=>{toolAuditDb.exec('BEGIN IMMEDIATE');try{const result=fn();toolAuditDb.exec('COMMIT');return result;}catch(error){toolAuditDb.exec('ROLLBACK');throw error;}}},createHash('sha256').update('hivemind-tool-audit-cursor\n'+operatorToken).digest('hex'));
   const deliveryOrchestrator = options.deliveryOrchestratorFactory?.(deliveryStore);
-  const modelFactoryOrchestrator = options.modelFactoryOrchestratorFactory?.(modelFactoryStore);
+  const computeOrchestrator = options.computeOrchestratorFactory?.(computeStore, projectStore);
   const collabRepo = options.collabRepo ?? new SqliteCollaborationRepository(options.dbPath ?? ':memory:');
   const collabService = new AgentCollabService(collabRepo, { now: options.now, redactSecrets: [operatorToken, workerToken, ...(agentToken ? [agentToken] : [])] });
   const collabOrchestrator = options.collabOrchestratorFactory?.(collabService);
   const autonomyStore = new AutonomyTriggerStore(options.autonomy?.repository ?? options.dbPath ?? ':memory:', { now: options.now });
-  const autonomyDispatcher = options.autonomy?.dispatcherFactory?.(autonomyStore, deliveryStore, deliveryOrchestrator);
+  const autonomyDispatcher = options.autonomy?.dispatcherFactory?.(autonomyStore, deliveryStore, deliveryOrchestrator, projectStore);
   if (autonomyDispatcher && options.autonomy?.hooks) {
     // An auto-merge refused because a change touched a protected path stops the trigger that sent it.
     options.autonomy.hooks.onAutoMergeRefused = async (task, reason) => {
@@ -97,30 +144,31 @@ export function buildApp(options: AppOptions = {}) {
     }, autonomyTickMs);
     autonomyTimer.unref();
   }
-  let mfWakeTimer: ReturnType<typeof setInterval> | undefined;
-  if (modelFactoryOrchestrator && options.modelFactoryWakePollMs && options.modelFactoryWakePollMs >= 1000) {
+  let computeWakeTimer: ReturnType<typeof setInterval> | undefined;
+  if (computeOrchestrator && options.computeWakePollMs && options.computeWakePollMs >= 1000) {
     let wakeInFlight = false;
-    mfWakeTimer = setInterval(() => {
+    computeWakeTimer = setInterval(() => {
       if (wakeInFlight) return;
       wakeInFlight = true;
-      void modelFactoryOrchestrator
+      void computeOrchestrator
         .wakeDueJobs(AbortSignal.timeout(45_000))
         .catch((err) => {
-          console.error(JSON.stringify({ event: 'hivemind.mf_wake_poll.error', message: err instanceof Error ? err.message : String(err) }));
+          console.error(JSON.stringify({ event: 'hivemind.compute_wake_poll.error', message: err instanceof Error ? err.message : String(err) }));
         })
         .finally(() => {
           wakeInFlight = false;
         });
-    }, options.modelFactoryWakePollMs);
-    mfWakeTimer.unref();
+    }, options.computeWakePollMs);
+    computeWakeTimer.unref();
   }
-  app.addHook('onClose',async()=>{if(mfWakeTimer)clearInterval(mfWakeTimer);if(autonomyTimer)clearInterval(autonomyTimer);await autonomyStore.close();await collabService.close();await deliveryStore.close();await modelFactoryStore.close();autonomousStore.close();toolAuditDb.close();});
-  registerDeliveryRoutes(app,{store:deliveryStore,operatorToken,workerToken,orchestrator:deliveryOrchestrator,...(agentToken?{agentToken,agentReadableScopes:async()=>(await autonomyStore.list()).map((t)=>({repository:t.repository,branchPrefix:t.branchPrefix}))}:{})});
-  registerModelFactoryRoutes(app,{store:modelFactoryStore,operatorToken,workerToken,...(agentToken?{agentToken}:{}),orchestrator:modelFactoryOrchestrator});
-  registerCollabRoutes(app,{service:collabService,operatorToken,workerToken,orchestrator:collabOrchestrator});
-  registerAutonomyRoutes(app,{store:autonomyStore,...(autonomyDispatcher?{dispatcher:autonomyDispatcher}:{}),operatorToken,...(agentToken?{agentToken}:{})});
-  if (options.notifications) registerNotificationRoutes(app,{gate:options.notifications,operatorToken,...(agentToken?{agentToken}:{})});
-  if (options.agentCredentials) registerAgentCredentialRoutes(app,{...options.agentCredentials,operatorToken,...(agentToken?{agentToken}:{})});
+  app.addHook('onClose',async()=>{if(computeWakeTimer)clearInterval(computeWakeTimer);if(autonomyTimer)clearInterval(autonomyTimer);await autonomyStore.close();await collabService.close();await deliveryStore.close();await computeStore.close();await projectStore.close();autonomousStore.close();toolAuditDb.close();});
+  registerProjectRoutes(app,{auth,store:projectStore,computeStore,deliveryStore,collabService,autonomyStore});
+  registerDeliveryRoutes(app,{store:deliveryStore,projects:projectStore,auth,operatorToken,workerToken,orchestrator:deliveryOrchestrator,...(agentToken?{agentToken,agentReadableScopes:async()=>(await autonomyStore.list()).map((t)=>({repository:t.repository,branchPrefix:t.branchPrefix}))}:{})});
+  registerComputeRoutes(app,{auth,store:computeStore,projects:projectStore,orchestrator:computeOrchestrator});
+  registerCollabRoutes(app,{service:collabService,projects:projectStore,auth,operatorToken,workerToken,orchestrator:collabOrchestrator});
+  registerAutonomyRoutes(app,{store:autonomyStore,projects:projectStore,auth,...(autonomyDispatcher?{dispatcher:autonomyDispatcher}:{}),operatorToken,...(agentToken?{agentToken}:{})});
+  if (options.notifications) registerNotificationRoutes(app,{gate:options.notifications,auth,operatorToken,...(agentToken?{agentToken}:{})});
+  if (options.agentCredentials) registerAgentCredentialRoutes(app,{...options.agentCredentials,auth,operatorToken,...(agentToken?{agentToken}:{})});
   app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});
   app.route({method:['GET','POST','PUT','DELETE','PATCH'],url:'/v1/autonomous-tasks/*',bodyLimit:65536,onRequest:autonomousGuard,handler:autonomous});
   async function autonomousGuard(request:FastifyRequest,reply:FastifyReply){
@@ -204,7 +252,7 @@ export function buildApp(options: AppOptions = {}) {
     if (!equalSecret(request.headers.authorization ?? '',`Bearer ${token}`)) return reply.code(401).send({error:'Unauthorized'});
   };
   const operator = guard(operatorToken), worker = guard(workerToken);
-  const healthMode = options.cloudflare ? (options.repository ? 'hybrid-workers' : 'cloudflare-bridge') : options.repository ? 'local-workers' : (options.deliveryOrchestratorFactory || options.modelFactoryOrchestratorFactory) ? 'aws-runtime' : 'mock-local';
+  const healthMode = options.cloudflare ? (options.repository ? 'hybrid-workers' : 'cloudflare-bridge') : options.repository ? 'local-workers' : (options.deliveryOrchestratorFactory || options.computeOrchestratorFactory) ? 'aws-runtime' : 'mock-local';
   app.get('/health',async () => ({status:'ok',mode:healthMode}));
   app.get('/favicon.ico',async (_request,reply) => reply.code(204).send());
   const staticRoot = new URL('../../../../apps/dashboard/public/',import.meta.url);
@@ -214,19 +262,26 @@ export function buildApp(options: AppOptions = {}) {
   app.get('/api/capabilities',{preHandler:operator},async () => ({providers:options.repository ? ['mock','codex','claude'] : ['mock'],repository:options.repository ?? null,...(options.cloudflare ? {cloudflare:{...options.cloudflare.capabilities(),...(options.workflows?{workflows:true}:{})}} : {})}));
   app.get('/api/state',{preHandler:operator},async () => ({...store.state(),...(options.cloudflare ? {cloudflare:options.cloudflare.state()} : {})}));
   app.get('/api/monitor/snapshot',{preHandler:operator},async () => {
-    const [deliveryTasks, deliveryEvents, mfJobs, mfEvents, mfLedger, collabSessions] = await Promise.all([
+    const [projectList, projectEvents, deliveryTasks, deliveryEvents, computeJobs, computeEvents, collabSessions, autonomyTriggers, autonomyEvents] = await Promise.all([
+      projectStore.list(),
+      projectStore.events(undefined, 100),
       deliveryStore.list(),
       deliveryStore.events(),
-      modelFactoryStore.list(),
-      modelFactoryStore.events(),
-      modelFactoryStore.ledger(),
+      computeStore.list(),
+      computeStore.events(),
       collabService.listSessions(),
+      autonomyStore.list(),
+      autonomyStore.events(50),
     ]);
+    const projectBudgetCaps = Object.fromEntries(projectList.map((p) => [p.id, p.budget.computeBudgetCapMicros]));
+    const computeLedger = await computeStore.ledger({ projectBudgetCaps });
     return {
       health: { status: 'ok', mode: healthMode },
+      projects: { storageBackend: projectStore.storageBackend, projects: projectList, events: projectEvents },
       delivery: { storageBackend: deliveryStore.storageBackend, tasks: deliveryTasks, events: deliveryEvents },
-      modelFactory: { storageBackend: modelFactoryStore.storageBackend, jobs: mfJobs, events: mfEvents, ledger: mfLedger },
+      compute: { storageBackend: computeStore.storageBackend, jobs: computeJobs, events: computeEvents, ledger: computeLedger },
       collab: { storageBackend: collabService.storageBackend, sessions: collabSessions },
+      autonomy: { storageBackend: autonomyStore.storageBackend, triggers: autonomyTriggers, events: autonomyEvents },
     };
   });
   if (options.cloudflare) {

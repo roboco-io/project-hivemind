@@ -2,16 +2,18 @@ import {createAutonomousCloudProxy} from './autonomous-cloud-proxy.js';
 import { buildApp } from './app.js';
 import { configurationGitEnvironment, configurationScope, loadCloudflareConfig, loadCloudWorkflowChecks } from './cloudflare-config.js';
 import { DeliveryOrchestrator } from './delivery-orchestrator.js';
-import { ModelFactoryOrchestrator, parseRegionNetworkRegistry } from './model-factory-orchestrator.js';
+import { ComputeOrchestrator, parseRegionNetworkRegistry } from './compute-orchestrator.js';
 import { CollabOrchestrator } from './collab-orchestrator.js';
 import { DsqlCollaborationRepository } from '../../../packages/adapters/src/aws-dsql.js';
-import { DsqlModelFactoryRepository, importModelFactoryHistoryIfEmpty } from '../../../packages/adapters/src/aws-dsql-model-factory.js';
-import { SqliteModelFactoryRepository } from '../../../packages/core/src/model-factory-repository.js';
+import { DsqlComputeRepository, importComputeHistoryIfEmpty } from '../../../packages/adapters/src/aws-dsql-compute.js';
+import { DsqlProjectRepository, importProjectHistoryIfEmpty } from '../../../packages/adapters/src/aws-dsql-projects.js';
+import { SqliteComputeRepository } from '../../../packages/core/src/compute-repository.js';
+import { ProjectStore, SqliteProjectRepository } from '../../../packages/core/src/projects.js';
 import { DsqlDeliveryRepository } from '../../../packages/adapters/src/aws-dsql-delivery.js';
 import { SqliteDeliveryRepository } from '../../../packages/core/src/delivery-repository.js';
 import { importHistoryIfEmpty } from '../../../packages/core/src/document-repository.js';
 import { AwsEc2SpotTrainer } from '../../../packages/adapters/src/aws-ec2-spot-trainer.js';
-import { createTrustedHfReleasePublisher } from '../../../packages/adapters/src/model-factory-hf-publisher.js';
+import { createTrustedHfReleasePublisher } from '../../../packages/adapters/src/compute-hf-publisher.js';
 import { AwsEcsFargateSpotDriver } from '../../../packages/adapters/src/aws-ecs-driver.js';
 import { AwsMultiRegionEcsDriver } from '../../../packages/adapters/src/aws-multi-region-driver.js';
 import { createEcsTaskCredentialsProvider } from '../../../packages/adapters/src/aws-ecs-metadata-creds.js';
@@ -35,7 +37,7 @@ import { realpathSync } from 'node:fs';
 import type { RepositoryPolicy } from '../../../packages/contracts/src/index.js';
 import type { CloudControl } from '../../../packages/contracts/src/cloudflare.js';
 import type { DeliveryStore } from '../../../packages/core/src/delivery.js';
-import type { ModelFactoryStore } from '../../../packages/core/src/model-factory.js';
+import type { ComputeStore } from '../../../packages/core/src/compute.js';
 import type { AgentCollabService } from '../../../packages/core/src/agent-collab.js';
 import { createAwsSnsNotifier, type NotificationKind } from '../../../packages/adapters/src/aws-sns-notifier.js';
 import { NotificationGate } from './notifications-api.js';
@@ -84,9 +86,9 @@ function createAwsAutonomyDispatcherFactory() {
     s3,
     resolveToken: async (repository, signal) => (await resolveGithubCredentialForRepo(await secretsManager.getSecretString(githubSecretArn, signal), repository, { signal })).token,
   });
-  return (triggers: AutonomyTriggerStore, delivery: DeliveryStore, orchestrator?: DeliveryOrchestrator) =>
+  return (triggers: AutonomyTriggerStore, delivery: DeliveryStore, orchestrator?: DeliveryOrchestrator, projects?: ProjectStore) =>
     orchestrator
-      ? new AutonomyDispatcher({ triggers, delivery, prepare, dispatchWorker: (taskId, signal) => orchestrator.dispatchWorker(taskId, signal), reconcile: (signal) => orchestrator.reconcileRunningTasks(signal), uploadAcceptance: (task, signal) => orchestrator.uploadAcceptanceSpec(task, signal), primaryRegion: region })
+      ? new AutonomyDispatcher({ triggers, delivery, projects, prepare, dispatchWorker: (taskId, signal) => orchestrator.dispatchWorker(taskId, signal), reconcile: (signal) => orchestrator.reconcileRunningTasks(signal), uploadAcceptance: (task, signal) => orchestrator.uploadAcceptanceSpec(task, signal), primaryRegion: region })
       : undefined;
 }
 
@@ -273,12 +275,12 @@ function createAgentCredentialsOptions() {
   return { catalog, issuer, region };
 }
 
-function createAwsModelFactoryOrchestratorFactory(notifications?: NotificationGate) {
+function createAwsComputeOrchestratorFactory(notifications?: NotificationGate) {
   const region = process.env.HIVEMIND_AWS_REGION?.trim();
   const bucket = process.env.HIVEMIND_ARTIFACTS_BUCKET?.trim();
   if (!region || !bucket) return undefined;
 
-  const allowedRegions = (process.env.HIVEMIND_MF_ALLOWED_REGIONS ?? `${region},us-east-2,us-east-1,us-west-2,ap-northeast-1`)
+  const allowedRegions = (process.env.HIVEMIND_COMPUTE_ALLOWED_REGIONS ?? process.env.HIVEMIND_MF_ALLOWED_REGIONS ?? `${region},us-east-2,us-east-1,us-west-2,ap-northeast-1`)
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
@@ -346,9 +348,10 @@ function createAwsModelFactoryOrchestratorFactory(notifications?: NotificationGa
     .map((s) => s.trim())
     .filter(Boolean);
 
-  return (store: ModelFactoryStore) =>
-    new ModelFactoryOrchestrator({
+  return (store: ComputeStore, projects: ProjectStore) =>
+    new ComputeOrchestrator({
       store,
+      projects,
       ec2,
       s3,
       ...(process.env.HIVEMIND_MF_TRAINING_ROLE_ID?.trim() ? { trainingRoleId: process.env.HIVEMIND_MF_TRAINING_ROLE_ID.trim() } : {}),
@@ -358,7 +361,7 @@ function createAwsModelFactoryOrchestratorFactory(notifications?: NotificationGa
       ...(regionNetworks ? { regionNetworks, amiResolver } : {}),
       ...(verifierLauncher ? { verifierLauncher } : {}),
       onPlacementAttempt: (attempt) =>
-        console.log(JSON.stringify({ event: 'hivemind.model_factory.placement_attempt', ...attempt })),
+        console.log(JSON.stringify({ event: 'hivemind.compute.placement_attempt', ...attempt })),
       ...(defaultInstanceProfileArn ? { defaultInstanceProfileArn } : {}),
       ...(allowedInstanceProfileArns.length ? { allowedInstanceProfileArns } : {}),
       spotFeed,
@@ -414,28 +417,23 @@ try {
   const notifications = notifyTopicArn
     ? new NotificationGate(createAwsSnsNotifier({ topicArn: notifyTopicArn, credentials: createEcsTaskCredentialsProvider(), redact: [operatorToken, workerToken, ...(agentToken ? [agentToken] : [])] }))
     : undefined;
-  const modelFactoryOrchestratorFactory = createAwsModelFactoryOrchestratorFactory(notifications);
+  const computeOrchestratorFactory = createAwsComputeOrchestratorFactory(notifications);
   const deliveryOrchestratorFactory = createAwsDeliveryOrchestratorFactory(port, [operatorToken, workerToken, ...(agentToken ? [agentToken] : [])], notifications);
-  // Auto-publish (issue #20) is allowed only into these Hugging Face repository prefixes, e.g. "roboco-io/".
-  const modelFactoryAutoPublishRepoPrefixes = (process.env.HIVEMIND_MF_AUTO_PUBLISH_REPO_PREFIXES ?? '')
+  const computeAutoPublishRepoPrefixes = (process.env.HIVEMIND_COMPUTE_AUTO_PUBLISH_REPO_PREFIXES ?? process.env.HIVEMIND_MF_AUTO_PUBLISH_REPO_PREFIXES ?? '')
     .split(',').map((p) => p.trim()).filter((p) => /^[A-Za-z0-9][A-Za-z0-9_.-]*\/$/.test(p));
-  // Delivery auto-merge (issue #20) is allowed only for these repositories, e.g. "roboco-io/silicon-model-factory".
   const deliveryAutoMergeRepositories = (process.env.HIVEMIND_DELIVERY_AUTO_MERGE_REPOS ?? '')
     .split(',').map((r) => r.trim()).filter((r) => /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r));
-  const modelFactoryBudgetCapMicros = process.env.HIVEMIND_MF_BUDGET_CAP_MICROS
-    ? Number(process.env.HIVEMIND_MF_BUDGET_CAP_MICROS)
+  const computeBudgetCapMicros = (process.env.HIVEMIND_COMPUTE_BUDGET_CAP_MICROS ?? process.env.HIVEMIND_MF_BUDGET_CAP_MICROS)
+    ? Number(process.env.HIVEMIND_COMPUTE_BUDGET_CAP_MICROS ?? process.env.HIVEMIND_MF_BUDGET_CAP_MICROS)
     : undefined;
-  const modelFactoryWakePollMs = process.env.HIVEMIND_MF_WAKE_POLL_MS
-    ? Number(process.env.HIVEMIND_MF_WAKE_POLL_MS)
-    : modelFactoryOrchestratorFactory
+  const computeWakePollMs = (process.env.HIVEMIND_COMPUTE_WAKE_POLL_MS ?? process.env.HIVEMIND_MF_WAKE_POLL_MS)
+    ? Number(process.env.HIVEMIND_COMPUTE_WAKE_POLL_MS ?? process.env.HIVEMIND_MF_WAKE_POLL_MS)
+    : computeOrchestratorFactory
       ? 60_000
       : undefined;
 
   const dsqlEndpoint = process.env.HIVEMIND_DSQL_ENDPOINT?.trim();
   const dsqlRegion = process.env.HIVEMIND_DSQL_REGION?.trim() || process.env.HIVEMIND_AWS_REGION?.trim() || 'ap-northeast-2';
-  // HIVEMIND_DSQL_USER selects a restricted database role (dsql:DbConnect). With such a role the service
-  // cannot create tables, so HIVEMIND_DSQL_MANAGE_SCHEMA=false turns its DDL off; an operator creates the
-  // tables and grants with scripts/aws-dsql-apply-roles.ts. Unset, the service connects as `admin`.
   const dsqlUser = process.env.HIVEMIND_DSQL_USER?.trim() || undefined;
   if (dsqlUser !== undefined && !/^[a-z][a-z0-9_]{1,62}$/.test(dsqlUser)) {
     throw new Error('HIVEMIND_DSQL_USER must be a lowercase database role name');
@@ -455,28 +453,45 @@ try {
     console.log(JSON.stringify({ event: 'hivemind.control_plane.aurora_dsql_enabled', dsqlEndpoint, dsqlRegion, dsqlUser: dsqlUser ?? 'admin', manageSchema: dsqlManageSchema }));
   }
 
-  // The Model Factory ledger moves to Aurora DSQL only when HIVEMIND_MF_STORAGE=aurora-dsql is set. On the
-  // first start with an empty DSQL ledger, the jobs and events of the local SQLite file are copied once.
-  let modelFactoryRepository: DsqlModelFactoryRepository | undefined;
-  const modelFactoryStorage = process.env.HIVEMIND_MF_STORAGE?.trim();
-  if (modelFactoryStorage !== undefined && modelFactoryStorage !== 'sqlite' && modelFactoryStorage !== 'aurora-dsql') {
-    throw new Error('HIVEMIND_MF_STORAGE must be sqlite or aurora-dsql');
+  let computeRepository: DsqlComputeRepository | undefined;
+  const computeStorage = (process.env.HIVEMIND_COMPUTE_STORAGE ?? process.env.HIVEMIND_MF_STORAGE)?.trim();
+  if (computeStorage !== undefined && computeStorage !== 'sqlite' && computeStorage !== 'aurora-dsql') {
+    throw new Error('HIVEMIND_COMPUTE_STORAGE must be sqlite or aurora-dsql');
   }
-  if (modelFactoryStorage === 'aurora-dsql') {
-    if (!dsqlEndpoint) throw new Error('HIVEMIND_MF_STORAGE=aurora-dsql requires HIVEMIND_DSQL_ENDPOINT');
-    modelFactoryRepository = new DsqlModelFactoryRepository({
+  if (computeStorage === 'aurora-dsql') {
+    if (!dsqlEndpoint) throw new Error('HIVEMIND_COMPUTE_STORAGE=aurora-dsql requires HIVEMIND_DSQL_ENDPOINT');
+    computeRepository = new DsqlComputeRepository({
       endpoint: dsqlEndpoint,
       region: dsqlRegion,
       allowedRegions: [dsqlRegion],
       credentials: createEcsTaskCredentialsProvider(),
       ...dsqlAccess,
     });
-    const localHistory = new SqliteModelFactoryRepository(dbPath);
+    const localHistory = new SqliteComputeRepository(dbPath);
     try {
-      const importedJobs = await importModelFactoryHistoryIfEmpty(localHistory, modelFactoryRepository);
-      console.log(JSON.stringify({ event: 'hivemind.control_plane.model_factory_dsql_enabled', dsqlRegion, importedJobs }));
+      const importedJobs = await importComputeHistoryIfEmpty(localHistory, computeRepository);
+      console.log(JSON.stringify({ event: 'hivemind.control_plane.compute_dsql_enabled', dsqlRegion, importedJobs }));
     } finally {
       await localHistory.close();
+    }
+  }
+
+  let projectRepository: DsqlProjectRepository | undefined;
+  const projectStorage = (process.env.HIVEMIND_PROJECTS_STORAGE ?? (dsqlEndpoint && (computeStorage === 'aurora-dsql' || process.env.HIVEMIND_DELIVERY_STORAGE?.trim() === 'aurora-dsql') ? 'aurora-dsql' : undefined))?.trim();
+  if (projectStorage === 'aurora-dsql' && dsqlEndpoint) {
+    projectRepository = new DsqlProjectRepository({
+      endpoint: dsqlEndpoint,
+      region: dsqlRegion,
+      allowedRegions: [dsqlRegion],
+      credentials: createEcsTaskCredentialsProvider(),
+      ...dsqlAccess,
+    });
+    const localProjects = new SqliteProjectRepository(dbPath);
+    try {
+      const importedProjects = await importProjectHistoryIfEmpty(localProjects, projectRepository);
+      console.log(JSON.stringify({ event: 'hivemind.control_plane.projects_dsql_enabled', dsqlRegion, importedProjects }));
+    } finally {
+      await localProjects.close();
     }
   }
 
@@ -579,7 +594,7 @@ try {
   };
 
   const agentCredentials = createAgentCredentialsOptions();
-  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,modelFactoryOrchestratorFactory,modelFactoryBudgetCapMicros,modelFactoryWakePollMs,...(deliveryAutoMergeRepositories.length ? { deliveryAutoMergeRepositories } : {}),...(modelFactoryAutoPublishRepoPrefixes.length ? { modelFactoryAutoPublishRepoPrefixes } : {}),...(modelFactoryRepository ? { modelFactoryRepository } : {}),...(deliveryRepository ? { deliveryRepository } : {}),collabRepo,collabOrchestratorFactory,...(agentCredentials ? { agentCredentials } : {}),...(agentToken ? { agentToken } : {}),...(notifications ? { notifications } : {}),autonomy:{...(autonomyRepository ? { repository: autonomyRepository } : {}),...(autonomyDispatcherFactory ? { dispatcherFactory: autonomyDispatcherFactory, tickMs: autonomyTickMs } : {}),hooks:autonomyHooks}});
+  app = buildApp({dbPath,operatorToken,workerToken,nativeReporterToken:process.env.HIVEMIND_NATIVE_REPORTER_TOKEN,repository,cloudflare,workflows,autonomousCloudProxy,deliveryOrchestratorFactory,computeOrchestratorFactory,computeBudgetCapMicros,computeWakePollMs,...(deliveryAutoMergeRepositories.length ? { deliveryAutoMergeRepositories } : {}),...(computeAutoPublishRepoPrefixes.length ? { computeAutoPublishRepoPrefixes } : {}),...(computeRepository ? { computeRepository } : {}),...(projectRepository ? { projectRepository } : {}),...(deliveryRepository ? { deliveryRepository } : {}),collabRepo,collabOrchestratorFactory,...(agentCredentials ? { agentCredentials } : {}),...(agentToken ? { agentToken } : {}),...(notifications ? { notifications } : {}),autonomy:{...(autonomyRepository ? { repository: autonomyRepository } : {}),...(autonomyDispatcherFactory ? { dispatcherFactory: autonomyDispatcherFactory, tickMs: autonomyTickMs } : {}),hooks:autonomyHooks}});
   const address = await app.listen({host,port});
   console.log(`HIVEMIND control service: ${address}`);
   for (const signal of ['SIGINT','SIGTERM'] as const) process.once(signal,() => { void app!.close(); });

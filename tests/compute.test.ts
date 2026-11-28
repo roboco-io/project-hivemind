@@ -2,35 +2,35 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { buildApp } from '../apps/control-plane/src/app.js';
-import { ModelFactoryOrchestrator } from '../apps/control-plane/src/model-factory-orchestrator.js';
+import { ComputeOrchestrator } from '../apps/control-plane/src/compute-orchestrator.js';
 import {
   AwsEc2SpotTrainer,
   type DescribedSpotInstance,
   type Ec2SpotTrainerPort,
 } from '../packages/adapters/src/aws-ec2-spot-trainer.js';
-import { createTrustedHfReleasePublisher } from '../packages/adapters/src/model-factory-hf-publisher.js';
+import { createTrustedHfReleasePublisher } from '../packages/adapters/src/compute-hf-publisher.js';
 import { createHivemindMcpServer, loadMcpSettings } from '../apps/mcp-server/src/server.js';
 import type { S3ObjectPort } from '../packages/adapters/src/aws-s3-artifacts.js';
 import type {
-  CreateModelFactoryJob,
-  ModelArtifactFile,
-  ModelArtifactReceipt,
-} from '../packages/contracts/src/model-factory.js';
+  CreateComputeJob,
+  ComputeArtifactFile,
+  ComputeArtifactReceipt,
+} from '../packages/contracts/src/compute.js';
 import {
-  computeModelManifestDigest,
-  computeTrainingInputsDigest,
-  ModelFactoryStore,
+  computeArtifactManifestDigest,
+  computeInputsDigest,
+  ComputeStore,
   OPERATOR_SELF_REPORTED_DISCLAIMER,
-} from '../packages/core/src/model-factory.js';
+} from '../packages/core/src/compute.js';
 
 function sha256(value: string): string {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
 
-function sampleJobInput(overrides?: Partial<CreateModelFactoryJob>): CreateModelFactoryJob {
+function sampleJobInput(overrides?: Partial<CreateComputeJob>): CreateComputeJob {
   return {
     title: 'Train smf-tiny-v1 on Ohio GPU Spot',
-    modelId: 'smf-tiny-v1',
+    workloadId: 'smf-tiny-v1',
     repository: 'roboco-io/silicon-model-factory',
     baseCommit: 'a'.repeat(40),
     compute: {
@@ -152,12 +152,12 @@ function makeMemoryS3(): { port: S3ObjectPort; store: Map<string, Buffer> } {
 test('B1-B7 end-to-end: dynamic EC2 Spot launch -> long-running wake -> S3 receipt -> cost settlement -> human release approval -> trusted HF release', async () => {
   let clock = Date.parse('2026-11-26T00:00:00.000Z');
   const now = () => clock;
-  const store = new ModelFactoryStore(':memory:', { now, globalBudgetCapMicros: 1_000_000 });
+  const store = new ComputeStore(':memory:', { now, globalBudgetCapMicros: 1_000_000 });
   const ec2 = makeFakeEc2Port();
   const s3 = makeMemoryS3();
   const publishedCalls: { repo: string; manifestDigest: string }[] = [];
 
-  const orchestrator = new ModelFactoryOrchestrator({
+  const orchestrator = new ComputeOrchestrator({
     store,
     ec2: ec2.port,
     s3: s3.port,
@@ -185,26 +185,26 @@ test('B1-B7 end-to-end: dynamic EC2 Spot launch -> long-running wake -> S3 recei
   try {
     // 1. Create job with dynamic AMI & instanceType (no CDK stack redeploy needed).
     const created = await store.create(sampleJobInput());
-    assert.equal(created.status, 'awaiting_training_approval');
-    assert.equal(created.waitReason, 'awaiting_training_approval');
+    assert.equal(created.status, 'awaiting_launch_approval');
+    assert.equal(created.waitReason, 'awaiting_launch_approval');
     assert.equal(created.compute.amiId, 'ami-0123456789abcdef0');
     assert.equal(created.compute.region, 'us-east-2');
 
     // 2. Approve training -> reserves budget and launches Spot instance in us-east-2.
-    const launched = await orchestrator.approveAndLaunchTraining(
+    const launched = await orchestrator.approveAndLaunch(
       created.id,
       created.approvalFingerprint,
       'Approve Ohio g5.xlarge training run',
     );
-    assert.equal(launched.status, 'training_running');
-    assert.equal(launched.waitReason, 'training_in_progress');
+    assert.equal(launched.status, 'running');
+    assert.equal(launched.waitReason, 'running_in_progress');
     assert.ok(launched.instance?.instanceId.startsWith('i-'));
     assert.equal(launched.cost.reservedMicros, 500_000);
 
     // 3. Central budget cap enforcement: a second job requesting $0.60 exceeds remaining $0.50 -> explicit 409!
     const overBudget = await store.create(
       sampleJobInput({
-        modelId: 'smf-oversized',
+        workloadId: 'smf-oversized',
         compute: {
           ...sampleJobInput().compute,
           s3ArtifactPrefix: 'models/smf-oversized/run-01',
@@ -213,7 +213,7 @@ test('B1-B7 end-to-end: dynamic EC2 Spot launch -> long-running wake -> S3 recei
       }),
     );
     await assert.rejects(
-      () => orchestrator.approveAndLaunchTraining(overBudget.id, overBudget.approvalFingerprint, 'Should reject'),
+      () => orchestrator.approveAndLaunch(overBudget.id, overBudget.approvalFingerprint, 'Should reject'),
       /Central cost cap exceeded/,
     );
     assert.ok((await store.get(overBudget.id)).diagnostics.some((d) => d.includes('Central cost cap exceeded')));
@@ -221,18 +221,18 @@ test('B1-B7 end-to-end: dynamic EC2 Spot launch -> long-running wake -> S3 recei
     // 4. First wake-up at +10 min: still running -> reschedules nextWakeAt without keeping worker alive.
     clock += 600_000;
     const midWake = await orchestrator.wakeJob(created.id);
-    assert.equal(midWake.status, 'training_running');
-    assert.equal(midWake.waitReason, 'training_in_progress');
+    assert.equal(midWake.status, 'running');
+    assert.equal(midWake.waitReason, 'running_in_progress');
     assert.ok(midWake.nextWakeAt);
 
     // 5. Training finishes at +30 min: uploads S3 receipt & terminates cleanly.
     clock += 1_200_000; // total 30m = 1800s
-    const files: ModelArtifactFile[] = [
+    const files: ComputeArtifactFile[] = [
       { path: 'model.safetensors', sha256: sha256('weights-v1'), sizeBytes: 120_000_000 },
       { path: 'config.json', sha256: sha256('{"arch":"tiny"}'), sizeBytes: 512 },
     ];
-    const manifestDigest = computeModelManifestDigest(files);
-    const receipt: ModelArtifactReceipt = {
+    const manifestDigest = computeArtifactManifestDigest(files);
+    const receipt: ComputeArtifactReceipt = {
       version: 1,
       jobId: created.id,
       s3Bucket: 'hivemind-runtime-artifacts',
@@ -299,10 +299,10 @@ test('B1-B7 end-to-end: dynamic EC2 Spot launch -> long-running wake -> S3 recei
 test('B1 TTL Guard: wakeJob force-terminates Spot instance past maxLifetimeMs and settles cost', async () => {
   let clock = Date.parse('2026-11-26T00:00:00.000Z');
   const now = () => clock;
-  const store = new ModelFactoryStore(':memory:', { now });
+  const store = new ComputeStore(':memory:', { now });
   const ec2 = makeFakeEc2Port();
   const s3 = makeMemoryS3();
-  const orchestrator = new ModelFactoryOrchestrator({ store, ec2: ec2.port, s3: s3.port, now });
+  const orchestrator = new ComputeOrchestrator({ store, ec2: ec2.port, s3: s3.port, now });
 
   try {
     const job = await store.create(
@@ -313,7 +313,7 @@ test('B1 TTL Guard: wakeJob force-terminates Spot instance past maxLifetimeMs an
         },
       }),
     );
-    const launched = await orchestrator.approveAndLaunchTraining(job.id, job.approvalFingerprint, 'Launch TTL test');
+    const launched = await orchestrator.approveAndLaunch(job.id, job.approvalFingerprint, 'Launch TTL test');
     const instanceId = launched.instance!.instanceId;
     assert.equal(ec2.instances.get(instanceId)!.state, 'running');
 
@@ -371,7 +371,7 @@ test('B1 AwsEc2SpotTrainer SigV4 query adapter parses RunInstances, DescribeInst
 
   const launched = await trainer.launchSpotInstance({
     jobId: 'mf-1',
-    modelId: 'canary',
+    workloadId: 'canary',
     region: 'us-east-2',
     instanceType: 't4g.nano',
     amiId: 'ami-0abc1234567890def',
@@ -393,20 +393,20 @@ test('Model Factory HTTP API enforces operator-only auth and exposes central led
   const app = buildApp({
     operatorToken: 'op-secret-token',
     workerToken: 'wk-secret-token',
-    modelFactoryBudgetCapMicros: 2_000_000,
+    computeBudgetCapMicros: 2_000_000,
   });
   try {
     // Worker token MUST NOT access model factory operator endpoints.
     const unauth = await app.inject({
       method: 'GET',
-      url: '/api/model-factory/ledger',
+      url: '/api/compute/ledger',
       headers: { authorization: 'Bearer wk-secret-token' },
     });
     assert.equal(unauth.statusCode, 401);
 
     const createRes = await app.inject({
       method: 'POST',
-      url: '/api/model-factory/jobs',
+      url: '/api/compute/jobs',
       headers: { authorization: 'Bearer op-secret-token' },
       payload: sampleJobInput(),
     });
@@ -415,7 +415,7 @@ test('Model Factory HTTP API enforces operator-only auth and exposes central led
 
     const approveRes = await app.inject({
       method: 'POST',
-      url: `/api/model-factory/jobs/${job.id}/approve-training`,
+      url: `/api/compute/jobs/${job.id}/approve`,
       headers: { authorization: 'Bearer op-secret-token' },
       payload: { approvalFingerprint: job.approvalFingerprint, reason: 'Operator approved' },
     });
@@ -423,7 +423,7 @@ test('Model Factory HTTP API enforces operator-only auth and exposes central led
 
     const ledgerRes = await app.inject({
       method: 'GET',
-      url: '/api/model-factory/ledger',
+      url: '/api/compute/ledger',
       headers: { authorization: 'Bearer op-secret-token' },
     });
     assert.equal(ledgerRes.statusCode, 200);
@@ -435,7 +435,7 @@ test('Model Factory HTTP API enforces operator-only auth and exposes central led
     // The job list names the ledger storage backend; the default is the local SQLite file.
     const listRes = await app.inject({
       method: 'GET',
-      url: '/api/model-factory/jobs',
+      url: '/api/compute/jobs',
       headers: { authorization: 'Bearer op-secret-token' },
     });
     assert.equal(listRes.json().storageBackend, 'sqlite');
@@ -457,11 +457,11 @@ test('B6 createTrustedHfReleasePublisher rejects mismatched digest and missing a
     },
   });
 
-  const store = new ModelFactoryStore(':memory:');
+  const store = new ComputeStore(':memory:');
   try {
     const job = await store.create(sampleJobInput());
-    const files: ModelArtifactFile[] = [{ path: 'config.json', sha256: sha256('{}'), sizeBytes: 2 }];
-    const digest = computeModelManifestDigest(files);
+    const files: ComputeArtifactFile[] = [{ path: 'config.json', sha256: sha256('{}'), sizeBytes: 2 }];
+    const digest = computeArtifactManifestDigest(files);
 
     await assert.rejects(
       () =>
@@ -494,27 +494,27 @@ test('B6 createTrustedHfReleasePublisher rejects mismatched digest and missing a
   }
 });
 
-test('MCP model-factory profile registers all 7 Delivery + 9 Model Factory operator tools', () => {
+test('MCP compute profile registers all 7 Delivery + 10 Compute operator tools', () => {
   const settings = loadMcpSettings({
     HIVEMIND_API_URL: 'http://127.0.0.1:4310',
     HIVEMIND_OPERATOR_TOKEN: 'local-development-only',
-    HIVEMIND_MCP_PROFILE: 'model-factory',
+    HIVEMIND_MCP_PROFILE: 'compute',
   });
-  assert.equal(settings.profile, 'model-factory');
+  assert.equal(settings.profile, 'compute');
   const server = createHivemindMcpServer(settings);
   const tools = Object.keys((server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools);
   assert.ok(tools.includes('hivemind_delivery_create'));
-  assert.ok(tools.includes('hivemind_mf_create'));
-  assert.ok(tools.includes('hivemind_mf_approve_training'));
-  assert.ok(tools.includes('hivemind_mf_approve_release'));
-  assert.ok(tools.includes('hivemind_mf_ledger'));
-  assert.ok(tools.includes('hivemind_mf_wake'));
-  assert.ok(tools.includes('hivemind_mf_publish_release'));
+  assert.ok(tools.includes('hivemind_compute_create'));
+  assert.ok(tools.includes('hivemind_compute_approve'));
+  assert.ok(tools.includes('hivemind_compute_approve_release'));
+  assert.ok(tools.includes('hivemind_compute_ledger'));
+  assert.ok(tools.includes('hivemind_compute_wake'));
+  assert.ok(tools.includes('hivemind_compute_publish_release'));
   assert.equal(tools.length, 17);
 });
 
 test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerprint + preflight, bootstrap metadata, and attestationSource provenance', async () => {
-  const store = new ModelFactoryStore(':memory:');
+  const store = new ComputeStore(':memory:');
   const s3 = makeMemoryS3();
   const capturedLaunches: Parameters<Ec2SpotTrainerPort['launchSpotInstance']>[0][] = [];
   const baseEc2 = makeFakeEc2Port();
@@ -528,7 +528,7 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
 
   const approvedProfile = 'arn:aws:iam::123456789012:instance-profile/hivemind-runtime-mf-training-instance-profile';
   const rogueProfile = 'arn:aws:iam::123456789012:instance-profile/admin-rogue-profile';
-  const orchestrator = new ModelFactoryOrchestrator({
+  const orchestrator = new ComputeOrchestrator({
     store,
     ec2,
     s3: s3.port,
@@ -548,7 +548,7 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
         },
       }),
     );
-    const failedRogue = await orchestrator.approveAndLaunchTraining(
+    const failedRogue = await orchestrator.approveAndLaunch(
       rogueJob.id,
       rogueJob.approvalFingerprint,
       'Try rogue profile',
@@ -562,7 +562,7 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
     const scriptSha = createHash('sha256').update(scriptBytes).digest('hex');
     const inputsPrefix = 'models/smf-tiny-v1/inputs/b1';
     const inputFiles = [{ path: 'eval.py', sha256: scriptSha, sizeBytes: scriptBytes.byteLength }];
-    const inputsDigest = computeTrainingInputsDigest(inputsPrefix, inputFiles);
+    const inputsDigest = computeInputsDigest(inputsPrefix, inputFiles);
 
     const jobA = await store.create(
       sampleJobInput({
@@ -589,14 +589,14 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
     assert.notEqual(jobA.approvalFingerprint, jobB.approvalFingerprint);
 
     // 3. Missing S3 input fails pre-launch cleanly (never launches EC2).
-    const missingFail = await orchestrator.approveAndLaunchTraining(jobB.id, jobB.approvalFingerprint, 'Missing S3 input');
+    const missingFail = await orchestrator.approveAndLaunch(jobB.id, jobB.approvalFingerprint, 'Missing S3 input');
     assert.equal(missingFail.status, 'failed');
     assert.equal(capturedLaunches.length, 0);
 
     // 4. Upload pinned input to S3 -> Control Plane auto-injects approved instanceProfileArn, metadata tags & userData env!
     await s3.port.putObject(`${inputsPrefix}/eval.py`, scriptBytes, 'text/x-python');
-    const launched = await orchestrator.approveAndLaunchTraining(jobA.id, jobA.approvalFingerprint, 'Launch pinned inputs');
-    assert.equal(launched.status, 'training_running');
+    const launched = await orchestrator.approveAndLaunch(jobA.id, jobA.approvalFingerprint, 'Launch pinned inputs');
+    assert.equal(launched.status, 'running');
     const capturedLaunch = capturedLaunches[0]!;
     assert.ok(capturedLaunch);
     assert.equal(capturedLaunch.instanceProfileArn, approvedProfile);
@@ -609,8 +609,8 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
     // then instance shuts down -> subsequent wakeDueJobs() MUST still settle cost!
     const outBytes = Buffer.from('{"ok":true}', 'utf8');
     const outSha = createHash('sha256').update(outBytes).digest('hex');
-    const outFiles: ModelArtifactFile[] = [{ path: 'out.json', sha256: outSha, sizeBytes: outBytes.byteLength }];
-    const outDigest = computeModelManifestDigest(outFiles);
+    const outFiles: ComputeArtifactFile[] = [{ path: 'out.json', sha256: outSha, sizeBytes: outBytes.byteLength }];
+    const outDigest = computeArtifactManifestDigest(outFiles);
     await s3.port.putObject(`${launched.compute.s3ArtifactPrefix}/out.json`, outBytes, 'application/json');
     await s3.port.putObject(
       `${launched.compute.s3ArtifactPrefix}/receipt.json`,
@@ -645,24 +645,24 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
     try {
       const createdRes = await app.inject({
         method: 'POST',
-        url: '/api/model-factory/jobs',
+        url: '/api/compute/jobs',
         headers: { authorization: 'Bearer op-t' },
         payload: sampleJobInput(),
       });
       const apiJob = createdRes.json();
       await app.inject({
         method: 'POST',
-        url: `/api/model-factory/jobs/${apiJob.id}/approve-training`,
+        url: `/api/compute/jobs/${apiJob.id}/approve`,
         headers: { authorization: 'Bearer op-t' },
         payload: { approvalFingerprint: apiJob.approvalFingerprint, reason: 'ok' },
       });
-      const files: ModelArtifactFile[] = [{ path: 'out.json', sha256: sha256('{}'), sizeBytes: 2 }];
-      const manifestDigest = computeModelManifestDigest(files);
-      // Force training_running via store-compatible path? Let's test via ModelFactoryStore directly + HTTP API for both routes!
-      const directStore = new ModelFactoryStore(':memory:');
+      const files: ComputeArtifactFile[] = [{ path: 'out.json', sha256: sha256('{}'), sizeBytes: 2 }];
+      const manifestDigest = computeArtifactManifestDigest(files);
+      // Force running via store-compatible path? Let's test via ComputeStore directly + HTTP API for both routes!
+      const directStore = new ComputeStore(':memory:');
       try {
         const j1 = await directStore.create(sampleJobInput());
-        await directStore.approveTraining(j1.id, j1.approvalFingerprint, 'ok');
+        await directStore.approveLaunch(j1.id, j1.approvalFingerprint, 'ok');
         await directStore.recordInstanceLaunched(j1.id, {
           region: 'us-east-2',
           availabilityZone: 'us-east-2c',
@@ -692,7 +692,7 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
         assert.equal(selfAttested.releaseAttestation?.verificationDisclaimer, OPERATOR_SELF_REPORTED_DISCLAIMER);
 
         const j2 = await directStore.create(sampleJobInput());
-        await directStore.approveTraining(j2.id, j2.approvalFingerprint, 'ok');
+        await directStore.approveLaunch(j2.id, j2.approvalFingerprint, 'ok');
         await directStore.recordInstanceLaunched(j2.id, {
           region: 'us-east-2',
           availabilityZone: 'us-east-2c',
@@ -731,7 +731,7 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
       // Operator token MUST NOT call worker-only /verifier-attestation.
       const forbidden = await app.inject({
         method: 'POST',
-        url: `/api/model-factory/jobs/${apiJob.id}/verifier-attestation`,
+        url: `/api/compute/jobs/${apiJob.id}/verifier-attestation`,
         headers: { authorization: 'Bearer op-t' },
         payload: {
           manifestDigest,
@@ -752,7 +752,7 @@ test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerpri
 
 test('digests order files by code unit, so a byte-order sort on the instance gives the same digest', async () => {
   const { createHash } = await import('node:crypto');
-  const { computeModelManifestDigest, computeTrainingInputsDigest } = await import('../packages/core/src/model-factory.js');
+  const { computeArtifactManifestDigest, computeInputsDigest } = await import('../packages/core/src/compute.js');
   // Mixed case and punctuation: a locale order would be 1_Pooling, config_sentence…, config.json, README.md.
   const files = ['model/config.json', 'train-summary.json', 'model/README.md', 'model/config_sentence_transformers.json', 'model/1_Pooling/config.json']
     .map((path, i) => ({ path, sha256: String(i + 1).repeat(64), sizeBytes: 10 + i }));
@@ -760,7 +760,7 @@ test('digests order files by code unit, so a byte-order sort on the instance giv
   assert.deepEqual(byteOrder.map((f) => f.path), ['model/1_Pooling/config.json', 'model/README.md', 'model/config.json', 'model/config_sentence_transformers.json', 'train-summary.json']);
   // What a Python script on the instance computes: json.dumps({'version':1,'files':sorted(...)}, separators=(',',':')).
   const sha = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
-  assert.equal(computeModelManifestDigest(files), sha({ version: 1, files: byteOrder }));
-  assert.equal(computeModelManifestDigest([...files].reverse()), computeModelManifestDigest(files), 'input order does not matter');
-  assert.equal(computeTrainingInputsDigest('models/m/inputs/b1', files), sha({ version: 1, s3Prefix: 'models/m/inputs/b1', files: byteOrder }));
+  assert.equal(computeArtifactManifestDigest(files), sha({ version: 1, files: byteOrder }));
+  assert.equal(computeArtifactManifestDigest([...files].reverse()), computeArtifactManifestDigest(files), 'input order does not matter');
+  assert.equal(computeInputsDigest('models/m/inputs/b1', files), sha({ version: 1, s3Prefix: 'models/m/inputs/b1', files: byteOrder }));
 });

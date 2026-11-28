@@ -1,5 +1,5 @@
 import { createHash, createHmac } from 'node:crypto';
-import type { Ec2InstanceLifecycleState } from '../../contracts/src/model-factory.js';
+import type { Ec2InstanceLifecycleState } from '../../contracts/src/compute.js';
 import type { AwsEcsCredentials } from './aws-ecs-driver.js';
 import { assertAwsRegion } from './autonomous-aws-region.js';
 
@@ -8,7 +8,10 @@ export const HIVEMIND_MF_MANAGED_TAG_VALUE = 'hivemind-model-factory';
 
 export interface LaunchSpotInstanceInput {
   jobId: string;
-  modelId: string;
+  projectId?: string;
+  workloadId?: string;
+  /** Legacy alias for workloadId. */
+  modelId?: string;
   region: string;
   availabilityZoneId?: string;
   instanceType: string;
@@ -361,19 +364,21 @@ export class AwsEc2SpotTrainer implements Ec2SpotTrainerPort {
       InstanceInitiatedShutdownBehavior: 'terminate',
       'TagSpecification.1.ResourceType': 'instance',
       'TagSpecification.1.Tag.1.Key': 'Name',
-      'TagSpecification.1.Tag.1.Value': `hivemind-mf-${input.jobId}`,
+      'TagSpecification.1.Tag.1.Value': `hivemind-compute-${input.jobId}`,
       'TagSpecification.1.Tag.2.Key': HIVEMIND_MF_MANAGED_TAG_KEY,
       'TagSpecification.1.Tag.2.Value': HIVEMIND_MF_MANAGED_TAG_VALUE,
       'TagSpecification.1.Tag.3.Key': 'hivemind:job-id',
       'TagSpecification.1.Tag.3.Value': input.jobId,
-      'TagSpecification.1.Tag.4.Key': 'hivemind:model-id',
-      'TagSpecification.1.Tag.4.Value': input.modelId,
+      'TagSpecification.1.Tag.4.Key': 'hivemind:workload-id',
+      'TagSpecification.1.Tag.4.Value': input.workloadId ?? input.modelId ?? 'unknown',
       'TagSpecification.1.Tag.5.Key': 'hivemind:expires-at',
       'TagSpecification.1.Tag.5.Value': input.expiresAtIso,
+      'TagSpecification.1.Tag.6.Key': 'hivemind:project-id',
+      'TagSpecification.1.Tag.6.Value': input.projectId ?? 'default',
     };
 
     if (input.extraTags) {
-      let tagIndex = 6;
+      let tagIndex = 7;
       for (const [k, v] of Object.entries(input.extraTags)) {
         if (!k || !v || /[\r\n\0]/.test(k) || /[\r\n\0]/.test(v)) continue;
         params[`TagSpecification.1.Tag.${tagIndex}.Key`] = k;

@@ -18,6 +18,7 @@ import type {
   PostCollabMessage,
 } from '../../contracts/src/agent-collab.js';
 import { DomainError, text } from './store.js';
+import { DEFAULT_PROJECT_ID, validateProjectId } from './projects.js';
 
 export interface CollaborationStoragePort {
   readonly backend: 'aurora-dsql' | 'sqlite';
@@ -256,6 +257,10 @@ export class AgentCollabService {
   }
 
   async createSession(input: CreateCollabSession): Promise<CollabSession> {
+    const projectId =
+      input.projectId === undefined || input.projectId === DEFAULT_PROJECT_ID
+        ? DEFAULT_PROJECT_ID
+        : validateProjectId(input.projectId);
     const title = text(input.title, 'title', 160);
     const goal = text(input.goal, 'goal', 12_000);
     const provider = validateProvider(input.provider);
@@ -278,6 +283,7 @@ export class AgentCollabService {
     const at = this.timestamp();
     const session: CollabSession = {
       id: `ses-${randomUUID()}`,
+      projectId,
       title,
       goal: scrubText(goal, this.redactSecrets),
       provider,

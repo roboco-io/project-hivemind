@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildApp } from '../apps/control-plane/src/app.js';
 import { CollabOrchestrator } from '../apps/control-plane/src/collab-orchestrator.js';
-import { ModelFactoryOrchestrator } from '../apps/control-plane/src/model-factory-orchestrator.js';
+import { ComputeOrchestrator } from '../apps/control-plane/src/compute-orchestrator.js';
 import { generateDsqlAuthToken } from '../packages/adapters/src/aws-dsql.js';
 import type { Ec2SpotTrainerPort } from '../packages/adapters/src/aws-ec2-spot-trainer.js';
 import type { S3ObjectPort } from '../packages/adapters/src/aws-s3-artifacts.js';
 import type { SpotMarketSnapshot } from '../packages/contracts/src/multi-region.js';
 import { AgentCollabService, SqliteCollaborationRepository } from '../packages/core/src/agent-collab.js';
-import { ModelFactoryStore } from '../packages/core/src/model-factory.js';
+import { ComputeStore } from '../packages/core/src/compute.js';
 
 test('Aurora DSQL SigV4 presigned IAM auth token matches AWS format and validates hostname', () => {
   const token = generateDsqlAuthToken({
@@ -244,7 +244,7 @@ test('Embedded Control Plane orchestrator strips AWS/Control-Plane secrets, uses
 });
 
 test('5-Region GPU Spot Auto-Router ranks by Spot Placement Score and fails over on InsufficientInstanceCapacity', async () => {
-  const store = new ModelFactoryStore(':memory:');
+  const store = new ComputeStore(':memory:');
   const attemptedRegions: string[] = [];
   const fakeEc2: Ec2SpotTrainerPort = {
     async launchSpotInstance(input) {
@@ -316,7 +316,7 @@ test('5-Region GPU Spot Auto-Router ranks by Spot Placement Score and fails over
     azPrice: {},
   };
 
-  const orchestrator = new ModelFactoryOrchestrator({
+  const orchestrator = new ComputeOrchestrator({
     store,
     ec2: fakeEc2,
     s3: fakeS3,
@@ -327,7 +327,7 @@ test('5-Region GPU Spot Auto-Router ranks by Spot Placement Score and fails over
   try {
     const job = await store.create({
       title: '5-region auto GPU Spot failover test',
-      modelId: 'verilog-embed-v1',
+      workloadId: 'verilog-embed-v1',
       repository: 'roboco-io/silicon-model-factory',
       baseCommit: 'a'.repeat(40),
       compute: {
@@ -352,8 +352,8 @@ test('5-Region GPU Spot Auto-Router ranks by Spot Placement Score and fails over
       },
     });
 
-    const launched = await orchestrator.approveAndLaunchTraining(job.id, job.approvalFingerprint, 'Launch 5-region auto GPU');
-    assert.equal(launched.status, 'training_running');
+    const launched = await orchestrator.approveAndLaunch(job.id, job.approvalFingerprint, 'Launch 5-region auto GPU');
+    assert.equal(launched.status, 'running');
     // Tried highest-score us-east-2 first, failed over automatically to second-best us-west-2 with its region-specific AMI!
     assert.deepEqual(attemptedRegions, ['us-east-2', 'us-west-2']);
     assert.equal(launched.instance?.region, 'us-west-2');

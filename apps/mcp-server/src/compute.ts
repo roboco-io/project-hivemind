@@ -1,8 +1,9 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { COMPUTE_WORKLOAD_KINDS } from '../../../packages/contracts/src/compute.js';
 
-export interface ModelFactoryMcpOptions {
+export interface ComputeMcpOptions {
   apiUrl: string;
   operatorToken: string;
   fetchImpl?: typeof fetch;
@@ -11,14 +12,15 @@ export interface ModelFactoryMcpOptions {
   agent?: boolean;
 }
 
-const TOOL_ERROR = 'HIVEMIND 모델 팩토리 요청을 처리하지 못했습니다. 연결·권한·입력과 현재 작업 상태를 확인하세요.';
-const jobId = z.string().regex(/^mf-[0-9a-f-]{36}$/);
+const TOOL_ERROR = 'HIVEMIND 컴퓨팅 요청을 처리하지 못했습니다. 연결·권한·입력과 현재 작업 상태를 확인하세요.';
+const jobId = z.string().regex(/^(?:cmp|mf)-[0-9a-f-]{36}$/);
+const projectIdSchema = z.string().regex(/^[a-z0-9][a-z0-9-]{1,48}$/);
 const hex40 = z.string().regex(/^[a-f0-9]{40}$/i);
 const hex64 = z.string().regex(/^[a-f0-9]{64}$/i);
 const readOnly = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const mutation = { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false };
 
-export function registerModelFactoryOperatorTools(server: McpServer, options: ModelFactoryMcpOptions): void {
+export function registerComputeOperatorTools(server: McpServer, options: ComputeMcpOptions): void {
   const fetchImpl = options.fetchImpl ?? fetch;
   const redact =
     options.redact ??
@@ -65,65 +67,67 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
   }
 
   server.registerTool(
-    'hivemind_mf_list',
+    'hivemind_compute_list',
     {
-      title: 'HIVEMIND 모델 팩토리 작업 목록',
-      description: 'GPU 스팟 학습·평가·공개 작업 목록과 대기 사유(waitReason)를 조회합니다.',
-      inputSchema: z.strictObject({}),
+      title: 'HIVEMIND Spot 컴퓨팅 작업 목록',
+      description: 'EC2 Spot CPU/GPU 컴퓨팅·학습·데이터 구축·평가 작업 목록과 대기 사유(waitReason)를 조회합니다.',
+      inputSchema: z.strictObject({ projectId: projectIdSchema.optional() }),
       annotations: readOnly,
     },
-    async (_args, extra) => run(() => api('/api/model-factory/jobs', extra.signal)),
+    async ({ projectId }, extra) =>
+      run(() => api(projectId ? `/api/compute/jobs?projectId=${encodeURIComponent(projectId)}` : '/api/compute/jobs', extra.signal)),
   );
 
   server.registerTool(
-    'hivemind_mf_get',
+    'hivemind_compute_get',
     {
-      title: 'HIVEMIND 모델 팩토리 작업 상세',
-      description: '작업의 EC2 스팟 상태, TTL 만료 시각, 비용 예약/정산, S3 영수증 및 공개 상태를 조회합니다.',
+      title: 'HIVEMIND Spot 컴퓨팅 작업 상세',
+      description: '작업의 소속 프로젝트, EC2 스팟 상태, TTL 만료 시각, 비용 예약/정산, S3 영수증 및 공개 상태를 조회합니다.',
       inputSchema: z.strictObject({ jobId }),
       annotations: readOnly,
     },
-    async ({ jobId: id }, extra) => run(() => api(`/api/model-factory/jobs/${encodeURIComponent(id)}`, extra.signal)),
+    async ({ jobId: id }, extra) => run(() => api(`/api/compute/jobs/${encodeURIComponent(id)}`, extra.signal)),
   );
 
   server.registerTool(
-    'hivemind_mf_ledger',
+    'hivemind_compute_ledger',
     {
-      title: 'HIVEMIND 모델 팩토리 비용 원장',
-      description: '전역 예산 상한, 예약 중 비용, 정산 완료 비용 및 잔여 예산을 조회합니다.',
-      inputSchema: z.strictObject({}),
+      title: 'HIVEMIND 컴퓨팅 비용 원장',
+      description: '호스트 전역 및 프로젝트별 예산 상한, 예약 중 비용, 정산 완료 비용 및 잔여 예산을 조회합니다.',
+      inputSchema: z.strictObject({ projectId: projectIdSchema.optional() }),
       annotations: readOnly,
     },
-    async (_args, extra) => run(() => api('/api/model-factory/ledger', extra.signal)),
+    async ({ projectId }, extra) =>
+      run(() => api(projectId ? `/api/compute/ledger?projectId=${encodeURIComponent(projectId)}` : '/api/compute/ledger', extra.signal)),
   );
 
   server.registerTool(
-    'hivemind_mf_wake',
+    'hivemind_compute_wake',
     {
-      title: 'HIVEMIND 모델 팩토리 작업 점검',
+      title: 'HIVEMIND Spot 컴퓨팅 작업 점검',
       description:
-        '학습 인스턴스의 현재 상태를 지금 확인합니다. 인스턴스가 끝났으면 비용을 정산하고 S3 영수증을 확인해 작업을 다음 단계로 넘깁니다. Control Plane은 5분마다 같은 점검을 스스로 하므로, 이 도구는 기다리지 않고 결과를 보려 할 때 씁니다. 최대 수명을 넘긴 인스턴스는 이 점검에서 종료됩니다.',
+        '실행 인스턴스의 현재 상태를 즉시 확인합니다. 인스턴스가 종료되었으면 비용을 정산하고 S3 영수증을 확인해 다음 단계로 넘깁니다.',
       inputSchema: z.strictObject({ jobId }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
-    async ({ jobId: id }, extra) => run(() => api(`/api/model-factory/jobs/${encodeURIComponent(id)}/wake`, extra.signal, {})),
+    async ({ jobId: id }, extra) => run(() => api(`/api/compute/jobs/${encodeURIComponent(id)}/wake`, extra.signal, {})),
   );
 
   server.registerTool(
-    'hivemind_mf_create',
+    'hivemind_compute_create',
     {
-      title: 'HIVEMIND 모델 팩토리 학습 작업 초안 등록',
-      description: '동적 AMI·인스턴스 타입·최대 수명·비용 상한과 공개 정책으로 학습 초안만 등록합니다. 스팟 용량이 없을 때를 대비해 compute.candidateRegions에 다른 리전을 적을 수 있고, AMI는 리전마다 다르므로 그 리전의 AMI를 compute.regionOverrides에 적습니다. 등록 결과의 placementPlan은 스팟 배치 점수 피드의 추세와 EC2의 현재 점수로 정한 리전·AZ 시도 순서입니다.',
+      title: 'HIVEMIND Spot 컴퓨팅 작업 초안 등록',
+      description: '프로젝트별 S3 접두사, 동적 AMI·인스턴스 타입·최대 수명·비용 상한과 공개 정책으로 Spot 컴퓨팅 작업 초안만 등록합니다.',
       inputSchema: z.strictObject({
+        projectId: projectIdSchema.optional(),
         title: z.string().trim().min(1).max(160),
-        modelId: z.string().trim().min(1).max(120),
+        workloadId: z.string().trim().min(1).max(120),
+        workloadKind: z.enum(COMPUTE_WORKLOAD_KINDS).optional(),
         repository: z.string().trim().min(3).max(200),
         baseCommit: hex40,
         compute: z.strictObject({
           region: z.string().min(4).max(32),
-          // Other regions the Control Plane may try. `region` and these are tried in Spot placement score stability order.
           candidateRegions: z.array(z.string().min(4).max(32)).min(1).max(8).optional(),
-          // Per-region AMI, subnets and security groups. An AMI ID is valid in one region only.
           regionOverrides: z
             .record(
               z.string().min(4).max(32),
@@ -140,13 +144,11 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
           maxLifetimeMs: z.number().int().min(60_000).max(604_800_000),
           maxHourlyPriceUsd: z.number().positive().max(200),
           maxTotalCostMicros: z.number().int().min(1).max(10_000_000_000),
-          // Spot placement score feed pool or preset used to rank regions, for types the feed does not list.
           workloadClass: z.string().min(1).max(64).optional(),
           subnetId: z.string().regex(/^subnet-[a-f0-9]{8,17}$/i).optional(),
           securityGroupIds: z.array(z.string().regex(/^sg-[a-f0-9]{8,17}$/i)).min(1).max(5).optional(),
           instanceProfileArn: z.string().min(20).max(256).optional(),
           userDataScript: z.string().max(16_384).optional(),
-          // Root volume in GiB. Omitted: the AMI's own size, which can be too small for checkpoints.
           rootVolumeGb: z.number().int().min(8).max(2000).optional(),
           s3ArtifactPrefix: z.string().min(1).max(512),
           inputs: z
@@ -172,8 +174,6 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
           hfRevision: z.string().min(1).max(120).optional(),
           visibility: z.enum(['private', 'public']),
           releaseCheckCommand: z.array(z.string().min(1).max(1000)).min(1).max(32),
-          // Publish without an operator once the independent verifier passes. Only for repositories under
-          // the operator's auto-publish prefixes; otherwise registration is refused.
           autoPublish: z.literal(true).optional(),
         }),
       }),
@@ -181,16 +181,16 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
     },
     async (args, extra) =>
       run(async () => ({
-        job: await api('/api/model-factory/jobs', extra.signal, args),
-        trainingApproved: false,
+        job: await api('/api/compute/jobs', extra.signal, args),
+        launchApproved: false,
       })),
   );
 
   server.registerTool(
-    'hivemind_mf_approve_training',
+    'hivemind_compute_approve',
     {
-      title: 'HIVEMIND 모델 팩토리 학습 승인 및 스팟 기동',
-      description: '사용자의 명시적 지시에 따라 approvalFingerprint로 예산을 예약하고 EC2 스팟을 기동합니다.',
+      title: 'HIVEMIND Spot 컴퓨팅 실행 승인 및 기동',
+      description: '사용자의 명시적 지시에 따라 approvalFingerprint로 예산을 예약하고 EC2 스팟 인스턴스를 기동합니다.',
       inputSchema: z.strictObject({
         jobId,
         approvalFingerprint: hex64,
@@ -200,7 +200,7 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
     },
     async ({ jobId: id, approvalFingerprint, reason }, extra) =>
       run(() =>
-        api(`/api/model-factory/jobs/${encodeURIComponent(id)}/approve-training`, extra.signal, {
+        api(`/api/compute/jobs/${encodeURIComponent(id)}/approve`, extra.signal, {
           approvalFingerprint,
           reason,
         }),
@@ -208,23 +208,22 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
   );
 
   server.registerTool(
-    'hivemind_mf_dispatch_verifier',
+    'hivemind_compute_dispatch_verifier',
     {
-      title: 'HIVEMIND 모델 팩토리 독립 검증기 실행',
-      description:
-        'S3 영수증이 확인된 작업에 독립 검증기 작업(Fargate Spot)을 기동합니다. 검증기는 산출물과 고정 입력의 해시를 확인하고 승인된 releaseCheckCommand를 실행한 뒤 결과를 직접 보고합니다. 이 결과는 independent_verifier로 기록됩니다. 과금 자원을 만들므로 사용자의 명시적 지시가 있을 때만 호출하세요.',
+      title: 'HIVEMIND Spot 컴퓨팅 독립 검증기 실행',
+      description: 'S3 영수증이 확인된 작업에 독립 검증기(Fargate Spot)를 기동합니다. 과금 자원을 만들므로 명시적 지시가 있을 때만 호출하세요.',
       inputSchema: z.strictObject({ jobId }),
       annotations: { ...mutation, openWorldHint: true },
     },
     async ({ jobId: id }, extra) =>
-      run(() => api(`/api/model-factory/jobs/${encodeURIComponent(id)}/dispatch-verifier`, extra.signal, {})),
+      run(() => api(`/api/compute/jobs/${encodeURIComponent(id)}/dispatch-verifier`, extra.signal, {})),
   );
 
   if (!options.agent) server.registerTool(
-    'hivemind_mf_approve_release',
+    'hivemind_compute_approve_release',
     {
-      title: 'HIVEMIND 모델 팩토리 공개 승인/반려',
-      description: '검증을 통과한 모델의 Hugging Face 또는 S3 공개를 승인하거나 반려합니다. Hugging Face 업로드는 Control Plane에서 백그라운드로 진행되므로, 결과(publication 또는 diagnostics의 실패 사유)는 hivemind_mf_get으로 확인합니다.',
+      title: 'HIVEMIND 컴퓨팅 산출물 공개 승인/반려',
+      description: '검증을 통과한 산출물의 Hugging Face 또는 S3 공개를 승인하거나 반려합니다.',
       inputSchema: z.strictObject({
         jobId,
         decision: z.enum(['approve', 'reject']),
@@ -235,26 +234,25 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
       annotations: mutation,
     },
     async ({ jobId: id, ...body }, extra) =>
-      run(() => api(`/api/model-factory/jobs/${encodeURIComponent(id)}/approve-release`, extra.signal, body)),
+      run(() => api(`/api/compute/jobs/${encodeURIComponent(id)}/approve-release`, extra.signal, body)),
   );
 
   if (!options.agent) server.registerTool(
-    'hivemind_mf_publish_release',
+    'hivemind_compute_publish_release',
     {
-      title: 'HIVEMIND 모델 팩토리 공개 다시 시도',
-      description:
-        '이미 공개가 승인되었지만(release_approved) 게시에 실패한 작업을 다시 게시합니다. 외부 공개를 일으키므로 사용자의 명시적 지시가 있을 때만 호출합니다. 업로드는 백그라운드로 진행되며 결과는 hivemind_mf_get으로 확인합니다.',
+      title: 'HIVEMIND 컴퓨팅 산출물 공개 다시 시도',
+      description: '승인되었지만(release_approved) 게시에 실패한 작업을 다시 게시합니다.',
       inputSchema: z.strictObject({ jobId }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
-    async ({ jobId: id }, extra) => run(() => api(`/api/model-factory/jobs/${encodeURIComponent(id)}/publish-release`, extra.signal, {})),
+    async ({ jobId: id }, extra) => run(() => api(`/api/compute/jobs/${encodeURIComponent(id)}/publish-release`, extra.signal, {})),
   );
 
   server.registerTool(
-    'hivemind_mf_cancel',
+    'hivemind_compute_cancel',
     {
-      title: 'HIVEMIND 모델 팩토리 작업 중단',
-      description: '사용자의 명시적 지시에 따라 학습 작업을 중단하고 실행 중인 EC2 스팟 인스턴스를 종료합니다.',
+      title: 'HIVEMIND Spot 컴퓨팅 작업 중단',
+      description: '사용자의 명시적 지시에 따라 컴퓨팅 작업을 중단하고 실행 중인 EC2 스팟 인스턴스를 종료합니다.',
       inputSchema: z.strictObject({
         jobId,
         reason: z.string().trim().min(1).max(1000),
@@ -262,6 +260,6 @@ export function registerModelFactoryOperatorTools(server: McpServer, options: Mo
       annotations: { ...mutation, destructiveHint: true },
     },
     async ({ jobId: id, reason }, extra) =>
-      run(() => api(`/api/model-factory/jobs/${encodeURIComponent(id)}/cancel`, extra.signal, { reason })),
+      run(() => api(`/api/compute/jobs/${encodeURIComponent(id)}/cancel`, extra.signal, { reason })),
   );
 }

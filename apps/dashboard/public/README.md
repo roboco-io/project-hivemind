@@ -2,14 +2,14 @@
 
 ## Overview
 
-운영자가 브라우저에서 쓰는 상시 모니터링 HUD 웹 관제실의 정적 자산이다. 빌드 단계 없이 제공되며, `charts.js`가 순수 SVG 비용 추이·분포 차트와 파이프라인 스테퍼를, `monitor.js`가 AWS 단일 경로(개요 HUD, Live 스트립, 승인 인박스, SW 전달, Model Factory, 병렬 협업, 비용 분석, 우측 상세 드로어) 모니터링과 명시적 사유 기반 운영 제어를 담당한다. `app.js`와 `tool-audit.js`는 하단 보조 진입점(`로컬 · 레거시 도구`)의 로컬·레거시 작업과 도구 감사 패널을 담당한다. `index.html`은 네 스크립트의 로드 순서(`tool-audit.js` → `app.js` → `charts.js` → `monitor.js`)를 정의한다.
+운영자가 브라우저에서 쓰는 멀티 프로젝트 호스트 상시 모니터링 HUD 웹 관제실의 정적 자산이다. 빌드 단계 없이 제공되며, `charts.js`가 순수 SVG 비용 추이·분포 차트와 파이프라인 스테퍼를, `monitor.js`가 AWS 멀티 프로젝트 호스트 단일 경로(상단 프로젝트 필터 `#project-filter`, 개요 HUD, 프로젝트 관리, Live 스트립, 승인 인박스, SW 전달, Spot 컴퓨팅, 병렬 협업, 비용 분석, 우측 상세 드로어) 모니터링과 명시적 사유 기반 운영 제어를 담당한다. `app.js`와 `tool-audit.js`는 하단 보조 진입점(`로컬 · 레거시 도구`)의 로컬·레거시 작업과 도구 감사 패널을 담당한다. `index.html`은 네 스크립트의 로드 순서(`tool-audit.js` → `app.js` → `charts.js` → `monitor.js`)를 정의한다.
 
 ## Interface
 
-- `[charts.js:hivemindCharts]` - `renderCostTrendChart`, `renderBreakdownBars`, `renderStepper`, `deliverySteps`, `mfSteps`, `collabSteps`를 노출한다.
-- `[monitor.js:hivemindMonitor]` - `state`, `refresh`, `switchTab`, `selectDelivery`, `selectMfJob`, `selectCollab`, `openDrawer`, `closeDrawer`, `querySpotPlacement`, `handleKeydown`, `formatUsd`를 노출한다.
-- `[monitor.js:refresh]` - `GET /api/monitor/snapshot`(단일 요청 집계 API, 미지원 시 순차 폴백)을 조회해 Live 스트립, 승인 인박스, 개요 KPI, 예산 미터·SVG 차트, 모델/리전/인스턴스별 비용 분포, 실행 중 EC2 실시간 추정·TTL, 통합 이벤트 타임라인, 우측 상세 드로어, 브라우저 탭 제목 배지를 갱신한다.
-- `[monitor.js]`의 운영자 제어 핸들러 - 명시적 사유 입력과 `approvalFingerprint`를 포함해 SW 전달(`/api/delivery/reconcile`, `/approve`, `/cancel`, `/human-decision`), Model Factory(`/api/model-factory/sweep-expired`, `/approve-training`, `/wake`, `/dispatch-verifier`, `/approve-release`, `/cancel`), 병렬 협업(`/reconcile`, `/complete`, `/messages`) API를 호출한다.
+- `[charts.js:hivemindCharts]` - `renderCostTrendChart`, `renderBreakdownBars`, `renderStepper`, `deliverySteps`, `computeSteps`, `collabSteps`를 노출한다.
+- `[monitor.js:hivemindMonitor]` - `state`, `refresh`, `switchTab`, `selectDelivery`, `selectComputeJob`, `selectCollab`, `openDrawer`, `closeDrawer`, `querySpotPlacement`, `handleKeydown`, `formatUsd`를 노출한다.
+- `[monitor.js:refresh]` - `GET /api/monitor/snapshot`(단일 요청 집계 API, 미지원 시 순차 폴백)을 조회해 프로젝트 목록·필터, Live 스트립, 승인 인박스, 개요 KPI, 예산 미터·SVG 차트, 프로젝트/워크로드/리전/인스턴스별 비용 분포, 실행 중 EC2 실시간 추정·TTL, 통합 이벤트 타임라인, 우측 상세 드로어, 브라우저 탭 제목 배지를 갱신한다.
+- `[monitor.js]`의 운영자 제어 핸들러 - 프로젝트 등록·상태 전환·토큰 발급/폐기(`/api/projects/*`), 명시적 사유 입력과 `approvalFingerprint`를 포함한 SW 전달(`/api/delivery/reconcile`, `/approve`, `/cancel`, `/human-decision`), Spot 컴퓨팅(`/api/compute/sweep-expired`, `/approve`, `/wake`, `/dispatch-verifier`, `/approve-release`, `/publish-release`, `/cancel`), 병렬 협업(`/reconcile`, `/complete`, `/messages`) API를 호출한다.
 - `[app.js:api]`, `[app.js:refresh]`, `[app.js:render]` - 로컬·레거시 작업(`/api/state`, `/api/capabilities`, `/api/tasks`, `/api/cloudflare/tasks`)을 조회·표시·제어한다.
 - `[tool-audit.js:renderToolAudit]`, `[tool-audit.js:loadToolAudit]` - 장기 작업 상세에서 `GET /api/cloudflare/autonomous-tasks/:id/tool-calls?limit=20`을 읽어 워커 도구 호출 기록을 표시한다.
 

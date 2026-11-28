@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {hfLfsCommit,hfLfsProof,lfsPointer,HF_LFS_MAX_FILE_BYTES,type HfLfsOptions,type HfLfsInvocation} from '../packages/adapters/src/autonomous-external-hf-lfs.ts';
 import type {ExternalLargeManifest} from '../packages/contracts/src/autonomous-external-large.js';
-import {HF_RELEASE_UPLOAD_HOSTS} from '../packages/adapters/src/model-factory-hf-publisher.ts';
+import {HF_RELEASE_UPLOAD_HOSTS} from '../packages/adapters/src/compute-hf-publisher.ts';
 
 const TOKEN='TEST_ONLY_HF_TOKEN_CANARY_0001';
 const sha=(b:Uint8Array|string)=>createHash('sha256').update(b).digest('hex');

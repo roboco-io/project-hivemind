@@ -153,13 +153,15 @@ const sampleDeliveryTask = () => ({
 });
 
 const sampleMfJob = () => ({
-  id: 'mf-22222222-2222-2222-2222-222222222222',
+  id: 'cmp-22222222-2222-2222-2222-222222222222',
+  projectId: 'silicon-mf',
   title: 'LoRA 학습 <script>alert(1)</script>',
-  modelId: 'demo-lora-v1',
+  workloadId: 'demo-lora-v1',
+  workloadKind: 'model_training',
   repository: 'roboco-io/project-hivemind',
   baseCommit: '4'.repeat(40),
-  status: 'awaiting_training_approval',
-  waitReason: 'awaiting_training_approval',
+  status: 'awaiting_launch_approval',
+  waitReason: 'awaiting_launch_approval',
   diagnostics: ['placement ranked ok'],
   approvalFingerprint: 'b'.repeat(64),
   compute: {
@@ -292,13 +294,45 @@ async function loadDashboardWithMonitor(options?: {
     get('dlv-btn-human-reject'),
     get('dlv-btn-cancel'),
   );
-  get('mf-action-form').append(
-    get('mf-btn-approve-training'),
-    get('mf-btn-approve-release'),
-    get('mf-btn-reject-release'),
-    get('mf-btn-cancel'),
+  get('cmp-action-form').append(
+    get('cmp-btn-approve-launch'),
+    get('cmp-btn-approve-release'),
+    get('cmp-btn-reject-release'),
+    get('cmp-btn-cancel'),
   );
 
+  let projects = [
+    {
+      id: 'default',
+      name: 'Default Project',
+      description: 'Default hosted project',
+      template: 'generic',
+      status: 'active',
+      capabilities: ['sw_delivery', 'spot_compute', 'agent_collab'],
+      budget: { computeBudgetCapMicros: 500_000_000, maxSingleJobCostMicros: null, maxDeliveryTaskBudgetMicros: 50_000_000 },
+      delivery: { repositories: ['roboco-io/project-hivemind'], autoMergeRepositories: [], defaultBranchPrefix: 'agent/', defaultProtectedPaths: [], allowAgentAccess: false, allowedWebHosts: [] },
+      compute: { allowedRegions: ['us-east-2'], s3ArtifactPrefixes: ['projects/default/', 'models/'], autoPublishHfRepoPrefixes: [], credentialPurposes: [], maxLifetimeMs: 86_400_000 },
+      notificationChannel: null,
+      tokens: [],
+      createdAt: '2026-11-27T00:00:00Z',
+      updatedAt: '2026-11-27T00:00:00Z',
+    },
+    {
+      id: 'silicon-mf',
+      name: 'Silicon Model Factory',
+      description: 'GPU model factory project',
+      template: 'model-factory',
+      status: 'active',
+      capabilities: ['sw_delivery', 'spot_compute', 'hf_release'],
+      budget: { computeBudgetCapMicros: 50_000_000, maxSingleJobCostMicros: 10_000_000, maxDeliveryTaskBudgetMicros: 25_000_000 },
+      delivery: { repositories: ['roboco-io/silicon-model-factory'], autoMergeRepositories: [], defaultBranchPrefix: 'agent/', defaultProtectedPaths: [], allowAgentAccess: true, allowedWebHosts: [] },
+      compute: { allowedRegions: ['us-east-2'], s3ArtifactPrefixes: ['projects/silicon-mf/', 'models/'], autoPublishHfRepoPrefixes: ['roboco-io/'], credentialPurposes: [], maxLifetimeMs: 86_400_000 },
+      notificationChannel: null,
+      tokens: [],
+      createdAt: '2026-11-27T00:00:00Z',
+      updatedAt: '2026-11-27T00:00:00Z',
+    },
+  ];
   let deliveryTasks = options?.deliveryTasks ?? [sampleDeliveryTask()];
   let mfJobs = options?.mfJobs ?? [sampleMfJob()];
   let mfLedger = options?.mfLedger ?? {
@@ -308,11 +342,24 @@ async function loadDashboardWithMonitor(options?: {
     remainingBudgetMicros: 482_500_000,
     activeReservations: 1,
     settledJobs: 2,
+    byProject: {
+      'silicon-mf': {
+        projectId: 'silicon-mf',
+        budgetCapMicros: 50_000_000,
+        reservedMicros: 5_000_000,
+        settledMicros: 12_500_000,
+        remainingBudgetMicros: 32_500_000,
+        activeReservations: 1,
+        settledJobs: 2,
+      },
+    },
     jobs: [
       {
-        jobId: mfJobs[0]?.id ?? 'mf-1',
-        modelId: 'demo-lora-v1',
-        status: 'awaiting_training_approval',
+        jobId: mfJobs[0]?.id ?? 'cmp-1',
+        projectId: 'silicon-mf',
+        workloadId: 'demo-lora-v1',
+        workloadKind: 'model_training',
+        status: 'awaiting_launch_approval',
         region: 'us-east-2',
         instanceType: 'g6e.2xlarge',
         reservedMicros: 5_000_000,
@@ -415,6 +462,11 @@ async function loadDashboardWithMonitor(options?: {
           status: 200,
           json: async () => ({
             health: { status: 'ok', mode: 'aws-runtime' },
+            projects: {
+              storageBackend: 'aurora-dsql',
+              projects,
+              events: [],
+            },
             delivery: {
               storageBackend: 'aurora-dsql',
               tasks: deliveryTasks,
@@ -423,11 +475,11 @@ async function loadDashboardWithMonitor(options?: {
                 { sequence: 2, taskId: deliveryTasks[0]?.id ?? 'dlv-1', type: 'delivery.verification_failed', at: '2026-11-27T00:10:00Z', data: { reason: 'test error' } },
               ],
             },
-            modelFactory: {
+            compute: {
               storageBackend: 'aurora-dsql',
               jobs: mfJobs,
               events: [
-                { sequence: 1, jobId: mfJobs[0]?.id ?? 'mf-1', type: 'model_factory.created', at: '2026-11-27T00:05:00Z', data: { modelId: 'demo-lora-v1' } },
+                { sequence: 1, jobId: mfJobs[0]?.id ?? 'cmp-1', type: 'compute.created', at: '2026-11-27T00:05:00Z', data: { workloadId: 'demo-lora-v1' } },
               ],
               ledger: mfLedger,
             },
@@ -454,13 +506,13 @@ async function loadDashboardWithMonitor(options?: {
       if (path.startsWith('/api/delivery/tasks/')) {
         return { ok: true, status: 200, json: async () => deliveryTasks[0] };
       }
-      if (path === '/api/model-factory/jobs') {
+      if (path === '/api/compute/jobs') {
         return { ok: true, status: 200, json: async () => ({ storageBackend: 'aurora-dsql', jobs: mfJobs, events: [] }) };
       }
-      if (path === '/api/model-factory/ledger') {
+      if (path === '/api/compute/ledger') {
         return { ok: true, status: 200, json: async () => mfLedger };
       }
-      if (path.startsWith('/api/model-factory/')) {
+      if (path.startsWith('/api/compute/')) {
         return { ok: true, status: 200, json: async () => mfJobs[0] };
       }
       if (path === '/api/collab/sessions') {
@@ -503,16 +555,19 @@ test('monitor.js loads cleanly alongside app.js and tool-audit.js and renders ov
   assert.equal(ui.get('panel-overview').hidden, false);
   assert.equal(ui.get('panel-legacy').hidden, true);
   assert.equal(ui.get('monitor-mode-badge').textContent, 'Control Plane · AWS 운영 · Aurora DSQL');
+  assert.equal(ui.get('monitor-backend-projects').textContent, 'Aurora DSQL');
   assert.equal(ui.get('monitor-backend-delivery').textContent, 'Aurora DSQL');
-  assert.equal(ui.get('monitor-backend-mf').textContent, 'Aurora DSQL');
+  assert.equal(ui.get('monitor-backend-compute').textContent, 'Aurora DSQL');
   assert.equal(ui.get('monitor-backend-collab').textContent, 'Aurora DSQL');
   assert.equal(ui.get('kpi-attention-total').textContent, '2');
   assert.equal(ui.get('kpi-active-total').textContent, '1');
-  assert.equal(ui.get('kpi-mf-remaining').textContent, '$482.50');
-  assert.equal(ui.get('kpi-mf-committed').textContent, '$17.50');
+  assert.equal(ui.get('kpi-compute-remaining').textContent, '$482.50');
+  assert.equal(ui.get('kpi-compute-committed').textContent, '$17.50');
   assert.match(ui.get('budget-utilization-pill').textContent, /3\.5%/);
   assert.match(ui.get('monitor-ledger-body').textContent, /demo-lora-v1/);
   assert.match(ui.get('monitor-ledger-body').textContent, /미정산/);
+  assert.equal(ui.get('tab-badge-projects').textContent, '2');
+  assert.match(ui.get('projects-list').textContent, /Silicon Model Factory/);
 });
 
 test('untrusted HTML and secrets are safely rendered as text and redacted in error banners', async () => {
@@ -629,20 +684,20 @@ test('delivery detail renders safe links, hash verification, fingerprint drift g
   assert.match(ui.get('spot-advisor-status').textContent, /503|로컬 모의/);
 });
 
-test('model factory panel surfaces self-reported attestation warning, instance TTL, and explicit training approval', async () => {
+test('compute panel surfaces self-reported attestation warning, instance TTL, and explicit launch approval', async () => {
   const job = sampleMfJob();
   const ui = await loadDashboardWithMonitor({ mfJobs: [job] });
-  ui.monitor.switchTab('model-factory');
-  ui.monitor.selectMfJob(job.id);
+  ui.monitor.switchTab('compute');
+  ui.monitor.selectComputeJob(job.id);
 
-  assert.equal(ui.get('mf-attest-source').textContent, '운영자 직접 보고 (비독립)');
-  assert.equal(ui.get('mf-attest-disclaimer').hidden, false);
-  assert.match(ui.get('mf-inst-expires').textContent, /남은 수명/);
-  assert.match(ui.get('mf-plan-regions').textContent, /us-east-2/);
+  assert.equal(ui.get('cmp-attest-source').textContent, '운영자 직접 보고 (비독립)');
+  assert.equal(ui.get('cmp-attest-disclaimer').hidden, false);
+  assert.match(ui.get('cmp-inst-expires').textContent, /남은 수명/);
+  assert.match(ui.get('cmp-plan-regions').textContent, /us-east-2/);
 
-  ui.get('mf-reason').value = '예산과 배치 계획 확인 완료';
-  await ui.get('mf-action-form').dispatch('submit', { submitter: { value: 'approve_training' } });
-  const call = ui.calls.find((c) => c.path.endsWith('/approve-training'));
+  ui.get('cmp-reason').value = '예산과 배치 계획 확인 완료';
+  await ui.get('cmp-action-form').dispatch('submit', { submitter: { value: 'approve_launch' } });
+  const call = ui.calls.find((c) => c.path.endsWith('/approve'));
   assert.ok(call);
   assert.deepEqual(call.body, { approvalFingerprint: 'b'.repeat(64), reason: '예산과 배치 계획 확인 완료' });
 });
@@ -703,8 +758,9 @@ test('control-plane serves /monitor.js with CSP and without exposing operator cr
   assert.equal(snapRes.headers.connection, 'close');
   const snap = snapRes.json() as any;
   assert.deepEqual(snap.health, { status: 'ok', mode: 'aws-runtime' });
+  assert.equal(snap.projects.storageBackend, 'sqlite');
   assert.equal(snap.delivery.storageBackend, 'sqlite');
-  assert.equal(snap.modelFactory.storageBackend, 'sqlite');
+  assert.equal(snap.compute.storageBackend, 'sqlite');
   assert.equal(snap.collab.storageBackend, 'sqlite');
   assert.ok(!snapRes.body.includes('super-secret-monitor-token'));
 });
@@ -811,7 +867,8 @@ test('HUD renders SVG cost charts without innerHTML, inbox cards, slide-over dra
   // Pure SVG cost trend & breakdown charts render via createElementNS (zero innerHTML)
   assert.ok(ui.get('overview-cost-chart').findTag('svg').length === 1);
   assert.ok(ui.get('costs-trend-chart').findTag('svg').length === 1);
-  assert.match(ui.get('costs-by-model').textContent, /demo-lora-v1/);
+  assert.match(ui.get('costs-by-project').textContent, /silicon-mf/);
+  assert.match(ui.get('costs-by-workload').textContent, /demo-lora-v1/);
   assert.match(ui.get('costs-by-region').textContent, /us-east-2/);
   assert.match(ui.get('costs-by-instance').textContent, /g6e\.2xlarge/);
   assert.match(ui.get('costs-live-ec2').textContent, /i-0123456789abcdef0/);
@@ -823,15 +880,15 @@ test('HUD renders SVG cost charts without innerHTML, inbox cards, slide-over dra
   assert.match(ui.get('inbox-list').textContent, /LoRA 학습/);
 
   // Slide-over Detail Drawer opens with pipeline stepper & closes via Escape key
-  ui.monitor.openDrawer('mf', 'mf-22222222-2222-2222-2222-222222222222');
+  ui.monitor.openDrawer('compute', 'cmp-22222222-2222-2222-2222-222222222222');
   assert.equal(ui.get('detail-drawer').hidden, false);
   assert.equal(ui.get('drawer-title').textContent, 'LoRA 학습 <script>alert(1)</script>');
-  assert.match(ui.get('drawer-stepper').textContent, /학습 승인/);
+  assert.match(ui.get('drawer-stepper').textContent, /기동 승인/);
   ui.monitor.handleKeydown({ key: 'Escape' });
   assert.equal(ui.get('detail-drawer').hidden, true);
 
   // Number shortcuts switch views, but are ignored while typing in INPUT
-  ui.monitor.handleKeydown({ key: '6', target: { tagName: 'BODY' } });
+  ui.monitor.handleKeydown({ key: '7', target: { tagName: 'BODY' } });
   assert.equal(ui.monitor.state.activeTab, 'costs');
   ui.monitor.handleKeydown({ key: '1', target: { tagName: 'INPUT' } });
   assert.equal(ui.monitor.state.activeTab, 'costs');

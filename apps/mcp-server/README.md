@@ -14,16 +14,16 @@ MCP 서버는 환경 변수 `HIVEMIND_MCP_PROFILE`로 노출할 도구 묶음을
 
 | 프로필 | 도구 | 용도 |
 |---|---|---|
-| `default` (별칭 `aws`) | 35개: `hivemind_status` 1 + `hivemind_control_plane_*` 2 + `hivemind_delivery_*` 7 + `hivemind_mf_*` 10 + `hivemind_collab_*` 10 + `hivemind_agent_credentials` 1 + `hivemind_autonomy_*` 4 | AWS 단일 경로 전체. 일상 사용의 기본값이다. |
+| `default` (별칭 `aws`) | 39개: `hivemind_status` 1 + `hivemind_control_plane_*` 2 + `hivemind_project_*` 4 + `hivemind_delivery_*` 7 + `hivemind_compute_*` 10 + `hivemind_collab_*` 10 + `hivemind_agent_credentials` 1 + `hivemind_autonomy_*` 4 | AWS 멀티 프로젝트 호스트 단일 경로 전체. 일상 사용의 기본값이다. |
 | `delivery` | 7개 | SW 전달 작업만 노출한다. |
-| `model-factory` | 17개: 전달 7 + Model Factory 10 | 전달과 Model Factory만 노출한다. |
+| `compute` | 17개: 전달 7 + 컴퓨팅 10 | 전달과 범용 Spot 컴퓨팅만 노출한다. |
 | `collab` | 10개 | 협업 세션만 노출한다. |
-| `agent` | 13개: `hivemind_status` 1 + Model Factory 8 + `hivemind_agent_credentials` 1 + `hivemind_autonomy_triggers` 1 + `hivemind_delivery_list`·`hivemind_delivery_get` 2 | 모델 팩토리 에이전트용. 에이전트 전용 토큰(`HIVEMIND_AGENT_TOKEN_FILE`)으로만 동작한다. 전달 작업은 설정된 자율 트리거와 저장소·브랜치 접두사가 같은 작업만 조회하고, 등록·승인·취소는 할 수 없다. 공개 승인·다시 게시, 협업, Control Plane 기동·종료 도구는 없다. Control Plane 설정 파일이 있으면 터널만 열거나 다시 열고, 서비스의 desiredCount는 바꾸지 않는다. |
+| `project-agent` (별칭 `agent`) | 14개: `hivemind_status` 1 + `hivemind_project_me` 1 + 컴퓨팅 8 + `hivemind_agent_credentials` 1 + `hivemind_autonomy_triggers` 1 + `hivemind_delivery_list`·`hivemind_delivery_get` 2 | 호스팅된 프로젝트의 에이전트용. 프로젝트 전용 에이전트 토큰(`HIVEMIND_AGENT_TOKEN_FILE`)으로만 동작하며 자기 프로젝트 범위 밖의 작업·저장소·리전·S3 접두사에는 접근할 수 없다. 호스트 프로젝트 관리, 공개 승인·게시, 협업, Control Plane 기동·종료 도구는 없다. Control Plane 설정 파일이 있으면 터널만 열거나 다시 열고, 서비스의 desiredCount는 바꾸지 않는다. |
 | `legacy` | 22개 | 폐기된 Cloudflare 경로의 도구다. 원격 리소스가 없어 실제 실행은 되지 않는다. `cloudflare/` 아카이브와 함께 보관한다([ADR-0012](../../docs/adr/0012-cloudflare-archive-retention.md)). |
 
 2026-11-27 이전에는 `default`가 지금의 `legacy` 도구 묶음이었다. 그 묶음은 Cloudflare 경로용이라 AWS Control Plane에 연결하면 `hivemind_status`가 `configured: false`만 돌려줬다. 그래서 기본값을 AWS 경로로 바꿨다. 이 문서의 "장기 자율 작업 운영자 계약", "운영자 확인 최종 비용", "Workflow 팀 원장" 절은 `legacy` 프로필의 도구를 설명한다.
 
-기본 프로필의 `hivemind_status`는 Control Plane 연결과 운영자 인증을 확인하는 읽기 전용 도구다. `/api/delivery/tasks`, `/api/model-factory/jobs`, `/api/model-factory/ledger`, `/api/collab/sessions`를 읽어 저장소 종류, 상태별 건수, 남은 중앙 예산을 돌려준다. 작업 지시문이나 모델 출력은 돌려주지 않는다.
+기본 프로필의 `hivemind_status`는 Control Plane 연결과 운영자 인증을 확인하는 읽기 전용 도구다. `/api/projects`, `/api/delivery/tasks`, `/api/compute/jobs`, `/api/compute/ledger`, `/api/collab/sessions`를 읽어 저장소 종류, 상태별 건수, 남은 중앙 예산을 돌려준다. 작업 지시문이나 모델 출력은 돌려주지 않는다.
 
 ## Control Plane 기동과 종료 (`hivemind_control_plane_start`, `hivemind_control_plane_stop`)
 

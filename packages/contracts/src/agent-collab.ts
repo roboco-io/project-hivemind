@@ -21,6 +21,7 @@ export interface CollabOrchestratorRun {
 
 export interface CollabSession {
   id: string;
+  projectId?: string;
   title: string;
   goal: string;
   provider: CollabProvider;
@@ -78,6 +79,7 @@ export interface CollabWorkLog {
 }
 
 export interface CreateCollabSession {
+  projectId?: string;
   title: string;
   goal: string;
   provider: CollabProvider;

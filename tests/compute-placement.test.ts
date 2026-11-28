@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import Fastify from 'fastify';
-import { registerModelFactoryRoutes } from '../apps/control-plane/src/model-factory-api.js';
-import { ModelFactoryOrchestrator } from '../apps/control-plane/src/model-factory-orchestrator.js';
+import { registerComputeRoutes } from '../apps/control-plane/src/compute-api.js';
+import { ComputeOrchestrator } from '../apps/control-plane/src/compute-orchestrator.js';
+import { ProjectStore } from '../packages/core/src/projects.js';
 import {
   parseSpotPlacementScores,
   parseSubnetAzIds,
@@ -11,14 +12,14 @@ import {
 } from '../packages/adapters/src/aws-ec2-spot-trainer.js';
 import type { S3ObjectPort } from '../packages/adapters/src/aws-s3-artifacts.js';
 import type { SpotPlacementFeedPort } from '../packages/adapters/src/spot-placement-feed.js';
-import type { CreateModelFactoryJob, ModelFactoryJob } from '../packages/contracts/src/model-factory.js';
+import type { CreateComputeJob, ComputeJob } from '../packages/contracts/src/compute.js';
 import type { SpotMarketSnapshot, SpotTimeSeriesPoint } from '../packages/contracts/src/multi-region.js';
-import { ModelFactoryStore } from '../packages/core/src/model-factory.js';
+import { ComputeStore } from '../packages/core/src/compute.js';
 import {
   orderSubnetsByPlannedAzs,
-  planTrainingPlacement,
+  planComputePlacement,
   resolveFeedPool,
-} from '../packages/core/src/model-factory-placement.js';
+} from '../packages/core/src/compute-placement.js';
 
 const NOW = Date.parse('2026-11-27T03:30:00Z');
 const GENERATED = '2026-11-27 03:11 UTC';
@@ -77,7 +78,7 @@ const COMPUTE = {
 };
 
 test('regions and AZs are ordered by the lowest, then average, then latest score in the window', () => {
-  const plan = planTrainingPlacement(snapshot(), COMPUTE, NOW, 'https://feed.example/data.json');
+  const plan = planComputePlacement(snapshot(), COMPUTE, NOW, 'https://feed.example/data.json');
   assert.equal(plan.status, 'ranked');
   assert.equal(plan.feedPool, 'g6e.12xlarge');
   assert.equal(plan.feedGeneratedAt, GENERATED);
@@ -92,12 +93,12 @@ test('regions and AZs are ordered by the lowest, then average, then latest score
 });
 
 test('the job region is always a candidate, and the plan never adds a region', () => {
-  const plan = planTrainingPlacement(snapshot(), { region: 'us-east-1', instanceType: 'g6e.12xlarge' }, NOW);
+  const plan = planComputePlacement(snapshot(), { region: 'us-east-1', instanceType: 'g6e.12xlarge' }, NOW);
   assert.deepEqual(plan.regions.map((r) => r.region), ['us-east-1']);
 });
 
 test('a type the feed does not cover keeps the listed order and says why', () => {
-  const plan = planTrainingPlacement(snapshot(), { ...COMPUTE, instanceType: 'g4dn.xlarge' }, NOW);
+  const plan = planComputePlacement(snapshot(), { ...COMPUTE, instanceType: 'g4dn.xlarge' }, NOW);
   assert.equal(plan.status, 'type_not_in_feed');
   assert.match(plan.note, /does not cover g4dn\.xlarge/);
   assert.deepEqual(plan.regions.map((r) => r.region), ['ap-northeast-2', 'us-east-1', 'us-east-2']);
@@ -114,14 +115,14 @@ test('the feed pool comes from workloadClass, the type name or the pool members'
 });
 
 test('a stale or missing feed keeps the listed order', () => {
-  const stale = planTrainingPlacement(snapshot(), COMPUTE, GENERATED_MS + 25 * 3_600_000);
+  const stale = planComputePlacement(snapshot(), COMPUTE, GENERATED_MS + 25 * 3_600_000);
   assert.equal(stale.status, 'feed_stale');
   assert.deepEqual(stale.regions.map((r) => r.region), ['ap-northeast-2', 'us-east-1', 'us-east-2']);
-  assert.equal(planTrainingPlacement(null, COMPUTE, NOW).status, 'feed_unavailable');
+  assert.equal(planComputePlacement(null, COMPUTE, NOW).status, 'feed_unavailable');
 });
 
 test('a region in the feed noPool list is not ranked', () => {
-  const plan = planTrainingPlacement(snapshot({ noPool: { 'g6e.12xlarge': ['us-east-2'] } }), COMPUTE, NOW);
+  const plan = planComputePlacement(snapshot({ noPool: { 'g6e.12xlarge': ['us-east-2'] } }), COMPUTE, NOW);
   assert.deepEqual(plan.regions.map((r) => r.region), ['us-east-1', 'ap-northeast-2', 'us-east-2']);
 });
 
@@ -166,7 +167,7 @@ function harness(
   live?: (query: SpotPlacementScoreQuery) => { region: string; azId: string | null; score: number }[],
 ) {
   const liveQueries: SpotPlacementScoreQuery[] = [];
-  const store = new ModelFactoryStore(':memory:', { globalBudgetCapMicros: 5_000_000 });
+  const store = new ComputeStore(':memory:', { globalBudgetCapMicros: 5_000_000 });
   const launches: Launch[] = [];
   const ec2: Ec2SpotTrainerPort = {
     async launchSpotInstance(input) {
@@ -213,7 +214,7 @@ function harness(
     },
   };
   const spotFeed: SpotPlacementFeedPort = { feedUrl: 'https://feed.example/data.json', getSnapshot: async () => feed };
-  const orchestrator = new ModelFactoryOrchestrator({
+  const orchestrator = new ComputeOrchestrator({
     store,
     ec2,
     s3,
@@ -227,10 +228,10 @@ function harness(
   return { store, orchestrator, launches, liveQueries };
 }
 
-function jobInput(): CreateModelFactoryJob {
+function jobInput(): CreateComputeJob {
   return {
     title: 'Placement plan',
-    modelId: 'smf-tiny-v1',
+    workloadId: 'smf-tiny-v1',
     repository: 'roboco-io/silicon-model-factory',
     baseCommit: 'a'.repeat(40),
     compute: {
@@ -250,22 +251,23 @@ function jobInput(): CreateModelFactoryJob {
 test('registration through the API stores the plan without changing the approval fingerprint', async () => {
   const { store, orchestrator } = harness(snapshot());
   const app = Fastify();
-  registerModelFactoryRoutes(app, { store, operatorToken: 't'.repeat(32), orchestrator });
+  const projects = new ProjectStore(':memory:');
+  registerComputeRoutes(app, { auth: { operatorToken: 't'.repeat(32), workerToken: 'w'.repeat(32), projects }, store, projects, orchestrator });
   try {
     const res = await app.inject({
       method: 'POST',
-      url: '/api/model-factory/jobs',
+      url: '/api/compute/jobs',
       headers: { authorization: `Bearer ${'t'.repeat(32)}` },
       payload: jobInput(),
     });
     assert.equal(res.statusCode, 201);
-    const job = res.json() as ModelFactoryJob;
+    const job = res.json() as ComputeJob;
     assert.equal(job.placementPlan?.status, 'ranked');
     assert.deepEqual(job.placementPlan?.regions.map((r) => r.region), ['us-east-2', 'us-east-1']);
-    const plain = await new ModelFactoryStore(':memory:').create(jobInput());
+    const plain = await new ComputeStore(':memory:').create(jobInput());
     assert.equal(job.approvalFingerprint, plain.approvalFingerprint);
     const events = await store.events(job.id);
-    assert.ok(events.some((e) => e.type === 'model_factory.placement_planned'));
+    assert.ok(events.some((e) => e.type === 'compute.placement_planned'));
   } finally {
     await app.close();
   }
@@ -275,8 +277,8 @@ test('launch tries the most stable region first and its subnets in AZ order', as
   // use2-az2 (subnet c) is most stable; it has no capacity, so use2-az1 (subnet a) is next.
   const { store, orchestrator, launches } = harness(snapshot(), ['subnet-0ccccccccccccccc3']);
   const job = await orchestrator.planAtRegistration(await store.create(jobInput()));
-  const launched = await orchestrator.approveAndLaunchTraining(job.id, job.approvalFingerprint, 'ok');
-  assert.equal(launched.status, 'training_running');
+  const launched = await orchestrator.approveAndLaunch(job.id, job.approvalFingerprint, 'ok');
+  assert.equal(launched.status, 'running');
   assert.deepEqual(
     launches.map((l) => [l.region, l.subnetId]),
     [
@@ -294,7 +296,7 @@ test('launch keeps the registration plan when the feed is gone at launch time', 
   };
   const job = await orchestrator.planAtRegistration(await store.create(jobInput()));
   feed.current = null;
-  await orchestrator.approveAndLaunchTraining(job.id, job.approvalFingerprint, 'ok');
+  await orchestrator.approveAndLaunch(job.id, job.approvalFingerprint, 'ok');
   assert.equal(launches[0]!.region, 'us-east-2');
   assert.equal(launches[0]!.subnetId, 'subnet-0ccccccccccccccc3');
 });
@@ -303,14 +305,14 @@ test('without any feed the job region is tried first, as before', async () => {
   const { store, orchestrator, launches } = harness(null);
   const job = await orchestrator.planAtRegistration(await store.create(jobInput()));
   assert.equal(job.placementPlan?.status, 'feed_unavailable');
-  await orchestrator.approveAndLaunchTraining(job.id, job.approvalFingerprint, 'ok');
+  await orchestrator.approveAndLaunch(job.id, job.approvalFingerprint, 'ok');
   assert.equal(launches[0]!.region, 'us-east-1');
 });
 
 test('live scores are added to the feed trend as the newest sample', () => {
   // Live says us-east-2 dropped to 2 now; us-east-1 is still behind on its window minimum of 2, so the
   // average decides: us-east-1 (6.71) now beats us-east-2 (6.29).
-  const plan = planTrainingPlacement(snapshot(), COMPUTE, NOW, null, {
+  const plan = planComputePlacement(snapshot(), COMPUTE, NOW, null, {
     at: '2026-11-27T03:29:00.000Z',
     scores: [
       { region: 'us-east-2', azId: null, score: 2 },
@@ -330,7 +332,7 @@ test('live scores are added to the feed trend as the newest sample', () => {
 });
 
 test('a type the feed does not cover is ranked by live scores alone', () => {
-  const plan = planTrainingPlacement(snapshot(), { ...COMPUTE, instanceType: 'g4dn.xlarge' }, NOW, null, {
+  const plan = planComputePlacement(snapshot(), { ...COMPUTE, instanceType: 'g4dn.xlarge' }, NOW, null, {
     at: '2026-11-27T03:29:00.000Z',
     scores: [
       { region: 'us-east-1', azId: null, score: 1 },

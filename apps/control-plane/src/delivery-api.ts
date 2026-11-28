@@ -8,22 +8,31 @@ import type {
   VerificationAttestation,
 } from '../../../packages/contracts/src/delivery.js';
 import { DeliveryStore } from '../../../packages/core/src/delivery.js';
+import {
+  assertProjectCapability,
+  assertProjectRepository,
+  DEFAULT_PROJECT_ID,
+  type ProjectStore,
+} from '../../../packages/core/src/projects.js';
 import { DomainError, equalSecret } from '../../../packages/core/src/store.js';
+import { authenticateRequest, getPrincipal, type HostAuthContext } from './auth.js';
 import type { DeliveryOrchestrator } from './delivery-orchestrator.js';
 
 export interface DeliveryApiOptions {
   store: DeliveryStore;
+  projects?: ProjectStore;
+  auth?: HostAuthContext;
   operatorToken: string;
   workerToken: string;
   orchestrator?: DeliveryOrchestrator;
-  /** Model Factory agent token: may read only the tasks an autonomy trigger sends (issue #20). */
+  /** Host legacy agent token: may read only the tasks an autonomy trigger sends. */
   agentToken?: string;
-  /** Repository and branch prefix of each autonomy trigger; a task matching one is readable by the agent. */
+  /** Repository and branch prefix of each autonomy trigger; a task matching one is readable by the legacy agent. */
   agentReadableScopes?: () => Promise<Array<{ repository: string; branchPrefix: string }>>;
 }
 
 export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryApiOptions): void {
-  const { store, operatorToken, workerToken, orchestrator, agentToken, agentReadableScopes } = options;
+  const { store, projects, auth, operatorToken, workerToken, orchestrator, agentToken, agentReadableScopes } = options;
 
   const authorize = (role: 'operator' | 'worker') => async (request: FastifyRequest, reply: FastifyReply) => {
     const expected = role === 'operator' ? operatorToken : workerToken;
@@ -34,28 +43,66 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
 
   const operatorOnly = authorize('operator');
   const workerOnly = authorize('worker');
-  const isAgent = (request: FastifyRequest) =>
+  const isLegacyAgent = (request: FastifyRequest) =>
     Boolean(agentToken && agentReadableScopes) && equalSecret(request.headers.authorization ?? '', `Bearer ${agentToken}`);
+
   const operatorOrAgentRead = async (request: FastifyRequest, reply: FastifyReply) => {
-    if (!isAgent(request) && !equalSecret(request.headers.authorization ?? '', `Bearer ${operatorToken}`)) {
+    if (auth) {
+      const p = await authenticateRequest(request, auth);
+      if (p?.role === 'operator') return;
+      if (p?.role === 'project_agent') {
+        if (!p.scopes.has('delivery:read')) return reply.code(403).send({ error: "Project token lacks required scope 'delivery:read'" });
+        return;
+      }
+      if (p?.role === 'legacy_agent' && agentReadableScopes) return;
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
+    if (!isLegacyAgent(request) && !equalSecret(request.headers.authorization ?? '', `Bearer ${operatorToken}`)) {
       return reply.code(401).send({ error: 'Unauthorized' });
     }
   };
-  /** The agent sees a task only when an autonomy trigger with the same repository and branch prefix exists. */
-  const agentFilter = async () => {
+
+  const operatorOrAgentWrite = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (auth) {
+      const p = await authenticateRequest(request, auth);
+      if (p?.role === 'operator') return;
+      if (p?.role === 'project_agent') {
+        if (!p.scopes.has('delivery:write')) return reply.code(403).send({ error: "Project token lacks required scope 'delivery:write'" });
+        return;
+      }
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
+    return operatorOnly(request, reply);
+  };
+
+  const legacyAgentFilter = async () => {
     const scopes = await agentReadableScopes!();
     return (task: Awaited<ReturnType<DeliveryStore['get']>>) =>
       scopes.some((s) => s.repository === task.delivery.repository && s.branchPrefix === task.delivery.branchPrefix);
   };
 
-  app.get('/api/delivery/tasks', { onRequest: operatorOrAgentRead }, async (request) => {
-    const tasks = await store.list();
+  app.get<{ Querystring: { projectId?: string } }>('/api/delivery/tasks', { onRequest: operatorOrAgentRead }, async (request) => {
+    const principal = getPrincipal(request);
+    if (principal?.role === 'project_agent') {
+      const tasks = await store.list(principal.projectId);
+      const events = await store.events();
+      const ids = new Set(tasks.map((t) => t.id));
+      return { storageBackend: store.storageBackend, tasks, events: events.filter((e) => ids.has(e.taskId)) };
+    }
+    if (principal?.role === 'legacy_agent' || (!auth && isLegacyAgent(request))) {
+      const tasks = await store.list();
+      const events = await store.events();
+      const readable = await legacyAgentFilter();
+      const visible = tasks.filter(readable);
+      const ids = new Set(visible.map((t) => t.id));
+      return { storageBackend: store.storageBackend, tasks: visible, events: events.filter((e) => ids.has(e.taskId)) };
+    }
+    const projectId = request.query.projectId?.trim() || undefined;
+    const tasks = await store.list(projectId);
     const events = await store.events();
-    if (!isAgent(request)) return { storageBackend: store.storageBackend, tasks, events };
-    const readable = await agentFilter();
-    const visible = tasks.filter(readable);
-    const ids = new Set(visible.map((t) => t.id));
-    return { storageBackend: store.storageBackend, tasks: visible, events: events.filter((e) => ids.has(e.taskId)) };
+    if (!projectId) return { storageBackend: store.storageBackend, tasks, events };
+    const ids = new Set(tasks.map((t) => t.id));
+    return { storageBackend: store.storageBackend, tasks, events: events.filter((e) => ids.has(e.taskId)) };
   });
 
   app.get<{
@@ -90,16 +137,48 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
 
   app.get<{ Params: { id: string } }>('/api/delivery/tasks/:id', { onRequest: operatorOrAgentRead }, async (request) => {
     const task = await store.get(request.params.id);
-    // Same answer as a missing task, so the agent cannot probe for other tasks.
-    if (isAgent(request) && !(await agentFilter())(task)) throw new DomainError('Delivery task not found', 404);
+    const principal = getPrincipal(request);
+    if (principal?.role === 'project_agent' && (task.projectId ?? DEFAULT_PROJECT_ID) !== principal.projectId) {
+      throw new DomainError('Delivery task not found', 404);
+    }
+    if ((principal?.role === 'legacy_agent' || (!auth && isLegacyAgent(request))) && !(await legacyAgentFilter())(task)) {
+      throw new DomainError('Delivery task not found', 404);
+    }
     return { task, events: await store.events(request.params.id) };
   });
 
   app.post<{ Body: CreateDeliveryTask }>(
     '/api/delivery/tasks',
-    { onRequest: operatorOnly, bodyLimit: 131072 },
+    { onRequest: operatorOrAgentWrite, bodyLimit: 131072 },
     async (request, reply) => {
-      const created = await store.create(request.body);
+      const principal = getPrincipal(request);
+      let targetProjectId = request.body.projectId;
+      if (principal?.role === 'project_agent') {
+        if (targetProjectId && targetProjectId !== principal.projectId) {
+          throw new DomainError(`Project token for '${principal.projectId}' cannot register tasks under '${targetProjectId}'`, 403);
+        }
+        targetProjectId = principal.projectId;
+      }
+      let policyContext: { extraAutoMergeRepositories?: readonly string[]; allowAgentAccess?: boolean } = {};
+      if (projects && targetProjectId && targetProjectId !== DEFAULT_PROJECT_ID) {
+        const project = await projects.get(targetProjectId);
+        assertProjectCapability(project, 'delivery');
+        assertProjectRepository(project, request.body.delivery.repository);
+        if (request.body.budgetMicros > project.budget.maxDeliveryTaskBudgetMicros) {
+          throw new DomainError(
+            `Delivery budgetMicros (${request.body.budgetMicros}) exceeds project '${project.id}' ceiling (${project.budget.maxDeliveryTaskBudgetMicros})`,
+            403,
+          );
+        }
+        policyContext = {
+          extraAutoMergeRepositories: project.delivery.autoMergeRepositories,
+          allowAgentAccess: project.delivery.allowAgentAccess,
+        };
+      }
+      const created = await store.create(
+        { ...request.body, ...(targetProjectId ? { projectId: targetProjectId } : {}) },
+        policyContext,
+      );
       if (orchestrator) {
         await orchestrator.uploadAcceptanceSpec(created, AbortSignal.timeout(30_000));
       }

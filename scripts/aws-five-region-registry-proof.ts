@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createSpotPlacementFeedPort } from '../packages/adapters/src/spot-placement-feed.js';
-import type { ModelFactoryJob } from '../packages/contracts/src/model-factory.js';
+import type { ComputeJob } from '../packages/contracts/src/compute.js';
 import { selectOptimalSpotPlacement } from '../packages/core/src/multi-region.js';
 import { apiJson, aws, awsJson, ControlPlane, PRIMARY_REGION, sleep, waitForNoManagedInstances } from './lib/aws-live.js';
 
@@ -97,9 +97,9 @@ async function main(): Promise<void> {
   try {
     await controlPlane.start();
 
-    const created = await apiJson<ModelFactoryJob>(`${baseUrl}/api/model-factory/jobs`, operatorToken, {
+    const created = await apiJson<ComputeJob>(`${baseUrl}/api/compute/jobs`, operatorToken, {
       title: 'Issue #16 five-region registry auto-placement and failover proof',
-      modelId: 'smf-region-registry-proof',
+      workloadId: 'smf-region-registry-proof',
       repository: 'roboco-io/silicon-model-factory',
       baseCommit: 'a'.repeat(40),
       compute: {
@@ -120,12 +120,12 @@ async function main(): Promise<void> {
       throw new Error('Proof job must not carry regionOverrides, subnetId or securityGroupIds');
     }
 
-    const launched = await apiJson<ModelFactoryJob>(
-      `${baseUrl}/api/model-factory/jobs/${encodeURIComponent(jobId)}/approve-training`,
+    const launched = await apiJson<ComputeJob>(
+      `${baseUrl}/api/compute/jobs/${encodeURIComponent(jobId)}/approve`,
       operatorToken,
       { approvalFingerprint: created.approvalFingerprint, reason: 'Issue #16 live five-region registry placement proof' },
     );
-    if (launched.status !== 'training_running' || !launched.instance) {
+    if (launched.status !== 'running' || !launched.instance) {
       throw new Error(`Launch failed: status=${launched.status} failureReason=${launched.failureReason ?? ''}`);
     }
     console.log(JSON.stringify({ phase: 'launched', jobId, region: launched.instance.region, instanceId: launched.instance.instanceId }));
@@ -144,7 +144,7 @@ async function main(): Promise<void> {
     const registrySubnets = (out.SpokePublicSubnetIds ?? '').split(',');
     const securityGroups = (instance.SecurityGroups ?? []).map((g) => g.GroupId);
 
-    const cancelled = await apiJson<ModelFactoryJob>(`${baseUrl}/api/model-factory/jobs/${encodeURIComponent(jobId)}/cancel`, operatorToken, {
+    const cancelled = await apiJson<ComputeJob>(`${baseUrl}/api/compute/jobs/${encodeURIComponent(jobId)}/cancel`, operatorToken, {
       reason: 'Issue #16 proof complete; terminate Spot instance',
     });
 
@@ -185,7 +185,7 @@ async function main(): Promise<void> {
     };
   } catch (error) {
     if (jobId) {
-      await apiJson(`${baseUrl}/api/model-factory/jobs/${encodeURIComponent(jobId)}/cancel`, operatorToken, {
+      await apiJson(`${baseUrl}/api/compute/jobs/${encodeURIComponent(jobId)}/cancel`, operatorToken, {
         reason: 'Cleanup after registry proof error',
       }).catch(() => undefined);
     }

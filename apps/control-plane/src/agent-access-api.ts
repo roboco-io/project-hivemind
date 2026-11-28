@@ -5,16 +5,18 @@ import {
 } from '../../../packages/adapters/src/aws-agent-access.js';
 import {
   type AgentCredentialCatalogConfig,
+  type AgentCredentialProjectScope,
   type AgentCredentialRequestInput,
   planAgentCredentials,
 } from '../../../packages/core/src/agent-credential-purposes.js';
+import { assertProjectCapability } from '../../../packages/core/src/projects.js';
 import { DomainError, equalSecret } from '../../../packages/core/src/store.js';
+import { authenticateRequest, getPrincipal, type HostAuthContext } from './auth.js';
 
-/** One audit line per request. It never holds credentials or the policy body; only the policy hash. */
 export interface AgentCredentialAuditRecord {
   event: 'hivemind.agent_credentials.issued' | 'hivemind.agent_credentials.denied' | 'hivemind.agent_credentials.failed';
   purpose: string | null;
-  target: { modelId: string | null } | null;
+  target: { projectId: string | null; workloadId: string | null; modelId: string | null; s3Prefix: string | null } | null;
   policyHash: string | null;
   description: string | null;
   expiration: string | null;
@@ -24,46 +26,71 @@ export interface AgentCredentialAuditRecord {
 
 export interface AgentCredentialsApiOptions {
   operatorToken: string;
-  /** The Model Factory agent token may also ask for scoped credentials. */
   agentToken?: string;
+  auth?: HostAuthContext;
   catalog: AgentCredentialCatalogConfig;
   issuer: AgentCredentialIssuerPort;
-  /** Region of the STS endpoint; returned so the client can pin its own calls. */
   region: string;
   audit?: (record: AgentCredentialAuditRecord) => void;
   now?: () => number;
 }
 
-/**
- * POST /api/agent-credentials issues short-lived AWS credentials for one purpose from the operator's
- * catalog. The response is the only place the credentials appear.
- */
 export function registerAgentCredentialRoutes(app: FastifyInstance, options: AgentCredentialsApiOptions): void {
   const now = options.now ?? Date.now;
   const audit = options.audit ?? ((record) => console.log(JSON.stringify(record)));
-  const operatorOnly = async (request: FastifyRequest, reply: FastifyReply) => {
+  const operatorOrAgent = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (options.auth) {
+      const p = await authenticateRequest(request, options.auth);
+      if (p?.role === 'operator' || p?.role === 'legacy_agent') return;
+      if (p?.role === 'project_agent') {
+        if (!p.scopes.has('credentials:issue')) {
+          return reply.code(403).send({ error: "Project token lacks required scope 'credentials:issue'" });
+        }
+        return;
+      }
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
     const header = request.headers.authorization ?? '';
     const allowed =
-      equalSecret(header, `Bearer ${options.operatorToken}`) || (Boolean(options.agentToken) && equalSecret(header, `Bearer ${options.agentToken}`));
+      equalSecret(header, `Bearer ${options.operatorToken}`) ||
+      (Boolean(options.agentToken) && equalSecret(header, `Bearer ${options.agentToken}`));
     if (!allowed) {
       return reply.code(401).send({ error: 'Unauthorized' });
     }
   };
 
-  app.get('/api/agent-credentials/purposes', { onRequest: operatorOnly }, async () => ({
-    purposes: options.catalog.enabledPurposes,
-    region: options.region,
-  }));
+  app.get('/api/agent-credentials/purposes', { onRequest: operatorOrAgent }, async (request) => {
+    const principal = getPrincipal(request);
+    if (principal?.role === 'project_agent') {
+      const allowed = options.catalog.enabledPurposes.filter((p) => principal.project.compute.credentialPurposes.includes(p));
+      return { purposes: allowed, region: options.region, projectId: principal.projectId };
+    }
+    return {
+      purposes: options.catalog.enabledPurposes,
+      region: options.region,
+    };
+  });
 
   app.post<{ Body: AgentCredentialRequestInput }>(
     '/api/agent-credentials',
-    { onRequest: operatorOnly, bodyLimit: 4096 },
+    { onRequest: operatorOrAgent, bodyLimit: 4096 },
     async (request, reply) => {
       const body = (request.body ?? {}) as AgentCredentialRequestInput;
       const base = { at: new Date(now()).toISOString() };
+      const principal = getPrincipal(request);
+      let projectScope: AgentCredentialProjectScope | undefined;
+      if (principal?.role === 'project_agent') {
+        assertProjectCapability(principal.project, 'scoped_credentials');
+        projectScope = {
+          projectId: principal.project.id,
+          allowedPrefixes: principal.project.compute.s3ArtifactPrefixes,
+          allowedRegions: principal.project.compute.allowedRegions,
+          allowedPurposes: principal.project.compute.credentialPurposes,
+        };
+      }
       let plan;
       try {
-        plan = planAgentCredentials(options.catalog, body);
+        plan = planAgentCredentials(options.catalog, body, projectScope);
       } catch (error) {
         audit({
           ...base,
@@ -100,10 +127,21 @@ export function registerAgentCredentialRoutes(app: FastifyInstance, options: Age
           credentials: issued,
         };
       } catch (error) {
-        const stage = error instanceof AgentCredentialsUnavailableError ? error.stage : 'unknown';
-        audit({ ...record, event: 'hivemind.agent_credentials.failed', expiration: null, reason: `STS ${stage} failed` });
-        // Never fall back to the parent session: the request fails instead.
-        throw new DomainError('Scoped credentials unavailable', 502);
+        audit({
+          ...record,
+          event: 'hivemind.agent_credentials.failed',
+          expiration: null,
+          reason:
+            error instanceof AgentCredentialsUnavailableError
+              ? `STS ${error.stage} failed`
+              : error instanceof Error
+                ? error.message.slice(0, 200)
+                : 'issuer failed',
+        });
+        if (error instanceof AgentCredentialsUnavailableError) {
+          throw new DomainError(error.message, 502);
+        }
+        throw new DomainError('Scoped AWS credential issuance failed', 502);
       }
     },
   );

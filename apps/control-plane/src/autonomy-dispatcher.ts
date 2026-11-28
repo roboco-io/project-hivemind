@@ -1,6 +1,7 @@
 import type { AcceptanceTestSpec, BundleManifest, DeliveryTask, DeliveryTaskStatus } from '../../../packages/contracts/src/delivery.js';
 import type { AutonomyTrigger, AutonomyTriggerStore } from '../../../packages/core/src/autonomy-trigger.js';
 import type { DeliveryStore } from '../../../packages/core/src/delivery.js';
+import { DEFAULT_PROJECT_ID, type ProjectStore } from '../../../packages/core/src/projects.js';
 
 /** A pinned snapshot of the repository for one task: the bundle (in S3) and the acceptance files. */
 export interface PreparedSnapshot {
@@ -12,6 +13,7 @@ export interface PreparedSnapshot {
 export interface AutonomyDispatcherOptions {
   triggers: AutonomyTriggerStore;
   delivery: DeliveryStore;
+  projects?: ProjectStore;
   /** Clones the base branch, uploads a pinned bundle and pins the protected files as acceptance files. */
   prepare: (trigger: AutonomyTrigger, signal: AbortSignal) => Promise<PreparedSnapshot>;
   /** Starts the worker for an approved task (DeliveryOrchestrator.dispatchWorker). */
@@ -86,20 +88,36 @@ export class AutonomyDispatcher {
   }
 
   private async dispatchOne(trigger: AutonomyTrigger, signal: AbortSignal): Promise<string> {
+    const projectId = trigger.projectId ?? DEFAULT_PROJECT_ID;
+    let policyContext: { extraAutoMergeRepositories?: readonly string[]; allowAgentAccess?: boolean } = {};
+    if (this.options.projects && projectId !== DEFAULT_PROJECT_ID) {
+      const project = await this.options.projects.get(projectId);
+      if (project.status !== 'active') {
+        throw new Error(`Project '${projectId}' is ${project.status}`);
+      }
+      policyContext = {
+        extraAutoMergeRepositories: project.delivery.autoMergeRepositories,
+        allowAgentAccess: project.delivery.allowAgentAccess,
+      };
+    }
     const snapshot = await this.options.prepare(trigger, signal);
-    const draft = await this.options.delivery.create({
-      title: trigger.title,
-      instructions: trigger.instructions,
-      provider: trigger.provider,
-      maxIterations: trigger.maxIterations,
-      budgetMicros: trigger.budgetMicros,
-      acceptance: snapshot.acceptance,
-      delivery: { mode: 'draft_pr', repository: trigger.repository, baseBranch: trigger.baseBranch, branchPrefix: trigger.branchPrefix, autoMerge: true, protectedPaths: trigger.protectedPaths },
-      bundle: snapshot.bundle,
-      spot: { maxSpotRetries: 2, checkpointFlushTimeoutMs: 90_000 },
-      routing: { primaryRegion: this.options.primaryRegion, allowedRegions: [this.options.primaryRegion], workloadClass: 'cpu-arm-worker' },
-      executionPolicy: { hivemindAgentAccess: true, maxIterationDurationMs: trigger.maxIterationDurationMs },
-    });
+    const draft = await this.options.delivery.create(
+      {
+        projectId,
+        title: trigger.title,
+        instructions: trigger.instructions,
+        provider: trigger.provider,
+        maxIterations: trigger.maxIterations,
+        budgetMicros: trigger.budgetMicros,
+        acceptance: snapshot.acceptance,
+        delivery: { mode: 'draft_pr', repository: trigger.repository, baseBranch: trigger.baseBranch, branchPrefix: trigger.branchPrefix, autoMerge: true, protectedPaths: trigger.protectedPaths },
+        bundle: snapshot.bundle,
+        spot: { maxSpotRetries: 2, checkpointFlushTimeoutMs: 90_000 },
+        routing: { primaryRegion: this.options.primaryRegion, allowedRegions: [this.options.primaryRegion], workloadClass: 'cpu-arm-worker' },
+        executionPolicy: { hivemindAgentAccess: true, maxIterationDurationMs: trigger.maxIterationDurationMs },
+      },
+      policyContext,
+    );
     // Same order as the delivery API: the verifier reads acceptance/<task>.json, so it must exist first.
     try {
       await this.options.uploadAcceptance(draft, signal);

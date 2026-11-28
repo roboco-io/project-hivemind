@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ModelFactoryOrchestrator } from '../apps/control-plane/src/model-factory-orchestrator.js';
+import { ComputeOrchestrator } from '../apps/control-plane/src/compute-orchestrator.js';
 import { AwsEc2SpotTrainer, parseStateTransitionTime, type Ec2SpotTrainerPort, type LaunchSpotInstanceInput } from '../packages/adapters/src/aws-ec2-spot-trainer.js';
 import type { S3ObjectPort } from '../packages/adapters/src/aws-s3-artifacts.js';
-import type { CreateModelFactoryJob } from '../packages/contracts/src/model-factory.js';
-import { ModelFactoryStore } from '../packages/core/src/model-factory.js';
+import type { CreateComputeJob } from '../packages/contracts/src/compute.js';
+import { ComputeStore } from '../packages/core/src/compute.js';
 
 // Findings of the first real GPU trial run (2026-11-27, docs/verification/2026-11-27-smf-gpu-trial-run.md).
 
-function jobInput(compute: Partial<CreateModelFactoryJob['compute']> = {}): CreateModelFactoryJob {
+function jobInput(compute: Partial<CreateComputeJob['compute']> = {}): CreateComputeJob {
   return {
     title: 'Trial findings',
-    modelId: 'smf-trial',
+    workloadId: 'smf-trial',
     repository: 'roboco-io/silicon-model-factory',
     baseCommit: 'a'.repeat(40),
     compute: {
@@ -62,13 +62,13 @@ test('an instance that ended before the check noticed it is settled for its real
     ['a time before the launch is ignored', -5_000, 668],
     ['a time after the check is ignored', 9_000_000, 668],
   ] as const) {
-    const store = new ModelFactoryStore(':memory:', { globalBudgetCapMicros: 2_000_000 });
+    const store = new ComputeStore(':memory:', { globalBudgetCapMicros: 2_000_000 });
     const ec2 = endedInstance(offsetMs);
     let nowMs = Date.now();
-    const orchestrator = new ModelFactoryOrchestrator({ store, ec2: ec2.port, s3: emptyS3, now: () => nowMs });
+    const orchestrator = new ComputeOrchestrator({ store, ec2: ec2.port, s3: emptyS3, now: () => nowMs });
     try {
       const job = await store.create(jobInput());
-      const running = await orchestrator.approveAndLaunchTraining(job.id, job.approvalFingerprint, 'ok');
+      const running = await orchestrator.approveAndLaunch(job.id, job.approvalFingerprint, 'ok');
       const launchedMs = Date.parse(running.instance!.launchedAt);
       nowMs = launchedMs + 668_000;
       const woken = await orchestrator.wakeJob(job.id);
@@ -85,7 +85,7 @@ test('an instance that ended before the check noticed it is settled for its real
 });
 
 test('a forced termination is still counted up to the termination, whatever EC2 reported before', async () => {
-  const store = new ModelFactoryStore(':memory:', { globalBudgetCapMicros: 2_000_000 });
+  const store = new ComputeStore(':memory:', { globalBudgetCapMicros: 2_000_000 });
   let launchedAtMs = 0;
   const port: Ec2SpotTrainerPort = {
     async launchSpotInstance(input) { launchedAtMs = Date.now(); return { region: input.region, availabilityZone: 'us-east-2a', instanceId: 'i-0123456789abcdef0', instanceType: input.instanceType, amiId: input.amiId, state: 'pending' }; },
@@ -94,10 +94,10 @@ test('a forced termination is still counted up to the termination, whatever EC2 
     async sweepExpiredSpotInstances(region) { return { region, checkedCount: 0, terminated: [] }; },
   };
   let nowMs = Date.now();
-  const orchestrator = new ModelFactoryOrchestrator({ store, ec2: port, s3: emptyS3, now: () => nowMs });
+  const orchestrator = new ComputeOrchestrator({ store, ec2: port, s3: emptyS3, now: () => nowMs });
   try {
     const job = await store.create(jobInput({ maxLifetimeMs: 120_000 }));
-    const running = await orchestrator.approveAndLaunchTraining(job.id, job.approvalFingerprint, 'ok');
+    const running = await orchestrator.approveAndLaunch(job.id, job.approvalFingerprint, 'ok');
     nowMs = Date.parse(running.instance!.launchedAt) + 300_000;
     const woken = await orchestrator.wakeJob(job.id);
     assert.match(woken.instance!.forcedTerminationReason!, /TTL Guard forced termination/);
@@ -108,7 +108,7 @@ test('a forced termination is still counted up to the termination, whatever EC2 
 });
 
 test('rootVolumeGb: validated, part of the approval fingerprint, and sent as a root device mapping that is deleted with the instance', async () => {
-  const store = new ModelFactoryStore(':memory:', { globalBudgetCapMicros: 2_000_000 });
+  const store = new ComputeStore(':memory:', { globalBudgetCapMicros: 2_000_000 });
   try {
     const plain = await store.create(jobInput());
     const sized = await store.create(jobInput({ rootVolumeGb: 100, s3ArtifactPrefix: 'models/smf-trial/runs/r1' }));
@@ -120,9 +120,9 @@ test('rootVolumeGb: validated, part of the approval fingerprint, and sent as a r
 
     // The orchestrator passes the size on to the launch.
     const ec2 = endedInstance(null);
-    const orchestrator = new ModelFactoryOrchestrator({ store, ec2: ec2.port, s3: emptyS3 });
-    await orchestrator.approveAndLaunchTraining(sized.id, sized.approvalFingerprint, 'ok');
-    await orchestrator.approveAndLaunchTraining(plain.id, plain.approvalFingerprint, 'ok');
+    const orchestrator = new ComputeOrchestrator({ store, ec2: ec2.port, s3: emptyS3 });
+    await orchestrator.approveAndLaunch(sized.id, sized.approvalFingerprint, 'ok');
+    await orchestrator.approveAndLaunch(plain.id, plain.approvalFingerprint, 'ok');
     assert.equal(ec2.launches[0]!.rootVolumeGb, 100);
     assert.equal('rootVolumeGb' in ec2.launches[1]!, false);
   } finally {
@@ -146,7 +146,7 @@ test('rootVolumeGb: validated, part of the approval fingerprint, and sent as a r
       return new Response('<RunInstancesResponse><instancesSet><item><instanceId>i-0123456789abcdef0</instanceId><instanceState><name>pending</name></instanceState><placement><availabilityZone>us-east-2a</availabilityZone></placement></item></instancesSet></RunInstancesResponse>', { status: 200 });
     },
   });
-  const base = { jobId: 'mf-1', modelId: 'm', region: 'us-east-2', instanceType: 'g4dn.xlarge', amiId: 'ami-0123456789abcdef0', maxHourlyPriceUsd: 0.4, expiresAtIso: '2026-11-27T03:00:00.000Z' };
+  const base = { jobId: 'mf-1', workloadId: 'm', region: 'us-east-2', instanceType: 'g4dn.xlarge', amiId: 'ami-0123456789abcdef0', maxHourlyPriceUsd: 0.4, expiresAtIso: '2026-11-27T03:00:00.000Z' };
   await trainer.launchSpotInstance({ ...base, rootVolumeGb: 100 });
   assert.deepEqual(actions, ['DescribeImages', 'RunInstances']);
   assert.equal(run!.get('BlockDeviceMapping.1.DeviceName'), '/dev/xvda');

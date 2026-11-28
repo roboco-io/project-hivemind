@@ -97,6 +97,7 @@ export interface DeliveryPreflightReport {
 }
 
 export interface CreateDeliveryTask {
+  projectId?: string;
   title: string;
   instructions: string;
   provider: DeliveryProvider;
@@ -183,6 +184,7 @@ export type DeliveryTaskStatus =
 
 export interface DeliveryTask {
   id: string;
+  projectId?: string;
   title: string;
   instructions: string;
   provider: DeliveryProvider;

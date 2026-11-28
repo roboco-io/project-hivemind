@@ -4,15 +4,27 @@
   const byId = (id) => document.getElementById(id);
   const charts = () => (typeof globalThis !== 'undefined' ? globalThis.hivemindCharts : null);
 
-  const TAB_ORDER = ['overview', 'inbox', 'delivery', 'model-factory', 'collab', 'costs', 'legacy'];
+  const TAB_ORDER = ['overview', 'projects', 'inbox', 'delivery', 'compute', 'collab', 'costs', 'legacy'];
   const TAB_TITLES = {
     overview: '개요 HUD',
+    projects: '호스트 프로젝트',
     inbox: '승인 인박스',
     delivery: 'SW 전달',
-    'model-factory': 'Model Factory',
+    compute: 'Spot 컴퓨팅',
     collab: '병렬 협업',
     costs: '비용 분석',
     legacy: '로컬 · 레거시 도구',
+  };
+
+  const PROJECT_STATUS = { active: '활성', paused: '일시정지', archived: '보관' };
+  const CAPABILITY_LABEL = {
+    delivery: 'SW 전달',
+    compute: 'Spot 컴퓨팅',
+    collab: '병렬 협업',
+    autonomy_triggers: '자율 트리거',
+    scoped_credentials: '단기 AWS 자격',
+    hf_release: 'HF 공개',
+    notifications: '알림',
   };
 
   const DELIVERY_STATUS = {
@@ -30,10 +42,13 @@
   const DELIVERY_ATTENTION = new Set(['awaiting_approval', 'draft_pr_published']);
   const DELIVERY_TERMINAL = new Set(['approved', 'rejected', 'failed', 'cancelled']);
 
-  const MF_STATUS = {
-    awaiting_training_approval: '학습 승인 대기',
-    training_queued: '학습 배정 대기',
-    training_running: '학습 실행 중',
+  const COMPUTE_STATUS = {
+    awaiting_launch_approval: '기동 승인 대기',
+    awaiting_training_approval: '기동 승인 대기',
+    queued: '배정 대기',
+    training_queued: '배정 대기',
+    running: 'Spot 실행 중',
+    training_running: 'Spot 실행 중',
     evaluating: '산출물 평가 중',
     awaiting_release_approval: '공개 승인 대기',
     release_approved: '공개 승인됨',
@@ -42,16 +57,18 @@
     cancelled: '중단',
     rejected: '반려',
   };
-  const MF_ACTIVE = new Set(['training_queued', 'training_running', 'evaluating', 'release_approved']);
-  const MF_ATTENTION = new Set(['awaiting_training_approval', 'awaiting_release_approval']);
-  const MF_TERMINAL = new Set(['released', 'failed', 'cancelled', 'rejected']);
+  const COMPUTE_ACTIVE = new Set(['queued', 'running', 'training_queued', 'training_running', 'evaluating', 'release_approved']);
+  const COMPUTE_ATTENTION = new Set(['awaiting_launch_approval', 'awaiting_training_approval', 'awaiting_release_approval']);
+  const COMPUTE_TERMINAL = new Set(['released', 'failed', 'cancelled', 'rejected']);
 
   const COLLAB_STATUS = { active: '진행 중', completed: '완료', failed: '실패', cancelled: '중단' };
   const SUBTASK_STATUS = { pending: '대기', queued: '배정 대기', running: '실행 중', completed: '완료', failed: '실패', cancelled: '중단' };
   const EC2_STATE = { pending: '시작 중', running: '실행 중', stopping: '중지 중', stopped: '중지됨', 'shutting-down': '종료 중', terminated: '종료됨', unknown: '확인 필요' };
   const WAIT_REASON = {
-    awaiting_training_approval: '사람의 학습 승인을 기다립니다.',
-    training_in_progress: 'EC2 스팟 인스턴스에서 학습을 진행하고 있습니다.',
+    awaiting_launch_approval: '사람의 실행 승인을 기다립니다.',
+    awaiting_training_approval: '사람의 실행 승인을 기다립니다.',
+    running_in_progress: 'EC2 스팟 인스턴스에서 워크로드를 실행하고 있습니다.',
+    training_in_progress: 'EC2 스팟 인스턴스에서 워크로드를 실행하고 있습니다.',
     awaiting_cost_settlement: '인스턴스 종료 및 비용 정산을 기다립니다.',
     awaiting_release_approval: '검증 통과 후 사람의 공개 승인을 기다립니다.',
     credential_busy: '자격 증명 세션을 기다립니다.',
@@ -77,6 +94,8 @@
 
   const state = {
     activeTab: 'overview',
+    projectFilter: 'all',
+    projectsStatusFilter: 'all',
     theme: 'dark',
     density: 'comfortable',
     pollIntervalMs: 15000,
@@ -86,6 +105,8 @@
     seenAlertIds: new Set(),
     lastSyncTs: 0,
     health: null,
+    projects: { storageBackend: null, list: [], events: [] },
+    autonomy: { storageBackend: null, triggers: [], events: [] },
     delivery: { storageBackend: null, tasks: [], events: [] },
     deliveryFilter: 'all',
     deliverySearch: '',
@@ -94,11 +115,11 @@
     spotPlacement: null,
     spotStatusText: null,
     spotChecking: false,
-    mf: { storageBackend: null, jobs: [], events: [], ledger: null },
-    mfFilter: 'all',
-    mfSearch: '',
-    selectedMfId: null,
-    selectedMfFingerprint: null,
+    compute: { storageBackend: null, jobs: [], events: [], ledger: null },
+    computeFilter: 'all',
+    computeSearch: '',
+    selectedComputeId: null,
+    selectedComputeFingerprint: null,
     collab: { storageBackend: null, sessions: [], selectedId: null, snapshot: null, epoch: 0 },
     inboxFilter: 'all',
     eventFilter: { source: 'all', errorsOnly: false, query: '' },
@@ -368,11 +389,62 @@
     }
   }
 
+  // ---------- PROJECT SCOPING HELPERS ----------
+  function matchesProject(projectId) {
+    if (state.projectFilter === 'all') return true;
+    return (projectId || 'default') === state.projectFilter;
+  }
+
+  function visibleDeliveryTasks() {
+    return state.delivery.tasks.filter((t) => matchesProject(t.projectId));
+  }
+
+  function visibleComputeJobs() {
+    return state.compute.jobs.filter((j) => matchesProject(j.projectId));
+  }
+
+  function visibleCollabSessions() {
+    return state.collab.sessions.filter((s) => matchesProject(s.projectId));
+  }
+
+  function visibleLedger() {
+    const base = state.compute.ledger;
+    if (!base) return null;
+    if (state.projectFilter === 'all') return base;
+    const pSummary = base.byProject?.[state.projectFilter];
+    const jobs = (base.jobs || []).filter((e) => matchesProject(e.projectId));
+    if (pSummary) {
+      return {
+        globalBudgetCapMicros: pSummary.budgetCapMicros ?? base.globalBudgetCapMicros,
+        totalReservedMicros: pSummary.totalReservedMicros,
+        totalSettledMicros: pSummary.totalSettledMicros,
+        remainingBudgetMicros: pSummary.remainingBudgetMicros,
+        activeReservations: pSummary.activeReservations,
+        settledJobs: pSummary.settledJobs,
+        byProject: { [state.projectFilter]: pSummary },
+        jobs,
+      };
+    }
+    const proj = state.projects.list.find((p) => p.id === state.projectFilter);
+    const cap = proj?.budget?.computeBudgetCapMicros ?? base.globalBudgetCapMicros;
+    return {
+      globalBudgetCapMicros: cap,
+      totalReservedMicros: 0,
+      totalSettledMicros: 0,
+      remainingBudgetMicros: Math.min(cap, base.remainingBudgetMicros),
+      activeReservations: 0,
+      settledJobs: 0,
+      byProject: {},
+      jobs,
+    };
+  }
+
   // ---------- API ----------
-  async function monitorApi(path, body, timeoutMs = 15000) {
+  async function monitorApi(path, body, timeoutMs = 15000, method) {
     const token = (byId('operator-token')?.value || '').trim();
+    const effectiveMethod = method || (body === undefined ? 'GET' : 'POST');
     const response = await fetch(path, {
-      method: body === undefined ? 'GET' : 'POST',
+      method: effectiveMethod,
       redirect: 'error',
       headers: {
         ...(path === '/health' ? {} : { Authorization: 'Bearer ' + token }),
@@ -443,14 +515,14 @@
   // ---------- TAB TITLE & DESKTOP ALERTS ----------
   function getAttentionItems() {
     const items = [];
-    for (const t of state.delivery.tasks) {
+    for (const t of visibleDeliveryTasks()) {
       if (DELIVERY_ATTENTION.has(t.status)) {
-        items.push({ kind: 'delivery', id: t.id, title: t.title, status: t.status, updatedAt: t.updatedAt, raw: t });
+        items.push({ kind: 'delivery', id: t.id, projectId: t.projectId || 'default', title: t.title, status: t.status, updatedAt: t.updatedAt, raw: t });
       }
     }
-    for (const j of state.mf.jobs) {
-      if (MF_ATTENTION.has(j.status)) {
-        items.push({ kind: 'mf', id: j.id, title: j.title, status: j.status, updatedAt: j.updatedAt, raw: j });
+    for (const j of visibleComputeJobs()) {
+      if (COMPUTE_ATTENTION.has(j.status)) {
+        items.push({ kind: 'compute', id: j.id, projectId: j.projectId || 'default', title: j.title, status: j.status, updatedAt: j.updatedAt, raw: j });
       }
     }
     items.sort((a, b) => Date.parse(b.updatedAt || '') - Date.parse(a.updatedAt || ''));
@@ -460,9 +532,9 @@
   function updateTabTitleAndAlerts() {
     const attention = getAttentionItems();
     const activeCount =
-      state.delivery.tasks.filter((t) => DELIVERY_ACTIVE.has(t.status)).length +
-      state.mf.jobs.filter((j) => MF_ACTIVE.has(j.status)).length +
-      state.collab.sessions.filter((s) => s.status === 'active').length;
+      visibleDeliveryTasks().filter((t) => DELIVERY_ACTIVE.has(t.status)).length +
+      visibleComputeJobs().filter((j) => COMPUTE_ACTIVE.has(j.status)).length +
+      visibleCollabSessions().filter((s) => s.status === 'active').length;
 
     const parts = [];
     if (attention.length > 0) parts.push(attention.length + ' 대기');
@@ -492,12 +564,12 @@
         }
       }
     }
-    for (const j of state.mf.jobs) {
+    for (const j of state.compute.jobs) {
       if (j.status === 'failed') {
-        const key = 'mf:' + j.id + ':failed';
+        const key = 'compute:' + j.id + ':failed';
         currentAlertIds.add(key);
         if (state.seenAlertsInitialized && !state.seenAlertIds.has(key)) {
-          freshNotifications.push({ title: 'HIVEMIND Model Factory 실패', body: safeText(j.title, 100) });
+          freshNotifications.push({ title: 'HIVEMIND Spot 컴퓨팅 실패', body: safeText(j.title, 100) });
         }
       }
     }
@@ -527,12 +599,34 @@
     elAge.textContent = sec < 5 ? '(방금 전)' : '(' + formatDurationSec(sec) + ' 전)';
   }
 
+  function syncProjectSelector() {
+    const sel = byId('project-filter');
+    if (!sel) return;
+    const ids = ['all', ...state.projects.list.map((p) => p.id)];
+    const sig = ids.join(',');
+    if (sel.dataset.signature !== sig) {
+      sel.dataset.signature = sig;
+      sel.replaceChildren();
+      const allOpt = el('option', '전체 프로젝트 (' + state.projects.list.length + ')');
+      allOpt.value = 'all';
+      sel.append(allOpt);
+      for (const p of state.projects.list) {
+        const opt = el('option', safeText(p.name, 40) + ' (' + safeText(p.id, 32) + ')');
+        opt.value = p.id;
+        sel.append(opt);
+      }
+    }
+    if (!ids.includes(state.projectFilter)) state.projectFilter = 'all';
+    sel.value = state.projectFilter;
+  }
+
   function renderHeader() {
     applyUiPrefs();
+    syncProjectSelector();
     const modeBadge = byId('monitor-mode-badge');
     if (modeBadge) {
       if (state.health?.status === 'ok') {
-        const isAwsDsql = [state.delivery.storageBackend, state.mf.storageBackend, state.collab.storageBackend].includes('aurora-dsql');
+        const isAwsDsql = [state.projects.storageBackend, state.delivery.storageBackend, state.compute.storageBackend, state.collab.storageBackend].includes('aurora-dsql');
         const modeText =
           state.health.mode === 'aws-runtime' || isAwsDsql
             ? isAwsDsql
@@ -547,8 +641,9 @@
       }
     }
     const backendText = (v) => (v && BACKEND_LABEL[v]) || (v ? safeText(v, 32) : '미연결');
+    if (byId('monitor-backend-projects')) byId('monitor-backend-projects').textContent = backendText(state.projects.storageBackend);
     if (byId('monitor-backend-delivery')) byId('monitor-backend-delivery').textContent = backendText(state.delivery.storageBackend);
-    if (byId('monitor-backend-mf')) byId('monitor-backend-mf').textContent = backendText(state.mf.storageBackend);
+    if (byId('monitor-backend-compute')) byId('monitor-backend-compute').textContent = backendText(state.compute.storageBackend);
     if (byId('monitor-backend-collab')) byId('monitor-backend-collab').textContent = backendText(state.collab.storageBackend);
 
     const attentionCount = getAttentionItems().length;
@@ -557,12 +652,100 @@
       inboxBadge.textContent = String(attentionCount);
       inboxBadge.className = 'nav-badge badge-attention' + (attentionCount > 0 ? ' has-items' : '');
     }
-    if (byId('tab-badge-delivery')) byId('tab-badge-delivery').textContent = String(state.delivery.tasks.length);
-    if (byId('tab-badge-mf')) byId('tab-badge-mf').textContent = String(state.mf.jobs.length);
-    if (byId('tab-badge-collab')) byId('tab-badge-collab').textContent = String(state.collab.sessions.length);
+    if (byId('tab-badge-projects')) byId('tab-badge-projects').textContent = String(state.projects.list.length);
+    if (byId('tab-badge-delivery')) byId('tab-badge-delivery').textContent = String(visibleDeliveryTasks().length);
+    if (byId('tab-badge-compute')) byId('tab-badge-compute').textContent = String(visibleComputeJobs().length);
+    if (byId('tab-badge-collab')) byId('tab-badge-collab').textContent = String(visibleCollabSessions().length);
     const legacyCount = byId('task-count')?.textContent;
     if (byId('tab-badge-legacy') && legacyCount !== undefined) byId('tab-badge-legacy').textContent = legacyCount;
     updateSyncAge();
+  }
+
+  // ---------- HOSTED PROJECTS ----------
+  function showOneTimeTokenBanner(projectId, issued) {
+    const banner = byId('project-token-banner');
+    if (!banner) return;
+    banner.hidden = false;
+    byId('project-token-banner-title').textContent =
+      '프로젝트 ' + safeText(projectId, 48) + ' · ' + safeText(issued.metadata?.label || '', 64) + ' (' + safeText(issued.metadata?.tokenId || '', 32) + ')';
+    byId('project-token-value').textContent = String(issued.token || '');
+  }
+
+  function clearOneTimeTokenBanner() {
+    const banner = byId('project-token-banner');
+    if (!banner) return;
+    banner.hidden = true;
+    if (byId('project-token-banner-title')) byId('project-token-banner-title').textContent = '';
+    if (byId('project-token-value')) byId('project-token-value').textContent = '';
+  }
+
+  function renderProjects() {
+    const all = state.projects.list;
+    const filtered = state.projectsStatusFilter === 'all' ? all : all.filter((p) => p.status === state.projectsStatusFilter);
+    if (byId('projects-count-label')) {
+      byId('projects-count-label').textContent = filtered.length + '개 프로젝트 / 전체 ' + all.length + '개';
+    }
+    const grid = byId('projects-list');
+    if (!grid) return;
+    grid.replaceChildren();
+    if (!filtered.length) {
+      grid.append(el('p', '조건에 맞는 호스트 프로젝트가 없습니다. 새 프로젝트를 등록하거나 npm run project:bootstrap 을 실행하세요.', 'empty'));
+      return;
+    }
+
+    const ledgerByProject = state.compute.ledger?.byProject || {};
+    for (const p of filtered) {
+      const card = el('article', undefined, 'project-card');
+      card.addEventListener('click', () => openDrawer('project', p.id));
+
+      const head = el('div', undefined, 'project-card-head');
+      const titleBox = el('div');
+      titleBox.append(el('strong', safeText(p.name, 80)), el('p', safeText(p.id, 48) + ' · ' + safeText(p.template, 24), 'help mono'));
+      head.append(titleBox, el('span', PROJECT_STATUS[p.status] || p.status, p.status === 'active' ? 'pill tone-success' : p.status === 'paused' ? 'pill tone-attention' : 'pill'));
+      card.append(head);
+
+      if (p.description) card.append(el('p', safeText(p.description, 200), 'help'));
+
+      const caps = el('div', undefined, 'project-cap-row');
+      for (const cap of p.capabilities || []) {
+        caps.append(el('span', CAPABILITY_LABEL[cap] || cap, 'cap-chip'));
+      }
+      card.append(caps);
+
+      const pl = ledgerByProject[p.id];
+      const capMicros = p.budget?.computeBudgetCapMicros ?? 0;
+      const usedMicros = (pl?.totalSettledMicros ?? 0) + (pl?.totalReservedMicros ?? 0);
+      const pct = capMicros > 0 ? Math.min(100, (usedMicros / capMicros) * 100) : 0;
+      const budgetRow = el('div');
+      budgetRow.append(el('p', '컴퓨팅 예산 ' + formatUsd(usedMicros) + ' / ' + formatUsd(capMicros) + ' (' + pct.toFixed(1) + '%)', 'help'));
+      const track = el('div', undefined, 'breakdown-track');
+      const fill = el('div', undefined, 'breakdown-fill settled');
+      fill.style.width = pct.toFixed(1) + '%';
+      track.append(fill);
+      budgetRow.append(track);
+      card.append(budgetRow);
+
+      const dlvCount = state.delivery.tasks.filter((t) => (t.projectId || 'default') === p.id).length;
+      const cmpCount = state.compute.jobs.filter((j) => (j.projectId || 'default') === p.id).length;
+      const activeTokens = (p.tokens || []).filter((t) => !t.revokedAt).length;
+      const foot = el('div', undefined, 'inbox-card-foot');
+      foot.append(
+        el('span', '저장소 ' + (p.delivery?.repositories?.length || 0) + ' · 토큰 ' + activeTokens + ' · 전달 ' + dlvCount + ' · 컴퓨팅 ' + cmpCount, 'quiet'),
+        (() => {
+          const filterBtn = el('button', '필터 보기', 'secondary compact-btn');
+          filterBtn.type = 'button';
+          filterBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            state.projectFilter = p.id;
+            renderAll();
+            switchTab('overview');
+          });
+          return filterBtn;
+        })(),
+      );
+      card.append(foot);
+      grid.append(card);
+    }
   }
 
   // ---------- LIVE STRIP ----------
@@ -574,7 +757,7 @@
     list.replaceChildren();
 
     const activeItems = [];
-    for (const t of state.delivery.tasks) {
+    for (const t of visibleDeliveryTasks()) {
       if (DELIVERY_ACTIVE.has(t.status)) {
         activeItems.push({
           kind: 'delivery',
@@ -584,6 +767,7 @@
           status: t.status,
           statusLabel: DELIVERY_STATUS[t.status] || t.status,
           meta:
+            (t.projectId && t.projectId !== 'default' ? '[' + safeText(t.projectId, 32) + '] ' : '') +
             safeText(t.provider, 16) +
             ' · 반복 ' +
             t.currentIteration +
@@ -596,17 +780,18 @@
         });
       }
     }
-    for (const j of state.mf.jobs) {
-      if (MF_ACTIVE.has(j.status)) {
+    for (const j of visibleComputeJobs()) {
+      if (COMPUTE_ACTIVE.has(j.status)) {
         const inst = j.instance;
         activeItems.push({
-          kind: 'mf',
-          kindLabel: 'Model Factory',
+          kind: 'compute',
+          kindLabel: 'Spot 컴퓨팅',
           id: j.id,
           title: j.title,
           status: j.status,
-          statusLabel: MF_STATUS[j.status] || j.status,
+          statusLabel: COMPUTE_STATUS[j.status] || j.status,
           meta:
+            (j.projectId && j.projectId !== 'default' ? '[' + safeText(j.projectId, 32) + '] ' : '') +
             safeText(j.compute?.instanceType, 24) +
             ' · ' +
             safeText(inst?.region || j.compute?.region, 24) +
@@ -615,7 +800,7 @@
         });
       }
     }
-    for (const s of state.collab.sessions) {
+    for (const s of visibleCollabSessions()) {
       if (s.status === 'active') {
         activeItems.push({
           kind: 'collab',
@@ -624,7 +809,14 @@
           title: s.title,
           status: s.status,
           statusLabel: COLLAB_STATUS[s.status] || s.status,
-          meta: safeText(s.provider, 16) + ' · 최대 ' + s.maxParallelWorkers + '워커 · 갱신 ' + formatElapsedSince(s.updatedAt) + ' 전',
+          meta:
+            (s.projectId && s.projectId !== 'default' ? '[' + safeText(s.projectId, 32) + '] ' : '') +
+            safeText(s.provider, 16) +
+            ' · 최대 ' +
+            s.maxParallelWorkers +
+            '워커 · 갱신 ' +
+            formatElapsedSince(s.updatedAt) +
+            ' 전',
         });
       }
     }
@@ -652,8 +844,8 @@
   function buildInboxCard(item) {
     const card = el('article', undefined, 'inbox-card');
     const head = el('div', undefined, 'inbox-card-head');
-    const kindText = item.kind === 'delivery' ? 'SW 전달' : 'Model Factory';
-    const statusLabel = item.kind === 'delivery' ? DELIVERY_STATUS[item.status] || item.status : MF_STATUS[item.status] || item.status;
+    const kindText = item.kind === 'delivery' ? 'SW 전달' : 'Spot 컴퓨팅';
+    const statusLabel = item.kind === 'delivery' ? DELIVERY_STATUS[item.status] || item.status : COMPUTE_STATUS[item.status] || item.status;
     head.append(el('span', kindText, 'pill'), el('span', statusLabel, pillClass(item.status)));
     card.append(head, el('strong', safeText(item.title, 140)));
 
@@ -739,8 +931,8 @@
   }
 
   function renderCosts() {
-    const ledger = state.mf.ledger;
-    const jobs = state.mf.jobs;
+    const ledger = visibleLedger();
+    const jobs = visibleComputeJobs();
     const ch = charts();
 
     if (byId('costs-summary-pill') && ledger) {
@@ -752,7 +944,8 @@
       const chartSource = jobs.length ? jobs : ledger?.jobs || [];
       ch.renderCostTrendChart(byId('overview-cost-chart'), chartSource, formatUsd, { compact: true });
       ch.renderCostTrendChart(byId('costs-trend-chart'), chartSource, formatUsd, { compact: false });
-      ch.renderBreakdownBars(byId('costs-by-model'), aggregateBreakdown(jobs, (j) => j.modelId), formatUsd, '모델 기록 없음');
+      ch.renderBreakdownBars(byId('costs-by-project'), aggregateBreakdown(jobs, (j) => j.projectId || 'default'), formatUsd, '프로젝트 기록 없음');
+      ch.renderBreakdownBars(byId('costs-by-workload'), aggregateBreakdown(jobs, (j) => j.workloadId || j.modelId), formatUsd, '워크로드 기록 없음');
       ch.renderBreakdownBars(byId('costs-by-region'), aggregateBreakdown(jobs, (j) => j.instance?.region || j.compute?.region), formatUsd, '리전 기록 없음');
       ch.renderBreakdownBars(byId('costs-by-instance'), aggregateBreakdown(jobs, (j) => j.compute?.instanceType), formatUsd, '인스턴스 기록 없음');
     }
@@ -778,7 +971,7 @@
           const rate = Number(j.cost?.hourlyRateUsd ?? j.compute?.maxHourlyPriceUsd ?? 0);
           const estMicros = Math.min(j.cost?.reservedMicros ?? Number.MAX_SAFE_INTEGER, Math.round((elapsedSec / 3600) * rate * 1_000_000));
           const head = el('div', undefined, 'subtask-head');
-          head.append(el('strong', safeText(j.modelId, 64) + ' · ' + safeText(inst.instanceType, 24)), el('span', EC2_STATE[inst.state] || inst.state, 'pill tone-running'));
+          head.append(el('strong', '[' + safeText(j.projectId || 'default', 24) + '] ' + safeText(j.workloadId || j.modelId, 48) + ' · ' + safeText(inst.instanceType, 24)), el('span', EC2_STATE[inst.state] || inst.state, 'pill tone-running'));
           card.append(
             head,
             el('p', safeText(inst.instanceId, 32) + ' · ' + safeText(inst.region, 24) + (inst.availabilityZone ? '/' + safeText(inst.availabilityZone, 24) : ''), 'help mono'),
@@ -795,7 +988,7 @@
           }
           const btn = el('button', '상세 보기', 'secondary compact-btn');
           btn.type = 'button';
-          btn.addEventListener('click', () => openDrawer('mf', j.id));
+          btn.addEventListener('click', () => openDrawer('compute', j.id));
           const cardActions = el('div', undefined, 'actions');
           cardActions.append(btn);
           card.append(cardActions);
@@ -808,7 +1001,7 @@
     const dlvBox = byId('costs-delivery-summary');
     if (dlvBox) {
       dlvBox.replaceChildren();
-      const tasks = state.delivery.tasks;
+      const tasks = visibleDeliveryTasks();
       const totalBudget = tasks.reduce((sum, t) => sum + (typeof t.budgetMicros === 'number' ? t.budgetMicros : 0), 0);
       const placed = tasks.filter((t) => typeof t.lastPlacement?.savingsVsPrimaryPercent === 'number');
       const avgSavings = placed.length
@@ -832,19 +1025,22 @@
   }
 
   function renderOverview() {
-    const deliveryActive = state.delivery.tasks.filter((t) => DELIVERY_ACTIVE.has(t.status)).length;
-    const deliveryAttention = state.delivery.tasks.filter((t) => DELIVERY_ATTENTION.has(t.status)).length;
-    const mfActive = state.mf.jobs.filter((j) => MF_ACTIVE.has(j.status)).length;
-    const mfAttention = state.mf.jobs.filter((j) => MF_ATTENTION.has(j.status)).length;
-    const collabActive = state.collab.sessions.filter((s) => s.status === 'active').length;
+    const tasks = visibleDeliveryTasks();
+    const jobs = visibleComputeJobs();
+    const sessions = visibleCollabSessions();
+    const deliveryActive = tasks.filter((t) => DELIVERY_ACTIVE.has(t.status)).length;
+    const deliveryAttention = tasks.filter((t) => DELIVERY_ATTENTION.has(t.status)).length;
+    const computeActive = jobs.filter((j) => COMPUTE_ACTIVE.has(j.status)).length;
+    const computeAttention = jobs.filter((j) => COMPUTE_ATTENTION.has(j.status)).length;
+    const collabActive = sessions.filter((s) => s.status === 'active').length;
 
-    byId('kpi-active-total').textContent = String(deliveryActive + mfActive + collabActive);
-    byId('kpi-active-detail').textContent = 'SW 전달 ' + deliveryActive + ' · 학습 ' + mfActive + ' · 협업 활성 ' + collabActive;
+    byId('kpi-active-total').textContent = String(deliveryActive + computeActive + collabActive);
+    byId('kpi-active-detail').textContent = 'SW 전달 ' + deliveryActive + ' · 컴퓨팅 ' + computeActive + ' · 협업 활성 ' + collabActive;
 
-    byId('kpi-attention-total').textContent = String(deliveryAttention + mfAttention);
-    byId('kpi-attention-detail').textContent = 'SW 전달 ' + deliveryAttention + ' · Model Factory ' + mfAttention;
+    byId('kpi-attention-total').textContent = String(deliveryAttention + computeAttention);
+    byId('kpi-attention-detail').textContent = 'SW 전달 ' + deliveryAttention + ' · Spot 컴퓨팅 ' + computeAttention;
 
-    const ledger = state.mf.ledger;
+    const ledger = visibleLedger();
     if (ledger && typeof ledger.globalBudgetCapMicros === 'number') {
       const cap = ledger.globalBudgetCapMicros;
       const settled = ledger.totalSettledMicros;
@@ -855,10 +1051,11 @@
       const settledPct = cap > 0 ? Math.min(100, (settled / cap) * 100) : 0;
       const reservedPct = cap > 0 ? Math.min(Math.max(0, 100 - settledPct), (reserved / cap) * 100) : 0;
 
-      byId('kpi-mf-remaining').textContent = formatUsd(remaining);
-      byId('kpi-mf-cap-detail').textContent = '중앙 상한 ' + formatUsd(cap) + ' · 사용률 ' + pct.toFixed(1) + '%';
-      byId('kpi-mf-committed').textContent = formatUsd(committed);
-      byId('kpi-mf-committed-detail').textContent =
+      const capLabel = state.projectFilter === 'all' ? '중앙 상한 ' : '프로젝트 상한 ';
+      byId('kpi-compute-remaining').textContent = formatUsd(remaining);
+      byId('kpi-compute-cap-detail').textContent = capLabel + formatUsd(cap) + ' · 사용률 ' + pct.toFixed(1) + '%';
+      byId('kpi-compute-committed').textContent = formatUsd(committed);
+      byId('kpi-compute-committed-detail').textContent =
         '정산 추정 ' + formatUsd(settled) + ' (' + ledger.settledJobs + '건) · 예약 상한 ' + formatUsd(reserved) + ' (' + ledger.activeReservations + '건)';
 
       const pill = byId('budget-utilization-pill');
@@ -879,20 +1076,20 @@
         entries.sort((a, b) => Date.parse(b.createdAt || '') - Date.parse(a.createdAt || ''));
         if (!entries.length) {
           const row = el('tr');
-          const cell = el('td', '아직 Model Factory 비용 원장 기록이 없습니다.', 'empty-cell');
+          const cell = el('td', '아직 Spot 컴퓨팅 비용 원장 기록이 없습니다.', 'empty-cell');
           cell.colSpan = 7;
           row.append(cell);
           tbody.append(row);
         } else {
           for (const entry of entries) {
             const row = el('tr', undefined, 'clickable-row');
-            row.addEventListener('click', () => openDrawer('mf', entry.jobId));
+            row.addEventListener('click', () => openDrawer('compute', entry.jobId));
             row.append(
               el('td', safeText(entry.jobId, 48), 'mono'),
-              el('td', safeText(entry.modelId, 64)),
+              el('td', '[' + safeText(entry.projectId || 'default', 24) + '] ' + safeText(entry.workloadId || entry.modelId, 48)),
               (() => {
                 const td = el('td');
-                td.append(el('span', MF_STATUS[entry.status] || safeText(entry.status, 32), pillClass(entry.status)));
+                td.append(el('span', COMPUTE_STATUS[entry.status] || safeText(entry.status, 32), pillClass(entry.status)));
                 return td;
               })(),
               el('td', safeText(entry.region, 32) + ' · ' + safeText(entry.instanceType, 32)),
@@ -906,18 +1103,18 @@
       }
     }
 
-    const deliveryBudgetSum = state.delivery.tasks.reduce((acc, t) => acc + (typeof t.budgetMicros === 'number' ? t.budgetMicros : 0), 0);
-    const prCount = state.delivery.tasks.filter((t) => Boolean(t.publication)).length;
+    const deliveryBudgetSum = tasks.reduce((acc, t) => acc + (typeof t.budgetMicros === 'number' ? t.budgetMicros : 0), 0);
+    const prCount = tasks.filter((t) => Boolean(t.publication)).length;
     byId('overview-delivery-budget').textContent =
-      '총 ' + state.delivery.tasks.length + '건 · Draft PR ' + prCount + '건 · 승인 예산 합계 ' + formatUsd(deliveryBudgetSum) + ' (모델·Fargate 실청구 미확정)';
-    renderStatusBadges(byId('overview-delivery-badges'), countByStatus(state.delivery.tasks), DELIVERY_STATUS);
+      '총 ' + tasks.length + '건 · Draft PR ' + prCount + '건 · 승인 예산 합계 ' + formatUsd(deliveryBudgetSum) + ' (모델·Fargate 실청구 미확정)';
+    renderStatusBadges(byId('overview-delivery-badges'), countByStatus(tasks), DELIVERY_STATUS);
 
-    const runningInstances = state.mf.jobs.filter((j) => j.instance && ['pending', 'running'].includes(j.instance.state)).length;
-    byId('overview-mf-instances').textContent = '총 ' + state.mf.jobs.length + '건 · 실행 중 EC2 스팟 인스턴스 ' + runningInstances + '대';
-    renderStatusBadges(byId('overview-mf-badges'), countByStatus(state.mf.jobs), MF_STATUS);
+    const runningInstances = jobs.filter((j) => j.instance && ['pending', 'running'].includes(j.instance.state)).length;
+    byId('overview-compute-instances').textContent = '총 ' + jobs.length + '건 · 실행 중 EC2 스팟 인스턴스 ' + runningInstances + '대';
+    renderStatusBadges(byId('overview-compute-badges'), countByStatus(jobs), COMPUTE_STATUS);
 
-    byId('overview-collab-summary').textContent = '총 ' + state.collab.sessions.length + '개 세션 · 활성 ' + collabActive + '개';
-    renderStatusBadges(byId('overview-collab-badges'), countByStatus(state.collab.sessions), COLLAB_STATUS);
+    byId('overview-collab-summary').textContent = '총 ' + sessions.length + '개 세션 · 활성 ' + collabActive + '개';
+    renderStatusBadges(byId('overview-collab-badges'), countByStatus(sessions), COLLAB_STATUS);
 
     renderLiveStrip();
     renderInbox();
@@ -991,11 +1188,20 @@
     const { source, errorsOnly, query } = state.eventFilter;
     const q = query.trim().toLowerCase();
 
+    const visibleTaskIds = new Set(visibleDeliveryTasks().map((t) => t.id));
+    const visibleJobIds = new Set(visibleComputeJobs().map((j) => j.id));
     let merged = [
-      ...state.delivery.events.map((e) => ({ kind: 'delivery', source: 'SW 전달', id: e.taskId, type: e.type, at: e.at, data: e.data })),
-      ...state.mf.events.map((e) => ({ kind: 'mf', source: 'Model Factory', id: e.jobId, type: e.type, at: e.at, data: e.data })),
+      ...state.projects.events
+        .filter((e) => state.projectFilter === 'all' || e.projectId === state.projectFilter)
+        .map((e) => ({ kind: 'project', sourceKey: 'projects', source: '프로젝트', id: e.projectId, type: e.type, at: e.at, data: e.data })),
+      ...state.delivery.events
+        .filter((e) => state.projectFilter === 'all' || visibleTaskIds.has(e.taskId))
+        .map((e) => ({ kind: 'delivery', sourceKey: 'delivery', source: 'SW 전달', id: e.taskId, type: e.type, at: e.at, data: e.data })),
+      ...state.compute.events
+        .filter((e) => state.projectFilter === 'all' || visibleJobIds.has(e.jobId))
+        .map((e) => ({ kind: 'compute', sourceKey: 'compute', source: 'Spot 컴퓨팅', id: e.jobId, type: e.type, at: e.at, data: e.data })),
     ];
-    if (source !== 'all') merged = merged.filter((e) => e.kind === source);
+    if (source !== 'all') merged = merged.filter((e) => e.sourceKey === source);
     if (errorsOnly) merged = merged.filter(isErrorEvent);
     if (q) {
       merged = merged.filter((e) =>
@@ -1042,8 +1248,8 @@
     if (kind === 'delivery') {
       const t = state.delivery.tasks.find((x) => x.id === id);
       state.drawer.fingerprint = t?.approvalFingerprint || null;
-    } else if (kind === 'mf') {
-      const j = state.mf.jobs.find((x) => x.id === id);
+    } else if (kind === 'compute') {
+      const j = state.compute.jobs.find((x) => x.id === id);
       state.drawer.fingerprint = j?.approvalFingerprint || null;
     } else if (kind === 'collab') {
       void selectCollab(id);
@@ -1221,22 +1427,22 @@
       }
 
       bodyEl.append(el('h3', '지시 내용'), el('p', safeText(task.instructions, 3000), 'instructions'));
-    } else if (state.drawer.kind === 'mf') {
-      const job = state.mf.jobs.find((j) => j.id === state.drawer.id);
+    } else if (state.drawer.kind === 'compute') {
+      const job = state.compute.jobs.find((j) => j.id === state.drawer.id);
       if (!job) {
         titleEl.textContent = '작업을 찾을 수 없습니다';
         return;
       }
-      kindEl.textContent = 'Model Factory';
-      statusEl.textContent = MF_STATUS[job.status] || job.status;
+      kindEl.textContent = 'Spot 컴퓨팅 · ' + safeText(job.projectId || 'default', 32);
+      statusEl.textContent = COMPUTE_STATUS[job.status] || job.status;
       statusEl.className = pillClass(job.status);
       idEl.textContent = safeText(job.id, 48);
       titleEl.textContent = safeText(job.title, 180);
-      if (ch) ch.renderStepper(stepperEl, ch.mfSteps(job));
+      if (ch) ch.renderStepper(stepperEl, ch.computeSteps(job));
 
       if (state.drawer.fingerprint && state.drawer.fingerprint !== job.approvalFingerprint) {
         state.drawer.fingerprint = job.approvalFingerprint;
-        setError('검토 중인 Model Factory 작업의 approvalFingerprint가 변경되었습니다. 다시 검토하세요.');
+        setError('검토 중인 Spot 컴퓨팅 작업의 approvalFingerprint가 변경되었습니다. 다시 검토하세요.');
       }
 
       if (job.releaseAttestation?.verificationDisclaimer) {
@@ -1249,7 +1455,7 @@
         d.append(el('dt', dt), el('dd', dd));
         facts.append(d);
       };
-      add('모델 ID', safeText(job.modelId, 120));
+      add('프로젝트 · 워크로드', safeText(job.projectId || 'default', 48) + ' / ' + safeText(job.workloadId || job.modelId, 80));
       add('컴퓨트', safeText(job.compute?.instanceType, 32) + ' · ' + safeText(job.instance?.region || job.compute?.region, 24));
       add('예약 상한', formatUsd(job.cost?.reservedMicros));
       add('정산 추정 (실청구 아님)', job.cost?.settledMicros === null ? '미정산' : formatUsd(job.cost?.settledMicros));
@@ -1270,22 +1476,22 @@
       }
       bodyEl.append(facts);
 
-      if (!MF_TERMINAL.has(job.status)) {
+      if (!COMPUTE_TERMINAL.has(job.status)) {
         const panel = el('section', undefined, 'decision-panel');
-        const awaitingTrain = job.status === 'awaiting_training_approval';
+        const awaitingLaunch = job.status === 'awaiting_launch_approval' || job.status === 'awaiting_training_approval';
         const awaitingRelease = job.status === 'awaiting_release_approval';
         panel.append(
-          el('h3', awaitingTrain ? '학습 승인' : awaitingRelease ? '공개 승인' : '학습 제어'),
+          el('h3', awaitingLaunch ? '기동 승인' : awaitingRelease ? '공개 승인' : '작업 제어'),
           el(
             'p',
-            awaitingTrain
-              ? '승인 시 중앙 예산을 예약하고 EC2 스팟 인스턴스를 기동합니다.'
+            awaitingLaunch
+              ? '승인 시 프로젝트·중앙 예산을 예약하고 EC2 스팟 인스턴스를 기동합니다.'
               : awaitingRelease
                 ? '검증 근거와 다이제스트를 확인한 뒤 공개 여부를 결정하세요.'
                 : '상태를 점검(Wake)하거나 사유를 적어 작업을 중단할 수 있습니다.',
           ),
         );
-        if (awaitingTrain) panel.append(el('p', 'approvalFingerprint: ' + safeText(job.approvalFingerprint, 64), 'fingerprint-box'));
+        if (awaitingLaunch) panel.append(el('p', 'approvalFingerprint: ' + safeText(job.approvalFingerprint, 64), 'fingerprint-box'));
 
         const form = el('form');
         const reasonInput = el('textarea');
@@ -1322,7 +1528,7 @@
           b.disabled = state.busy;
           actions.append(b);
         };
-        if (awaitingTrain) addBtn('학습 승인 (예산 예약·EC2 기동)', 'approve_training');
+        if (awaitingLaunch) addBtn('기동 승인 (예산 예약·EC2 Spot 기동)', 'approve_launch');
         if (awaitingRelease) {
           addBtn('공개 승인', 'approve_release');
           addBtn('공개 반려', 'reject_release', 'secondary');
@@ -1338,16 +1544,16 @@
             return;
           }
           const encId = encodeURIComponent(job.id);
-          if (op === 'approve_training') {
-            return runMutation(() => monitorApi('/api/model-factory/jobs/' + encId + '/approve-training', { approvalFingerprint: job.approvalFingerprint, reason }, 35000), 'Model Factory 학습을 승인했습니다.');
+          if (op === 'approve_launch') {
+            return runMutation(() => monitorApi('/api/compute/jobs/' + encId + '/approve', { approvalFingerprint: job.approvalFingerprint, reason }, 35000), 'Spot 컴퓨팅 작업 기동을 승인했습니다.');
           }
           if (op === 'cancel') {
-            return runMutation(() => monitorApi('/api/model-factory/jobs/' + encId + '/cancel', { reason }, 35000), 'Model Factory 작업을 중단했습니다.');
+            return runMutation(() => monitorApi('/api/compute/jobs/' + encId + '/cancel', { reason }, 35000), 'Spot 컴퓨팅 작업을 중단했습니다.');
           }
           if (op === 'approve_release' || op === 'reject_release') {
             return runMutation(
               () =>
-                monitorApi('/api/model-factory/jobs/' + encId + '/approve-release', {
+                monitorApi('/api/compute/jobs/' + encId + '/approve-release', {
                   decision: op === 'approve_release' ? 'approve' : 'reject',
                   openedRawArtifacts: Boolean(openedRawCheck?.checked),
                   durationMinutes: Number(durationInput?.value || 0),
@@ -1359,6 +1565,106 @@
         });
         panel.append(form);
         bodyEl.append(panel);
+      }
+    } else if (state.drawer.kind === 'project') {
+      const project = state.projects.list.find((p) => p.id === state.drawer.id);
+      if (!project) {
+        titleEl.textContent = '프로젝트를 찾을 수 없습니다';
+        return;
+      }
+      kindEl.textContent = '호스트 프로젝트';
+      statusEl.textContent = PROJECT_STATUS[project.status] || project.status;
+      statusEl.className = project.status === 'active' ? 'pill tone-success' : project.status === 'paused' ? 'pill tone-attention' : 'pill';
+      idEl.textContent = safeText(project.id, 64);
+      titleEl.textContent = safeText(project.name, 120);
+      stepperEl.replaceChildren();
+
+      const facts = el('dl', undefined, 'repository-facts');
+      const add = (dt, dd, wide) => {
+        const d = el('div', undefined, wide ? 'wide' : undefined);
+        d.append(el('dt', dt), el('dd', dd));
+        facts.append(d);
+      };
+      add('템플릿', safeText(project.template, 32));
+      add('컴퓨팅 예산 상한', formatUsd(project.budget?.computeBudgetCapMicros));
+      add('단일 작업 상한', project.budget?.maxSingleJobCostMicros ? formatUsd(project.budget.maxSingleJobCostMicros) : '제한 없음');
+      add('허용 리전', (project.compute?.allowedRegions || []).join(', ') || '-');
+      add('허용 저장소', (project.delivery?.repositories || []).join(', ') || '미지정', true);
+      add('S3 네임스페이스', (project.compute?.s3ArtifactPrefixes || []).join(', ') || '-', true);
+      bodyEl.append(facts);
+
+      const ctrl = el('section', undefined, 'decision-panel');
+      ctrl.append(el('h3', '프로젝트 상태 및 전용 토큰'));
+      const statusActions = el('div', undefined, 'actions');
+      const toggleBtn = el('button', project.status === 'active' ? '프로젝트 일시정지' : '프로젝트 재개', project.status === 'active' ? 'secondary' : undefined);
+      toggleBtn.type = 'button';
+      toggleBtn.disabled = state.busy;
+      toggleBtn.addEventListener('click', () => {
+        const nextStatus = project.status === 'active' ? 'paused' : 'active';
+        return runMutation(
+          () => monitorApi('/api/projects/' + encodeURIComponent(project.id), { status: nextStatus }, 15000, 'PATCH'),
+          nextStatus === 'paused' ? '프로젝트를 일시정지했습니다.' : '프로젝트를 재개했습니다.',
+        );
+      });
+      statusActions.append(toggleBtn);
+      ctrl.append(statusActions);
+
+      const tokForm = el('form');
+      const labelInput = el('input');
+      labelInput.type = 'text';
+      labelInput.required = true;
+      labelInput.maxLength = 80;
+      labelInput.placeholder = '예: ci-agent, autonomy-loop';
+      const lbl = el('label', '새 프로젝트 전용 에이전트 토큰 라벨');
+      lbl.append(labelInput);
+      const issueBtn = el('button', '전용 토큰 발급 (1회 표시)', 'compact-btn');
+      issueBtn.type = 'submit';
+      issueBtn.disabled = state.busy || project.status === 'archived';
+      tokForm.append(lbl, issueBtn);
+      tokForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const label = labelInput.value.trim();
+        if (!label) return;
+        return runMutation(
+          async () => {
+            const issued = await monitorApi('/api/projects/' + encodeURIComponent(project.id) + '/tokens', { label }, 15000, 'POST');
+            labelInput.value = '';
+            showOneTimeTokenBanner(project.id, issued);
+            switchTab('projects');
+            return issued;
+          },
+          '프로젝트 전용 에이전트 토큰을 발급했습니다. 프로젝트 화면 상단 배너에서 1회 확인하세요.',
+        );
+      });
+      ctrl.append(tokForm);
+      bodyEl.append(ctrl);
+
+      bodyEl.append(el('h3', '발급된 토큰 (' + (project.tokens || []).length + '개)'));
+      if (!project.tokens || !project.tokens.length) {
+        bodyEl.append(el('p', '발급된 프로젝트 전용 에이전트 토큰이 없습니다.', 'empty'));
+      } else {
+        for (const tok of project.tokens) {
+          const row = el('div', undefined, 'token-row');
+          const info = el('div');
+          info.append(
+            el('strong', safeText(tok.label, 64) + ' (' + safeText(tok.tokenPrefix, 16) + '…)'),
+            el('p', safeText((tok.scopes || []).join(', '), 200) + (tok.revokedAt ? ' · 폐기됨' : ''), 'help mono'),
+          );
+          row.append(info);
+          if (!tok.revokedAt) {
+            const revBtn = el('button', '폐기', 'danger compact-btn');
+            revBtn.type = 'button';
+            revBtn.disabled = state.busy;
+            revBtn.addEventListener('click', () =>
+              runMutation(
+                () => monitorApi('/api/projects/' + encodeURIComponent(project.id) + '/tokens/' + encodeURIComponent(tok.tokenId), { reason: 'Revoked from dashboard' }, 15000, 'DELETE'),
+                '토큰을 폐기했습니다.',
+              ),
+            );
+            row.append(revBtn);
+          }
+          bodyEl.append(row);
+        }
       }
     } else if (state.drawer.kind === 'collab') {
       const session =
@@ -1414,8 +1720,9 @@
   }
 
   function renderDelivery() {
-    const filtered = filterDelivery(state.delivery.tasks);
-    byId('delivery-count-label').textContent = filtered.length + '건 / 전체 ' + state.delivery.tasks.length + '건';
+    const allTasks = visibleDeliveryTasks();
+    const filtered = filterDelivery(allTasks);
+    byId('delivery-count-label').textContent = filtered.length + '건 / 전체 ' + allTasks.length + '건';
 
     const list = byId('delivery-list');
     const existing = new Map(Array.from(list.querySelectorAll('button')).map((b) => [b.dataset.taskId, b]));
@@ -1583,36 +1890,42 @@
     renderEntityEvents(byId('dlv-events'), taskEvents);
   }
 
-  // ---------- MODEL FACTORY ----------
-  function filterMf(jobs) {
+  // ---------- SPOT COMPUTE ----------
+  function filterCompute(jobs) {
     let out = jobs;
-    if (state.mfFilter === 'active') out = out.filter((j) => MF_ACTIVE.has(j.status));
-    else if (state.mfFilter === 'attention') out = out.filter((j) => MF_ATTENTION.has(j.status));
-    else if (state.mfFilter === 'terminal') out = out.filter((j) => MF_TERMINAL.has(j.status));
-    const q = state.mfSearch.trim().toLowerCase();
-    if (q) out = out.filter((j) => (j.id + ' ' + j.title + ' ' + j.modelId + ' ' + (j.compute?.region || '') + ' ' + (j.compute?.instanceType || '')).toLowerCase().includes(q));
+    if (state.computeFilter === 'active') out = out.filter((j) => COMPUTE_ACTIVE.has(j.status));
+    else if (state.computeFilter === 'attention') out = out.filter((j) => COMPUTE_ATTENTION.has(j.status));
+    else if (state.computeFilter === 'terminal') out = out.filter((j) => COMPUTE_TERMINAL.has(j.status));
+    const q = state.computeSearch.trim().toLowerCase();
+    if (q) {
+      out = out.filter((j) =>
+        (j.id + ' ' + (j.projectId || '') + ' ' + j.title + ' ' + (j.workloadId || j.modelId || '') + ' ' + (j.compute?.region || '') + ' ' + (j.compute?.instanceType || ''))
+          .toLowerCase()
+          .includes(q),
+      );
+    }
     return out;
   }
 
-  function selectMfJob(id) {
+  function selectComputeJob(id) {
     if (state.busy) return;
-    state.selectedMfId = id;
-    const job = state.mf.jobs.find((j) => j.id === id);
-    state.selectedMfFingerprint = job?.approvalFingerprint || null;
-    if (byId('mf-reason')) byId('mf-reason').value = '';
-    renderModelFactory();
+    state.selectedComputeId = id;
+    const job = state.compute.jobs.find((j) => j.id === id);
+    state.selectedComputeFingerprint = job?.approvalFingerprint || null;
+    if (byId('cmp-reason')) byId('cmp-reason').value = '';
+    renderCompute();
   }
 
-  function renderModelFactory() {
-    const ledger = state.mf.ledger;
-    if (byId('mf-inline-budget')) {
-      byId('mf-inline-budget').textContent = ledger
+  function renderCompute() {
+    const ledger = visibleLedger();
+    if (byId('compute-inline-budget')) {
+      byId('compute-inline-budget').textContent = ledger
         ? '잔여 ' + formatUsd(ledger.remainingBudgetMicros) + ' / 상한 ' + formatUsd(ledger.globalBudgetCapMicros)
         : '예산 확인 중';
     }
 
-    const filtered = filterMf(state.mf.jobs);
-    const list = byId('mf-list');
+    const filtered = filterCompute(visibleComputeJobs());
+    const list = byId('compute-list');
     const existing = new Map(Array.from(list.querySelectorAll('button')).map((b) => [b.dataset.jobId, b]));
     list.querySelectorAll('.empty').forEach((n) => n.remove());
     for (const job of filtered) {
@@ -1621,71 +1934,73 @@
         btn = el('button');
         btn.type = 'button';
         btn.dataset.jobId = job.id;
-        btn.addEventListener('click', () => selectMfJob(job.id));
+        btn.addEventListener('click', () => selectComputeJob(job.id));
         const meta = el('span', undefined, 'task-meta');
         meta.append(el('span'), el('small'));
         btn.append(el('strong'), meta);
         list.append(btn);
       }
       existing.delete(job.id);
-      const selected = job.id === state.selectedMfId;
+      const selected = job.id === state.selectedComputeId;
       btn.className = 'task-choice' + (selected ? ' selected' : '');
       btn.setAttribute('aria-pressed', String(selected));
       btn.disabled = state.busy;
       btn.firstChild.textContent = safeText(job.title, 160);
       btn.lastChild.firstChild.className = pillClass(job.status);
-      btn.lastChild.firstChild.textContent = MF_STATUS[job.status] || safeText(job.status, 32);
+      btn.lastChild.firstChild.textContent = COMPUTE_STATUS[job.status] || safeText(job.status, 32);
       const costText =
         job.cost?.settledMicros !== null && job.cost?.settledMicros !== undefined
           ? '정산 ' + formatUsd(job.cost.settledMicros)
           : '예약 ' + formatUsd(job.cost?.reservedMicros);
-      btn.lastChild.lastChild.textContent = safeText(job.compute?.instanceType, 24) + ' · ' + costText;
+      btn.lastChild.lastChild.textContent =
+        '[' + safeText(job.projectId || 'default', 24) + '] ' + safeText(job.compute?.instanceType, 24) + ' · ' + costText;
     }
     existing.forEach((b) => b.remove());
-    if (!filtered.length) list.append(el('p', '조건에 맞는 Model Factory 작업이 없습니다.', 'empty'));
+    if (!filtered.length) list.append(el('p', '조건에 맞는 Spot 컴퓨팅 작업이 없습니다.', 'empty'));
 
-    const job = state.mf.jobs.find((j) => j.id === state.selectedMfId) || null;
-    byId('mf-empty').hidden = Boolean(job);
-    byId('mf-detail').hidden = !job;
+    const job = state.compute.jobs.find((j) => j.id === state.selectedComputeId) || null;
+    byId('compute-empty').hidden = Boolean(job);
+    byId('compute-detail').hidden = !job;
     if (!job) return;
 
-    if (state.selectedMfFingerprint && state.selectedMfFingerprint !== job.approvalFingerprint) {
-      state.selectedMfFingerprint = job.approvalFingerprint;
-      byId('mf-reason').value = '';
-      setError('선택한 Model Factory 작업의 승인 지문(approvalFingerprint)이 변경되었습니다. 범위를 다시 검토하세요.');
+    if (state.selectedComputeFingerprint && state.selectedComputeFingerprint !== job.approvalFingerprint) {
+      state.selectedComputeFingerprint = job.approvalFingerprint;
+      byId('cmp-reason').value = '';
+      setError('선택한 Spot 컴퓨팅 작업의 승인 지문(approvalFingerprint)이 변경되었습니다. 범위를 다시 검토하세요.');
     }
 
     const ch = charts();
-    if (ch) ch.renderStepper(byId('mf-stepper'), ch.mfSteps(job));
+    if (ch) ch.renderStepper(byId('cmp-stepper'), ch.computeSteps(job));
 
-    byId('mf-id').textContent = safeText(job.id, 64);
-    byId('mf-title').textContent = safeText(job.title, 200);
-    byId('mf-status').textContent = MF_STATUS[job.status] || safeText(job.status, 32);
-    byId('mf-status').className = pillClass(job.status);
+    byId('cmp-id').textContent = safeText(job.id, 64);
+    byId('cmp-title').textContent = safeText(job.title, 200);
+    byId('cmp-status').textContent = COMPUTE_STATUS[job.status] || safeText(job.status, 32);
+    byId('cmp-status').className = pillClass(job.status);
 
-    const waitEl = byId('mf-wait-reason');
+    const waitEl = byId('cmp-wait-reason');
     waitEl.hidden = !job.waitReason;
     waitEl.textContent = job.waitReason ? '대기 사유: ' + (WAIT_REASON[job.waitReason] || safeText(job.waitReason, 160)) : '';
 
-    byId('mf-model-id').textContent = safeText(job.modelId, 120);
-    byId('mf-repo').textContent = safeText(job.repository, 160) + ' @ ' + safeText(job.baseCommit, 12);
-    byId('mf-compute').textContent = safeText(job.compute?.instanceType, 40) + ' · ' + safeText(job.compute?.region, 32);
-    byId('mf-reserved').textContent = formatUsd(job.cost?.reservedMicros);
-    byId('mf-settled').textContent =
+    byId('cmp-workload-id').textContent =
+      safeText(job.projectId || 'default', 48) + ' · ' + safeText(job.workloadId || job.modelId, 80) + ' (' + safeText(job.workloadKind || 'batch', 24) + ')';
+    byId('cmp-repo').textContent = safeText(job.repository, 160) + ' @ ' + safeText(job.baseCommit, 12);
+    byId('cmp-compute').textContent = safeText(job.compute?.instanceType, 40) + ' · ' + safeText(job.compute?.region, 32);
+    byId('cmp-reserved').textContent = formatUsd(job.cost?.reservedMicros);
+    byId('cmp-settled').textContent =
       job.cost?.settledMicros === null || job.cost?.settledMicros === undefined
         ? '미정산 (실행 종료 후 정산)'
         : formatUsd(job.cost.settledMicros) + (job.cost.settledAt ? ' · ' + formatDate(job.cost.settledAt) : '');
-    byId('mf-rate').textContent =
+    byId('cmp-rate').textContent =
       '$' + Number(job.cost?.hourlyRateUsd ?? job.compute?.maxHourlyPriceUsd ?? 0).toFixed(4) + '/hr · ' + formatDurationSec(job.cost?.instanceSeconds);
-    byId('mf-release-policy').textContent =
+    byId('cmp-release-policy').textContent =
       safeText(job.releasePolicy?.mode, 32) +
       ' · ' +
       safeText(job.releasePolicy?.visibility, 16) +
       (job.releasePolicy?.hfRepository ? ' · ' + safeText(job.releasePolicy.hfRepository, 120) : '');
-    byId('mf-next-wake').textContent = job.nextWakeAt ? formatDate(job.nextWakeAt) : '예정 없음';
-    byId('mf-updated').textContent = formatDate(job.updatedAt);
+    byId('cmp-next-wake').textContent = job.nextWakeAt ? formatDate(job.nextWakeAt) : '예정 없음';
+    byId('cmp-updated').textContent = formatDate(job.updatedAt);
 
-    const outcome = byId('mf-outcome-banner');
+    const outcome = byId('cmp-outcome-banner');
     if (job.failureReason) {
       outcome.textContent = '실패 사유: ' + safeText(job.failureReason, 500);
       outcome.hidden = false;
@@ -1700,17 +2015,17 @@
       outcome.hidden = true;
     }
 
-    const isTerminal = MF_TERMINAL.has(job.status);
-    byId('mf-action-section').hidden = isTerminal;
+    const isTerminal = COMPUTE_TERMINAL.has(job.status);
+    byId('cmp-action-section').hidden = isTerminal;
     if (!isTerminal) {
-      const awaitingTrain = job.status === 'awaiting_training_approval';
-      const runningTrain = job.status === 'training_running';
+      const awaitingLaunch = job.status === 'awaiting_launch_approval' || job.status === 'awaiting_training_approval';
+      const runningJob = job.status === 'running' || job.status === 'training_running';
       const evaluating = job.status === 'evaluating';
       const awaitingRelease = job.status === 'awaiting_release_approval';
 
-      byId('mf-action-title').textContent = awaitingTrain ? '학습 승인이 필요합니다' : awaitingRelease ? '산출물 공개 승인이 필요합니다' : evaluating ? '산출물 검증 단계입니다' : '학습 작업을 감독하고 있습니다';
-      byId('mf-action-desc').textContent = awaitingTrain
-        ? '승인하면 중앙 예산에서 예약 상한을 확보하고 EC2 스팟 인스턴스를 기동합니다.'
+      byId('cmp-action-title').textContent = awaitingLaunch ? '기동 승인이 필요합니다' : awaitingRelease ? '산출물 공개 승인이 필요합니다' : evaluating ? '산출물 검증 단계입니다' : '컴퓨팅 작업을 감독하고 있습니다';
+      byId('cmp-action-desc').textContent = awaitingLaunch
+        ? '승인하면 프로젝트·중앙 예산에서 예약 상한을 확보하고 EC2 스팟 인스턴스를 기동합니다.'
         : awaitingRelease
           ? job.releasePolicy?.mode === 'hf_release' && job.releasePolicy?.visibility === 'public'
             ? '주의: 공개(public) Hugging Face 저장소로 산출물이 게시됩니다. 검증 근거와 다이제스트를 확인한 뒤 승인하세요.'
@@ -1719,46 +2034,46 @@
             ? '독립 검증기를 기동해 S3 산출물과 승인된 releaseCheckCommand를 검증할 수 있습니다.'
             : '인스턴스 상태를 확인(Wake)하거나 사유를 적어 작업을 중단하고 인스턴스를 종료할 수 있습니다.';
 
-      const fpRow = byId('mf-fingerprint-row');
-      fpRow.hidden = !awaitingTrain;
-      fpRow.textContent = awaitingTrain ? '승인 지문 (approvalFingerprint): ' + safeText(job.approvalFingerprint, 64) : '';
-      byId('mf-quick-actions').hidden = !runningTrain && !evaluating;
-      byId('mf-btn-wake').hidden = !runningTrain;
-      byId('mf-btn-wake').disabled = state.busy;
-      byId('mf-btn-verifier').hidden = !evaluating || !job.receipt;
-      byId('mf-btn-verifier').disabled = state.busy;
-      byId('mf-release-fields').hidden = !awaitingRelease;
-      byId('mf-btn-approve-training').hidden = !awaitingTrain;
-      byId('mf-btn-approve-release').hidden = !awaitingRelease;
-      byId('mf-btn-reject-release').hidden = !awaitingRelease;
-      byId('mf-btn-cancel').hidden = false;
-      for (const b of byId('mf-action-form').querySelectorAll('button')) b.disabled = state.busy;
+      const fpRow = byId('cmp-fingerprint-row');
+      fpRow.hidden = !awaitingLaunch;
+      fpRow.textContent = awaitingLaunch ? '승인 지문 (approvalFingerprint): ' + safeText(job.approvalFingerprint, 64) : '';
+      byId('cmp-quick-actions').hidden = !runningJob && !evaluating;
+      byId('cmp-btn-wake').hidden = !runningJob;
+      byId('cmp-btn-wake').disabled = state.busy;
+      byId('cmp-btn-verifier').hidden = !evaluating || !job.receipt;
+      byId('cmp-btn-verifier').disabled = state.busy;
+      byId('cmp-release-fields').hidden = !awaitingRelease;
+      byId('cmp-btn-approve-launch').hidden = !awaitingLaunch;
+      byId('cmp-btn-approve-release').hidden = !awaitingRelease;
+      byId('cmp-btn-reject-release').hidden = !awaitingRelease;
+      byId('cmp-btn-cancel').hidden = false;
+      for (const b of byId('cmp-action-form').querySelectorAll('button')) b.disabled = state.busy;
     }
 
     const inst = job.instance;
-    const instPill = byId('mf-instance-state');
+    const instPill = byId('cmp-instance-state');
     if (inst) {
       instPill.textContent = EC2_STATE[inst.state] || safeText(inst.state, 24);
       instPill.className = inst.state === 'running' ? 'pill tone-running' : inst.state === 'terminated' ? 'pill' : 'pill tone-attention';
-      byId('mf-inst-id').textContent = safeText(inst.instanceId, 40) + ' (' + safeText(inst.instanceType, 32) + ')';
-      byId('mf-inst-az').textContent = safeText(inst.region, 32) + (inst.availabilityZone ? ' / ' + safeText(inst.availabilityZone, 32) : '');
-      byId('mf-inst-launched').textContent = formatDate(inst.launchedAt);
-      byId('mf-inst-expires').textContent = formatTtl(inst.expiresAt);
-      byId('mf-inst-terminated').textContent = inst.terminatedAt ? formatDate(inst.terminatedAt) : '실행 중 또는 미종료';
-      byId('mf-inst-forced').textContent = inst.forcedTerminationReason ? safeText(inst.forcedTerminationReason, 240) : '없음';
+      byId('cmp-inst-id').textContent = safeText(inst.instanceId, 40) + ' (' + safeText(inst.instanceType, 32) + ')';
+      byId('cmp-inst-az').textContent = safeText(inst.region, 32) + (inst.availabilityZone ? ' / ' + safeText(inst.availabilityZone, 32) : '');
+      byId('cmp-inst-launched').textContent = formatDate(inst.launchedAt);
+      byId('cmp-inst-expires').textContent = formatTtl(inst.expiresAt);
+      byId('cmp-inst-terminated').textContent = inst.terminatedAt ? formatDate(inst.terminatedAt) : '실행 중 또는 미종료';
+      byId('cmp-inst-forced').textContent = inst.forcedTerminationReason ? safeText(inst.forcedTerminationReason, 240) : '없음';
     } else {
       instPill.textContent = '미기동';
       instPill.className = 'pill';
-      byId('mf-inst-id').textContent = '기동된 인스턴스 없음';
-      byId('mf-inst-az').textContent = '미배정';
-      byId('mf-inst-launched').textContent = '-';
-      byId('mf-inst-expires').textContent = '-';
-      byId('mf-inst-terminated').textContent = '-';
-      byId('mf-inst-forced').textContent = '없음';
+      byId('cmp-inst-id').textContent = '기동된 인스턴스 없음';
+      byId('cmp-inst-az').textContent = '미배정';
+      byId('cmp-inst-launched').textContent = '-';
+      byId('cmp-inst-expires').textContent = '-';
+      byId('cmp-inst-terminated').textContent = '-';
+      byId('cmp-inst-forced').textContent = '없음';
     }
 
-    const diagBlock = byId('mf-diagnostics-block');
-    const diagList = byId('mf-diagnostics-list');
+    const diagBlock = byId('cmp-diagnostics-block');
+    const diagList = byId('cmp-diagnostics-list');
     diagList.replaceChildren();
     if (Array.isArray(job.diagnostics) && job.diagnostics.length) {
       diagBlock.hidden = false;
@@ -1768,13 +2083,13 @@
     }
 
     const plan = job.placementPlan;
-    const planPill = byId('mf-plan-status');
-    const planRegions = byId('mf-plan-regions');
+    const planPill = byId('cmp-plan-status');
+    const planRegions = byId('cmp-plan-regions');
     planRegions.replaceChildren();
     if (plan) {
       planPill.textContent = safeText(plan.status, 32);
       planPill.className = plan.status === 'ranked' ? 'pill tone-success' : 'pill tone-attention';
-      byId('mf-plan-note').textContent =
+      byId('cmp-plan-note').textContent =
         safeText(plan.note, 300) +
         (plan.feedPool ? ' · 피드 풀 ' + safeText(plan.feedPool, 40) : '') +
         (plan.feedGeneratedAt ? ' · 기준 ' + formatDate(plan.feedGeneratedAt) : '');
@@ -1800,36 +2115,36 @@
     } else {
       planPill.textContent = '미생성';
       planPill.className = 'pill';
-      byId('mf-plan-note').textContent = '배치 계획 기록이 없습니다.';
+      byId('cmp-plan-note').textContent = '배치 계획 기록이 없습니다.';
     }
 
     const receipt = job.receipt;
-    byId('mf-receipt-path').textContent = receipt ? 's3://' + safeText(receipt.s3Bucket, 128) + '/' + safeText(receipt.s3Prefix, 300) : '아직 영수증이 기록되지 않았습니다.';
-    byId('mf-receipt-digest').textContent = receipt ? safeText(receipt.manifestDigest, 64) : '미보고';
-    byId('mf-receipt-files').textContent = receipt ? receipt.files.length + '개 (' + formatBytes(receipt.files.reduce((sum, f) => sum + (f.sizeBytes || 0), 0)) + ')' : '0개';
-    byId('mf-verifier-info').textContent = job.releaseVerifier ? safeText(job.releaseVerifier.ecsTaskArn, 180) + ' · ' + formatDate(job.releaseVerifier.dispatchedAt) : '미기동';
+    byId('cmp-receipt-path').textContent = receipt ? 's3://' + safeText(receipt.s3Bucket, 128) + '/' + safeText(receipt.s3Prefix, 300) : '아직 영수증이 기록되지 않았습니다.';
+    byId('cmp-receipt-digest').textContent = receipt ? safeText(receipt.manifestDigest, 64) : '미보고';
+    byId('cmp-receipt-files').textContent = receipt ? receipt.files.length + '개 (' + formatBytes(receipt.files.reduce((sum, f) => sum + (f.sizeBytes || 0), 0)) + ')' : '0개';
+    byId('cmp-verifier-info').textContent = job.releaseVerifier ? safeText(job.releaseVerifier.ecsTaskArn, 180) + ' · ' + formatDate(job.releaseVerifier.dispatchedAt) : '미기동';
 
     const att = job.releaseAttestation;
-    const attPill = byId('mf-attest-source');
-    const attDisc = byId('mf-attest-disclaimer');
+    const attPill = byId('cmp-attest-source');
+    const attDisc = byId('cmp-attest-disclaimer');
     if (att) {
       const independent = att.attestationSource === 'independent_verifier';
       attPill.textContent = independent ? '독립 검증기 증명' : '운영자 직접 보고 (비독립)';
       attPill.className = independent ? 'pill tone-success' : 'pill tone-attention';
       attDisc.hidden = !att.verificationDisclaimer;
       attDisc.textContent = att.verificationDisclaimer ? safeText(att.verificationDisclaimer, 400) : '';
-      byId('mf-attest-result').textContent = (att.releaseCheckPassed ? '통과' : '실패') + ' · ' + formatDate(att.verifiedAt);
+      byId('cmp-attest-result').textContent = (att.releaseCheckPassed ? '통과' : '실패') + ' · ' + formatDate(att.verifiedAt);
       const metricsStr = att.metrics && Object.keys(att.metrics).length ? JSON.stringify(att.metrics) + '\n' : '';
-      byId('mf-attest-summary').textContent = safeText(metricsStr + att.summary, 2000);
+      byId('cmp-attest-summary').textContent = safeText(metricsStr + att.summary, 2000);
     } else {
       attPill.textContent = '미검증';
       attPill.className = 'pill';
       attDisc.hidden = true;
-      byId('mf-attest-result').textContent = '아직 검증 결과가 없습니다.';
-      byId('mf-attest-summary').textContent = '없음';
+      byId('cmp-attest-result').textContent = '아직 검증 결과가 없습니다.';
+      byId('cmp-attest-summary').textContent = '없음';
     }
 
-    const pubInfo = byId('mf-pub-info');
+    const pubInfo = byId('cmp-pub-info');
     pubInfo.replaceChildren();
     if (job.publication) {
       const p = job.publication;
@@ -1840,8 +2155,8 @@
       pubInfo.append(el('span', '아직 공개되지 않았습니다.', 'quiet'));
     }
 
-    const jobEvents = state.mf.events.filter((e) => e.jobId === job.id).sort((a, b) => b.sequence - a.sequence);
-    renderEntityEvents(byId('mf-events'), jobEvents);
+    const jobEvents = state.compute.events.filter((e) => e.jobId === job.id).sort((a, b) => b.sequence - a.sequence);
+    renderEntityEvents(byId('cmp-events'), jobEvents);
   }
 
   // ---------- COLLAB SESSIONS ----------
@@ -1865,11 +2180,12 @@
   }
 
   function renderCollab() {
-    byId('collab-count-label').textContent = state.collab.sessions.length + '개 세션';
+    const sessions = visibleCollabSessions();
+    byId('collab-count-label').textContent = sessions.length + '개 세션';
     const list = byId('collab-list');
     const existing = new Map(Array.from(list.querySelectorAll('button')).map((b) => [b.dataset.sessionId, b]));
     list.querySelectorAll('.empty').forEach((n) => n.remove());
-    for (const s of state.collab.sessions) {
+    for (const s of sessions) {
       let btn = existing.get(s.id);
       if (!btn) {
         btn = el('button');
@@ -1894,7 +2210,7 @@
       btn.lastChild.lastChild.textContent = safeText(s.provider, 16) + ' · 최대 ' + s.maxParallelWorkers + '워커';
     }
     existing.forEach((b) => b.remove());
-    if (!state.collab.sessions.length) list.append(el('p', '등록된 협업 세션이 없습니다.', 'empty'));
+    if (!sessions.length) list.append(el('p', '등록된 협업 세션이 없습니다.', 'empty'));
 
     const session = state.collab.snapshot?.session || state.collab.sessions.find((s) => s.id === state.collab.selectedId) || null;
     byId('collab-empty').hidden = Boolean(session);
@@ -2026,8 +2342,9 @@
   function renderAll() {
     renderHeader();
     renderOverview();
+    renderProjects();
     renderDelivery();
-    renderModelFactory();
+    renderCompute();
     renderCollab();
     if (state.drawer.open) renderDrawer();
     updateTabTitleAndAlerts();
@@ -2055,18 +2372,33 @@
       let usedSnapshot = false;
       try {
         const snap = await monitorApi('/api/monitor/snapshot', undefined, 20000);
-        if (snap && snap.health && snap.delivery && snap.modelFactory && snap.collab) {
+        const snapCompute = snap?.compute || snap?.modelFactory;
+        if (snap && snap.health && snap.delivery && snapCompute && snap.collab) {
           usedSnapshot = true;
           state.health = snap.health;
+          if (snap.projects) {
+            state.projects = {
+              storageBackend: snap.projects.storageBackend ?? null,
+              list: Array.isArray(snap.projects.projects) ? snap.projects.projects : [],
+              events: Array.isArray(snap.projects.events) ? snap.projects.events : [],
+            };
+          }
+          if (snap.autonomy) {
+            state.autonomy = {
+              storageBackend: snap.autonomy.storageBackend ?? null,
+              triggers: Array.isArray(snap.autonomy.triggers) ? snap.autonomy.triggers : [],
+              events: Array.isArray(snap.autonomy.events) ? snap.autonomy.events : [],
+            };
+          }
           state.delivery = {
             storageBackend: snap.delivery.storageBackend ?? null,
             tasks: Array.isArray(snap.delivery.tasks) ? snap.delivery.tasks : [],
             events: Array.isArray(snap.delivery.events) ? snap.delivery.events : [],
           };
-          state.mf.storageBackend = snap.modelFactory.storageBackend ?? null;
-          state.mf.jobs = Array.isArray(snap.modelFactory.jobs) ? snap.modelFactory.jobs : [];
-          state.mf.events = Array.isArray(snap.modelFactory.events) ? snap.modelFactory.events : [];
-          state.mf.ledger = snap.modelFactory.ledger ?? null;
+          state.compute.storageBackend = snapCompute.storageBackend ?? null;
+          state.compute.jobs = Array.isArray(snapCompute.jobs) ? snapCompute.jobs : [];
+          state.compute.events = Array.isArray(snapCompute.events) ? snapCompute.events : [];
+          state.compute.ledger = snapCompute.ledger ?? null;
           state.collab.storageBackend = snap.collab.storageBackend ?? null;
           state.collab.sessions = Array.isArray(snap.collab.sessions) ? snap.collab.sessions : [];
         }
@@ -2096,20 +2428,26 @@
         }
         for (const [path, apply] of [
           [
+            '/api/projects',
+            (v) => {
+              state.projects = { storageBackend: v.storageBackend ?? null, list: Array.isArray(v.projects) ? v.projects : [], events: Array.isArray(v.events) ? v.events : [] };
+            },
+          ],
+          [
             '/api/delivery/tasks',
             (v) => {
               state.delivery = { storageBackend: v.storageBackend ?? null, tasks: Array.isArray(v.tasks) ? v.tasks : [], events: Array.isArray(v.events) ? v.events : [] };
             },
           ],
           [
-            '/api/model-factory/jobs',
+            '/api/compute/jobs',
             (v) => {
-              state.mf.storageBackend = v.storageBackend ?? null;
-              state.mf.jobs = Array.isArray(v.jobs) ? v.jobs : [];
-              state.mf.events = Array.isArray(v.events) ? v.events : [];
+              state.compute.storageBackend = v.storageBackend ?? null;
+              state.compute.jobs = Array.isArray(v.jobs) ? v.jobs : [];
+              state.compute.events = Array.isArray(v.events) ? v.events : [];
             },
           ],
-          ['/api/model-factory/ledger', (v) => { state.mf.ledger = v; }],
+          ['/api/compute/ledger', (v) => { state.compute.ledger = v; }],
           [
             '/api/collab/sessions',
             (v) => {
@@ -2204,8 +2542,63 @@
   byId('jump-inbox')?.addEventListener('click', () => switchTab('inbox'));
   byId('jump-costs')?.addEventListener('click', () => switchTab('costs'));
   byId('jump-delivery')?.addEventListener('click', () => switchTab('delivery'));
-  byId('jump-mf')?.addEventListener('click', () => switchTab('model-factory'));
+  byId('jump-compute')?.addEventListener('click', () => switchTab('compute'));
   byId('jump-collab')?.addEventListener('click', () => switchTab('collab'));
+  byId('project-filter')?.addEventListener('change', () => {
+    state.projectFilter = byId('project-filter').value || 'all';
+    renderAll();
+  });
+  byId('projects-filters')?.querySelectorAll('button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.projectsStatusFilter = btn.dataset.filter || 'all';
+      byId('projects-filters').querySelectorAll('button').forEach((b) => {
+        b.className = b === btn ? 'filter-btn active' : 'filter-btn';
+      });
+      renderProjects();
+    });
+  });
+  byId('projects-create-toggle')?.addEventListener('click', () => {
+    const p = byId('project-create-panel');
+    if (p) p.hidden = !p.hidden;
+  });
+  byId('project-create-cancel')?.addEventListener('click', () => {
+    const p = byId('project-create-panel');
+    if (p) p.hidden = true;
+  });
+  byId('project-token-dismiss')?.addEventListener('click', clearOneTimeTokenBanner);
+  byId('project-create-form')?.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const id = (byId('proj-id')?.value || '').trim().toLowerCase();
+    const name = (byId('proj-name')?.value || '').trim();
+    const template = byId('proj-template')?.value || 'generic';
+    const budgetUsd = Number(byId('proj-budget')?.value || 0);
+    const repos = (byId('proj-repos')?.value || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const description = (byId('proj-desc')?.value || '').trim();
+    const autoMerge = Boolean(byId('proj-automerge')?.checked);
+    if (!id || !name) {
+      setError('프로젝트 ID와 이름을 입력하세요.');
+      return;
+    }
+    return runMutation(
+      async () => {
+        const created = await monitorApi('/api/projects', {
+          id,
+          name,
+          description,
+          template,
+          budget: { computeBudgetCapMicros: Math.max(0, Math.round(budgetUsd * 1_000_000)) },
+          delivery: { repositories: repos, autoMergeRepositories: autoMerge ? repos : [] },
+        });
+        if (byId('project-create-panel')) byId('project-create-panel').hidden = true;
+        if (byId('proj-id')) byId('proj-id').value = '';
+        if (byId('proj-name')) byId('proj-name').value = '';
+        if (byId('proj-repos')) byId('proj-repos').value = '';
+        if (byId('proj-desc')) byId('proj-desc').value = '';
+        return created;
+      },
+      '새 호스트 프로젝트를 등록했습니다.',
+    );
+  });
 
   byId('monitor-theme-toggle')?.addEventListener('click', () => {
     state.theme = state.theme === 'dark' ? 'light' : 'dark';
@@ -2284,9 +2677,11 @@
     if (kind === 'delivery' && id) {
       selectDelivery(id);
       switchTab('delivery');
-    } else if (kind === 'mf' && id) {
-      selectMfJob(id);
-      switchTab('model-factory');
+    } else if (kind === 'compute' && id) {
+      selectComputeJob(id);
+      switchTab('compute');
+    } else if (kind === 'project') {
+      switchTab('projects');
     } else if (kind === 'collab' && id) {
       void selectCollab(id);
       switchTab('collab');
@@ -2391,78 +2786,78 @@
     }
   });
 
-  // Model Factory filter, search & actions
-  byId('mf-search')?.addEventListener('input', () => {
-    state.mfSearch = byId('mf-search').value || '';
-    renderModelFactory();
+  // Spot Compute filter, search & actions
+  byId('compute-search')?.addEventListener('input', () => {
+    state.computeSearch = byId('compute-search').value || '';
+    renderCompute();
   });
-  byId('mf-filters')?.querySelectorAll('button').forEach((btn) => {
+  byId('compute-filters')?.querySelectorAll('button').forEach((btn) => {
     btn.addEventListener('click', () => {
-      state.mfFilter = btn.dataset.filter || 'all';
-      byId('mf-filters').querySelectorAll('button').forEach((b) => {
+      state.computeFilter = btn.dataset.filter || 'all';
+      byId('compute-filters').querySelectorAll('button').forEach((b) => {
         b.className = b === btn ? 'filter-btn active' : 'filter-btn';
       });
-      renderModelFactory();
+      renderCompute();
     });
   });
-  byId('mf-sweep-btn')?.addEventListener('click', () =>
-    runMutation(() => monitorApi('/api/model-factory/sweep-expired', {}, 60000), 'Model Factory 만료 정리 및 상태 갱신을 완료했습니다.'),
+  byId('compute-sweep-btn')?.addEventListener('click', () =>
+    runMutation(() => monitorApi('/api/compute/sweep-expired', { region: 'ap-northeast-2' }, 60000), 'Spot 컴퓨팅 만료 정리 및 상태 갱신을 완료했습니다.'),
   );
-  byId('mf-btn-wake')?.addEventListener('click', () => {
-    const job = state.mf.jobs.find((j) => j.id === state.selectedMfId);
+  byId('cmp-btn-wake')?.addEventListener('click', () => {
+    const job = state.compute.jobs.find((j) => j.id === state.selectedComputeId);
     if (!job) return;
-    return runMutation(() => monitorApi('/api/model-factory/jobs/' + encodeURIComponent(job.id) + '/wake', {}, 35000), '인스턴스 상태 확인(Wake)을 완료했습니다.');
+    return runMutation(() => monitorApi('/api/compute/jobs/' + encodeURIComponent(job.id) + '/wake', {}, 35000), '인스턴스 상태 확인(Wake)을 완료했습니다.');
   });
-  byId('mf-btn-verifier')?.addEventListener('click', () => {
-    const job = state.mf.jobs.find((j) => j.id === state.selectedMfId);
+  byId('cmp-btn-verifier')?.addEventListener('click', () => {
+    const job = state.compute.jobs.find((j) => j.id === state.selectedComputeId);
     if (!job) return;
-    return runMutation(() => monitorApi('/api/model-factory/jobs/' + encodeURIComponent(job.id) + '/dispatch-verifier', {}, 35000), '독립 검증기(Fargate Spot)를 기동했습니다.');
+    return runMutation(() => monitorApi('/api/compute/jobs/' + encodeURIComponent(job.id) + '/dispatch-verifier', {}, 35000), '독립 검증기(Fargate Spot)를 기동했습니다.');
   });
-  byId('mf-action-form')?.addEventListener('submit', (event) => {
+  byId('cmp-action-form')?.addEventListener('submit', (event) => {
     event.preventDefault();
     const op = event.submitter?.value;
-    const job = state.mf.jobs.find((j) => j.id === state.selectedMfId);
+    const job = state.compute.jobs.find((j) => j.id === state.selectedComputeId);
     if (!job || !op) return;
-    const reason = byId('mf-reason').value.trim();
+    const reason = byId('cmp-reason').value.trim();
     if (!reason) {
       setError('결정 사유를 입력하세요.');
-      byId('mf-reason').focus();
+      byId('cmp-reason').focus();
       return;
     }
     const id = encodeURIComponent(job.id);
-    if (op === 'approve_training') {
+    if (op === 'approve_launch') {
       return runMutation(
         async () => {
-          const res = await monitorApi('/api/model-factory/jobs/' + id + '/approve-training', { approvalFingerprint: job.approvalFingerprint, reason }, 35000);
-          byId('mf-reason').value = '';
+          const res = await monitorApi('/api/compute/jobs/' + id + '/approve', { approvalFingerprint: job.approvalFingerprint, reason }, 35000);
+          byId('cmp-reason').value = '';
           return res;
         },
-        'Model Factory 학습을 승인했습니다.',
+        'Spot 컴퓨팅 작업 기동을 승인했습니다.',
       );
     } else if (op === 'cancel') {
       return runMutation(
         async () => {
-          const res = await monitorApi('/api/model-factory/jobs/' + id + '/cancel', { reason }, 35000);
-          byId('mf-reason').value = '';
+          const res = await monitorApi('/api/compute/jobs/' + id + '/cancel', { reason }, 35000);
+          byId('cmp-reason').value = '';
           return res;
         },
-        'Model Factory 작업을 중단했습니다.',
+        'Spot 컴퓨팅 작업을 중단했습니다.',
       );
     } else if (op === 'approve_release' || op === 'reject_release') {
-      const durationMinutes = Number(byId('mf-duration-min').value);
+      const durationMinutes = Number(byId('cmp-duration-min').value);
       if (!Number.isFinite(durationMinutes) || durationMinutes < 0) {
         setError('검토 소요 시간(분)을 올바르게 입력하세요.');
         return;
       }
       return runMutation(
         async () => {
-          const res = await monitorApi('/api/model-factory/jobs/' + id + '/approve-release', {
+          const res = await monitorApi('/api/compute/jobs/' + id + '/approve-release', {
             decision: op === 'approve_release' ? 'approve' : 'reject',
-            openedRawArtifacts: Boolean(byId('mf-opened-raw').checked),
+            openedRawArtifacts: Boolean(byId('cmp-opened-raw').checked),
             durationMinutes,
             reason,
           }, 60000);
-          byId('mf-reason').value = '';
+          byId('cmp-reason').value = '';
           return res;
         },
         op === 'approve_release' ? '산출물 공개를 승인했습니다.' : '산출물 공개를 반려했습니다.',
@@ -2523,11 +2918,11 @@
       const targetSearch =
         state.activeTab === 'delivery'
           ? byId('delivery-search')
-          : state.activeTab === 'model-factory'
-            ? byId('mf-search')
+          : state.activeTab === 'compute'
+            ? byId('compute-search')
             : (switchTab('overview'), byId('events-search'));
       targetSearch?.focus();
-    } else if (event.key >= '1' && event.key <= '6') {
+    } else if (event.key >= '1' && event.key <= '7') {
       const tab = TAB_ORDER[Number(event.key) - 1];
       if (tab) switchTab(tab);
     }
@@ -2552,7 +2947,7 @@
     refresh,
     switchTab,
     selectDelivery,
-    selectMfJob,
+    selectComputeJob,
     selectCollab,
     openDrawer,
     closeDrawer,

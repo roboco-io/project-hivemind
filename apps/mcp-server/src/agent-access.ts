@@ -56,10 +56,12 @@ export function registerAgentCredentialTools(server: McpServer, options: AgentCr
       title: 'HIVEMIND 최소 권한 AWS 자격 증명 발급',
       description:
         '정해진 목적(purpose)에 필요한 권한만 가진 단기 AWS 자격 증명을 Control Plane에서 받아 이 컴퓨터의 자격 증명 파일에 씁니다. ' +
-        '목적은 spot-placement-read(스팟 배치 점수·가격 조회), model-inputs-upload(models/<modelId>/inputs/ 업로드), model-artifacts-read(models/<modelId>/runs/ 읽기)입니다. ' +
+        '목적은 spot-placement-read(스팟 배치 점수·가격 조회), project-inputs-upload(projects/<projectId>/<workloadId>/inputs/ 업로드), project-artifacts-read(projects/<projectId>/<workloadId>/runs/ 읽기), model-inputs-upload, model-artifacts-read입니다. ' +
         '결과의 credentialsFile과 profile을 AWS_SHARED_CREDENTIALS_FILE, AWS_PROFILE로 지정해 AWS CLI를 실행하세요. 비밀 키는 결과에 넣지 않습니다. 만료되면 다시 호출합니다.',
       inputSchema: z.strictObject({
-        purpose: z.enum(['spot-placement-read', 'model-inputs-upload', 'model-artifacts-read']),
+        purpose: z.enum(['spot-placement-read', 'project-inputs-upload', 'project-artifacts-read', 'model-inputs-upload', 'model-artifacts-read']),
+        projectId: z.string().regex(/^[a-z0-9][a-z0-9-]{1,48}$/).optional(),
+        workloadId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/).optional(),
         modelId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/).optional(),
         durationSeconds: z.number().int().min(60).max(900).optional(),
       }),
@@ -93,7 +95,8 @@ export function registerAgentCredentialTools(server: McpServer, options: AgentCr
       if (!credentials || typeof credentials.accessKeyId !== 'string' || !/^[a-z]{2}-[a-z]+-\d+$/.test(region)) {
         return { content: [{ type: 'text', text: TOOL_ERROR }], isError: true };
       }
-      const profile = safeName(`hivemind-${input.purpose}${input.modelId ? `-${input.modelId}` : ''}`);
+      const targetName = input.workloadId ?? input.modelId;
+      const profile = safeName(`hivemind-${input.purpose}${input.projectId ? `-${input.projectId}` : ''}${targetName ? `-${targetName}` : ''}`);
       let credentialsFile: string;
       try {
         credentialsFile = writeCredentialFile(

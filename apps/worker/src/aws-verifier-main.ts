@@ -2,7 +2,7 @@ import { controlFetch } from './control-fetch.js';
 import { createAwsS3ArtifactsPort } from '../../../packages/adapters/src/aws-s3-artifacts.js';
 import { createEcsTaskCredentialsProvider } from '../../../packages/adapters/src/aws-ecs-metadata-creds.js';
 import { runAwsVerifierOnce } from './aws-verifier-runtime.js';
-import { decodeModelReleaseVerificationSpec, runModelReleaseVerification } from './aws-mf-verifier-runtime.js';
+import { decodeComputeReleaseVerificationSpec, runComputeReleaseVerification } from './aws-compute-verifier-runtime.js';
 
 function requiredEnv(name: string): string {
   const value = process.env[name]?.trim();
@@ -10,23 +10,22 @@ function requiredEnv(name: string): string {
   return value;
 }
 
-/** Model Factory release verification: selected when the Control Plane passes a verification spec. */
-async function runModelReleaseVerifierMode(specBase64: string): Promise<void> {
+/** Independent Compute release verification: selected when the Control Plane passes a verification spec. */
+async function runComputeReleaseVerifierMode(specBase64: string): Promise<void> {
   const region = process.env.HIVEMIND_AWS_REGION ?? 'ap-northeast-2';
   const bucket = requiredEnv('HIVEMIND_ARTIFACTS_BUCKET');
   const controlApiUrl = requiredEnv('HIVEMIND_CONTROL_API_URL');
   const workerToken = requiredEnv('HIVEMIND_WORKER_TOKEN');
-  const spec = decodeModelReleaseVerificationSpec(specBase64);
+  const spec = decodeComputeReleaseVerificationSpec(specBase64);
   const s3 = createAwsS3ArtifactsPort({ region, allowedRegions: [region], bucket, credentials: createEcsTaskCredentialsProvider() });
-  const attestation = await runModelReleaseVerification({
+  const attestation = await runComputeReleaseVerification({
     ...spec,
     s3,
     workRoot: process.env.HIVEMIND_WORK_ROOT?.trim() || undefined,
     timeoutMs: Number(process.env.HIVEMIND_TEST_TIMEOUT_MS ?? '900000'),
   });
-  // The S3 copy is the verifier's own record; the Control Plane decides from the API call below.
-  await s3.putObject(`attestations/model-factory/${spec.jobId}.json`, Buffer.from(JSON.stringify(attestation), 'utf8'), 'application/json');
-  const res = await controlFetch(new URL(`/api/model-factory/jobs/${encodeURIComponent(spec.jobId)}/verifier-attestation`, controlApiUrl), {
+  await s3.putObject(`attestations/compute/${spec.jobId}.json`, Buffer.from(JSON.stringify(attestation), 'utf8'), 'application/json');
+  const res = await controlFetch(new URL(`/api/compute/jobs/${encodeURIComponent(spec.jobId)}/verifier-attestation`, controlApiUrl), {
     method: 'POST',
     redirect: 'error',
     headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
@@ -36,7 +35,7 @@ async function runModelReleaseVerifierMode(specBase64: string): Promise<void> {
   if (!res.ok) throw new Error(`Control plane verifier-attestation submission failed with HTTP ${res.status}`);
   console.log(
     JSON.stringify({
-      event: 'hivemind.aws_mf_verifier.completed',
+      event: 'hivemind.aws_compute_verifier.completed',
       jobId: spec.jobId,
       releaseCheckPassed: attestation.releaseCheckPassed,
       manifestDigest: attestation.manifestDigest,
@@ -45,9 +44,9 @@ async function runModelReleaseVerifierMode(specBase64: string): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const mfSpec = process.env.HIVEMIND_MF_VERIFY_SPEC_B64?.trim();
-  if (mfSpec) {
-    await runModelReleaseVerifierMode(mfSpec);
+  const computeSpec = (process.env.HIVEMIND_COMPUTE_VERIFY_SPEC_B64 ?? process.env.HIVEMIND_MF_VERIFY_SPEC_B64)?.trim();
+  if (computeSpec) {
+    await runComputeReleaseVerifierMode(computeSpec);
     return;
   }
   const region = process.env.HIVEMIND_AWS_REGION ?? 'ap-northeast-2';

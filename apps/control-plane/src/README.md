@@ -21,6 +21,9 @@
 | `GET /health`, `GET /favicon.ico` | 없음 | 항상 |
 | `GET /`, `/app.js`, `/tool-audit.js`, `/charts.js`, `/monitor.js`, `/styles.css`, `/brand/hivemind-logo.png`, `/brand/hivemind-bee.png` | 없음 | 항상 |
 | `GET /api/capabilities`, `GET /api/state`, `GET /api/monitor/snapshot` | 운영자 토큰 | 항상 |
+| `GET /api/projects`, `GET /api/projects/templates`, `POST /api/projects`, `GET/PATCH /api/projects/:id`, `POST /api/projects/:id/tokens`, `DELETE /api/projects/:id/tokens/:tokenId`, `GET /api/projects/:id/ledger` | 운영자 토큰 | 항상 |
+| `GET /api/projects/me` | 운영자·프로젝트 에이전트 토큰 | 항상 |
+| `GET/POST /api/compute/jobs`, `GET /api/compute/ledger`, `GET /api/compute/jobs/:id`, `POST /api/compute/jobs/:id/{approve,wake,receipt,verify-release,dispatch-verifier,verifier-attestation,approve-release,publish-release,cancel}`, `POST /api/compute/sweep-expired` | 운영자·프로젝트 에이전트·워커(검증 서명) | 항상 |
 | `POST /api/tasks`, `POST /api/tasks/:id/decision`, `POST /api/tasks/:id/cancel` | 운영자 토큰 | 항상 |
 | `POST /api/cloudflare/tasks`, `POST /api/cloudflare/tasks/:id/decision`, `POST /api/cloudflare/tasks/:id/cancel` | 운영자 토큰 | `options.cloudflare`가 있을 때 |
 | `POST /api/cloudflare/workflows`, `GET /api/cloudflare/workflows`, `POST /api/cloudflare/workflows/:id/approve`, `GET /api/cloudflare/workflows/:id`, `GET /api/cloudflare/workflows/:id/result` | 운영자 토큰 | `options.workflows`가 있을 때 |

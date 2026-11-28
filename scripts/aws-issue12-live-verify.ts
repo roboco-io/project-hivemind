@@ -5,12 +5,12 @@ import type { AwsEcsCredentials } from '../packages/adapters/src/aws-ecs-driver.
 import { createAwsS3ArtifactsPort } from '../packages/adapters/src/aws-s3-artifacts.js';
 import type { DeliveryTask } from '../packages/contracts/src/delivery.js';
 import type {
-  ModelArtifactFile,
-  ModelArtifactReceipt,
-  ModelFactoryJob,
-  ModelFactoryLedgerSummary,
-} from '../packages/contracts/src/model-factory.js';
-import { computeModelManifestDigest } from '../packages/core/src/model-factory.js';
+  ComputeArtifactFile,
+  ComputeArtifactReceipt,
+  ComputeJob,
+  ComputeLedgerSummary,
+} from '../packages/contracts/src/compute.js';
+import { computeArtifactManifestDigest } from '../packages/core/src/compute.js';
 import { openSsmTunnel } from './lib/aws-live.js';
 
 function awsJson(profile: string, region: string, args: string[]): unknown {
@@ -151,9 +151,9 @@ async function main(): Promise<void> {
 
     // 2. Verify Part B Live through deployed ControlPlaneService -> real us-east-2 EC2 Spot -> real Lambda TTL Guard -> wake + ledger settlement!
     const prefix = `models/smf-live-proof/${Date.now()}`;
-    const mfJob = await apiJson<ModelFactoryJob>(`${baseUrl}/api/model-factory/jobs`, operatorToken, {
+    const mfJob = await apiJson<ComputeJob>(`${baseUrl}/api/compute/jobs`, operatorToken, {
       title: 'Issue #12 Live E2E — ControlPlane EC2 Spot + Lambda TTL Guard + S3 Receipt',
-      modelId: 'smf-live-canary',
+      workloadId: 'smf-live-canary',
       repository: 'roboco-io/silicon-model-factory',
       baseCommit: 'a'.repeat(40),
       compute: {
@@ -176,15 +176,15 @@ async function main(): Promise<void> {
     launchedJobId = mfJob.id;
 
     // Approve training -> Seoul ControlPlaneService itself reserves budget & launches us-east-2 Spot instance!
-    const launched = await apiJson<ModelFactoryJob>(
-      `${baseUrl}/api/model-factory/jobs/${encodeURIComponent(mfJob.id)}/approve-training`,
+    const launched = await apiJson<ComputeJob>(
+      `${baseUrl}/api/compute/jobs/${encodeURIComponent(mfJob.id)}/approve`,
       operatorToken,
       {
         approvalFingerprint: mfJob.approvalFingerprint,
         reason: 'Issue #12 live E2E verification through deployed Seoul ControlPlaneService',
       },
     );
-    if (launched.status !== 'training_running' || !launched.instance?.instanceId) {
+    if (launched.status !== 'running' || !launched.instance?.instanceId) {
       throw new Error(`ControlPlaneService failed to launch Spot instance: ${JSON.stringify(launched)}`);
     }
 
@@ -192,9 +192,9 @@ async function main(): Promise<void> {
     const modelBytes = Buffer.from('{"model":"smf-live-canary","step":100,"loss":1.12}\n', 'utf8');
     const modelSha = createHash('sha256').update(modelBytes).digest('hex');
     await s3.putObject(`${prefix}/model.json`, modelBytes, 'application/json');
-    const files: ModelArtifactFile[] = [{ path: 'model.json', sha256: modelSha, sizeBytes: modelBytes.byteLength }];
-    const manifestDigest = computeModelManifestDigest(files);
-    const receipt: ModelArtifactReceipt = {
+    const files: ComputeArtifactFile[] = [{ path: 'model.json', sha256: modelSha, sizeBytes: modelBytes.byteLength }];
+    const manifestDigest = computeArtifactManifestDigest(files);
+    const receipt: ComputeArtifactReceipt = {
       version: 1,
       jobId: mfJob.id,
       s3Bucket: bucket,
@@ -242,13 +242,13 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ phase: 'lambda_ttl_guard_invoked', lambdaResult }));
 
     // Trigger wake on deployed ControlPlaneService -> picks up S3 receipt, detects terminated instance, settles cost!
-    const woken = await apiJson<ModelFactoryJob>(
-      `${baseUrl}/api/model-factory/jobs/${encodeURIComponent(mfJob.id)}/wake`,
+    const woken = await apiJson<ComputeJob>(
+      `${baseUrl}/api/compute/jobs/${encodeURIComponent(mfJob.id)}/wake`,
       operatorToken,
       {},
     );
-    const attested = await apiJson<ModelFactoryJob>(
-      `${baseUrl}/api/model-factory/jobs/${encodeURIComponent(mfJob.id)}/verify-release`,
+    const attested = await apiJson<ComputeJob>(
+      `${baseUrl}/api/compute/jobs/${encodeURIComponent(mfJob.id)}/verify-release`,
       operatorToken,
       {
         manifestDigest,
@@ -258,8 +258,8 @@ async function main(): Promise<void> {
         verifiedAt: new Date().toISOString(),
       },
     );
-    const released = await apiJson<ModelFactoryJob>(
-      `${baseUrl}/api/model-factory/jobs/${encodeURIComponent(mfJob.id)}/approve-release`,
+    const released = await apiJson<ComputeJob>(
+      `${baseUrl}/api/compute/jobs/${encodeURIComponent(mfJob.id)}/approve-release`,
       operatorToken,
       {
         decision: 'approve',
@@ -268,7 +268,7 @@ async function main(): Promise<void> {
         reason: 'Issue #12 live Control Plane + Lambda TTL Guard + S3 receipt + release gate E2E verified',
       },
     );
-    const ledger = await apiJson<ModelFactoryLedgerSummary>(`${baseUrl}/api/model-factory/ledger`, operatorToken);
+    const ledger = await apiJson<ComputeLedgerSummary>(`${baseUrl}/api/compute/ledger`, operatorToken);
 
     console.log(
       JSON.stringify(
@@ -309,7 +309,7 @@ async function main(): Promise<void> {
     );
   } catch (error) {
     if (launchedJobId) {
-      await apiJson(`${baseUrl}/api/model-factory/jobs/${encodeURIComponent(launchedJobId)}/cancel`, operatorToken, {
+      await apiJson(`${baseUrl}/api/compute/jobs/${encodeURIComponent(launchedJobId)}/cancel`, operatorToken, {
         reason: 'Cleanup after verification error',
       }).catch(() => undefined);
     }

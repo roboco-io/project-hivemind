@@ -8,7 +8,8 @@ import {registerAutonomousOperatorTools} from './autonomous.js';
 import {registerTeamOperatorTools} from './team.js';
 import {registerToolAuditTool} from './autonomous-tool-audit.js';
 import {registerDeliveryOperatorTools} from './delivery.js';
-import {registerModelFactoryOperatorTools} from './model-factory.js';
+import {registerComputeOperatorTools} from './compute.js';
+import {registerProjectOperatorTools} from './projects.js';
 import {registerCollabOperatorTools} from './collab.js';
 import {registerAwsStatusTool} from './aws-status.js';
 import { registerAgentCredentialTools } from './agent-access.js';
@@ -17,10 +18,12 @@ import {ControlPlanePower,loadControlPlanePowerConfig,registerControlPlanePowerT
 import { join } from 'node:path';
 
 /**
- * `default` (and its alias `aws`) exposes the AWS single path: status + delivery + model factory + collab.
+ * `default` (and its alias `aws`) exposes the full multi-project host AWS single path:
+ * status + projects + delivery + compute + collab + credentials + autonomy.
+ * `project-agent` (and alias `agent`) runs with a project-scoped agent token.
  * `legacy` is the retired Cloudflare tool set, kept only until the archive is removed (ADR-0012).
  */
-export type McpProfile = 'default' | 'aws' | 'delivery' | 'model-factory' | 'collab' | 'legacy' | 'agent';
+export type McpProfile = 'default' | 'aws' | 'delivery' | 'compute' | 'collab' | 'legacy' | 'agent' | 'project-agent';
 export interface McpSettings { apiUrl: string; operatorToken: string; profile?: McpProfile; collabLocalAuthFile?: string; controlPlanePower?: ControlPlanePowerConfig }
 export interface HivemindMcpOptions extends McpSettings { fetchImpl?: typeof fetch; powerSystem?: PowerSystem; /** Where hivemind_agent_credentials writes credential files. */ agentCredentialsDir?: string }
 const configurationError = () => new Error('Invalid HIVEMIND MCP configuration.');
@@ -53,19 +56,19 @@ export function loadMcpSettings(env: NodeJS.ProcessEnv = process.env): McpSettin
     // Optional, non-secret: how to reach the Control Plane through an SSM tunnel. Written by `npm run bootstrap`.
     const powerFile = env.HIVEMIND_CONTROL_PLANE_CONFIG_FILE ?? (env.HOME ? join(env.HOME, '.hivemind', 'aws-control-plane.json') : undefined);
     const controlPlanePower = powerFile ? loadControlPlanePowerConfig(powerFile) : undefined;
-    // The agent profile runs with the Model Factory agent token only. Mixing it with an operator token is refused.
+    // The agent / project-agent profile runs with a scoped agent token only. Mixing it with an operator token is refused.
     if (env.HIVEMIND_AGENT_TOKEN_FILE !== undefined) {
-      if (env.HIVEMIND_MCP_PROFILE !== 'agent' || env.HIVEMIND_OPERATOR_TOKEN !== undefined || env.HIVEMIND_OPERATOR_TOKEN_FILE !== undefined) throw configurationError();
+      if ((env.HIVEMIND_MCP_PROFILE !== 'agent' && env.HIVEMIND_MCP_PROFILE !== 'project-agent') || env.HIVEMIND_OPERATOR_TOKEN !== undefined || env.HIVEMIND_OPERATOR_TOKEN_FILE !== undefined) throw configurationError();
       const apiUrl = env.HIVEMIND_API_URL ?? 'http://127.0.0.1:4310';
-      return { ...validateSettings({ apiUrl, operatorToken: readTokenFile(env.HIVEMIND_AGENT_TOKEN_FILE, 'AGENT_TOKEN') }), profile: 'agent', ...(controlPlanePower ? { controlPlanePower } : {}) };
+      return { ...validateSettings({ apiUrl, operatorToken: readTokenFile(env.HIVEMIND_AGENT_TOKEN_FILE, 'AGENT_TOKEN') }), profile: env.HIVEMIND_MCP_PROFILE, ...(controlPlanePower ? { controlPlanePower } : {}) };
     }
-    if (env.HIVEMIND_MCP_PROFILE === 'agent') throw configurationError();
+    if (env.HIVEMIND_MCP_PROFILE === 'agent' || env.HIVEMIND_MCP_PROFILE === 'project-agent') throw configurationError();
     if (env.HIVEMIND_OPERATOR_TOKEN !== undefined && env.HIVEMIND_OPERATOR_TOKEN_FILE !== undefined) throw configurationError();
     let operatorToken = env.HIVEMIND_OPERATOR_TOKEN;
     if (env.HIVEMIND_OPERATOR_TOKEN_FILE !== undefined) operatorToken = readTokenFile(env.HIVEMIND_OPERATOR_TOKEN_FILE, 'OPERATOR_TOKEN');
     const apiUrl = env.HIVEMIND_API_URL ?? 'http://127.0.0.1:4310';
     const rawProfile = env.HIVEMIND_MCP_PROFILE;
-    if (rawProfile !== undefined && rawProfile !== 'default' && rawProfile !== 'aws' && rawProfile !== 'delivery' && rawProfile !== 'model-factory' && rawProfile !== 'collab' && rawProfile !== 'legacy') throw configurationError();
+    if (rawProfile !== undefined && rawProfile !== 'default' && rawProfile !== 'aws' && rawProfile !== 'delivery' && rawProfile !== 'compute' && rawProfile !== 'collab' && rawProfile !== 'legacy') throw configurationError();
     const collabLocalAuthFile = env.HIVEMIND_COLLAB_LOCAL_AUTH_FILE;
     if (collabLocalAuthFile !== undefined && (collabLocalAuthFile.length === 0 || collabLocalAuthFile.length > 4096 || /[\0\r\n]/.test(collabLocalAuthFile))) throw configurationError();
     return { ...validateSettings({ apiUrl, operatorToken: operatorToken ?? developmentToken }), ...(rawProfile ? { profile: rawProfile } : {}), ...(collabLocalAuthFile ? { collabLocalAuthFile } : {}), ...(controlPlanePower ? { controlPlanePower } : {}) };
@@ -116,11 +119,9 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
     registerCollabOperatorTools(server, { ...settings, ...(options.collabLocalAuthFile ? { localAuthFile: options.collabLocalAuthFile } : {}), fetchImpl, redact });
     return server;
   }
-  if (options.profile === 'agent') {
-    // Model Factory agent: reads, drafts, training approval, wake, verifier, cancel and scoped AWS credentials.
-    // Release approval and publication stay with the operator and are not registered here.
-    // With the Control Plane settings file the server keeps the SSM tunnel open, as the MCP server process
-    // and with that file's AWS profile, but never changes the service's desired count.
+  if (options.profile === 'agent' || options.profile === 'project-agent') {
+    // Project-scoped agent: self-inspection, compute drafts/launch/wake/verifier/cancel, scoped AWS credentials,
+    // and read-only autonomy/delivery within its own project. Release approval and publication remain operator-only.
     let agentFetch = fetchImpl;
     if (options.controlPlanePower) {
       const tunnel = new ControlPlanePower({ ...settings, fetchImpl, config: options.controlPlanePower, tunnelOnly: true, ...(options.powerSystem ? { system: options.powerSystem } : {}) });
@@ -138,23 +139,21 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
       server.close = async () => { await tunnel.shutdown(); await closeServer(); };
     }
     registerAwsStatusTool(server, { ...settings, fetchImpl: agentFetch, redact, scope: 'agent' });
-    registerModelFactoryOperatorTools(server, { ...settings, fetchImpl: agentFetch, redact, agent: true });
+    registerProjectOperatorTools(server, { ...settings, fetchImpl: agentFetch, redact, agent: true });
+    registerComputeOperatorTools(server, { ...settings, fetchImpl: agentFetch, redact, agent: true });
     registerAgentCredentialTools(server, { ...settings, fetchImpl: agentFetch, ...(options.agentCredentialsDir ? { credentialsDir: options.agentCredentialsDir } : {}) });
     registerAutonomyTools(server, { ...settings, fetchImpl: agentFetch, readOnly: true });
     registerDeliveryOperatorTools(server, { ...settings, fetchImpl: agentFetch, redact, readOnly: true });
     return server;
   }
-  if (options.profile === 'model-factory') {
+  if (options.profile === 'compute') {
     registerDeliveryOperatorTools(server, { ...settings, fetchImpl, redact });
-    registerModelFactoryOperatorTools(server, { ...settings, fetchImpl, redact });
+    registerComputeOperatorTools(server, { ...settings, fetchImpl, redact });
     return server;
   }
   if (options.profile !== 'legacy') {
-    // Default profile: the whole AWS single path in one server.
+    // Default profile: the whole multi-project host AWS single path in one server.
     const power = new ControlPlanePower({ ...settings, fetchImpl, ...(options.controlPlanePower ? { config: options.controlPlanePower } : {}), ...(options.powerSystem ? { system: options.powerSystem } : {}) });
-    // Operator tool calls restart the idle period. The power module's own checks use the raw fetch and do not.
-    // In the always-on mode a Spot replacement or a dropped tunnel closes the local port. One failed
-    // connection reopens the tunnel to the current task and retries the call once.
     const activeFetch: typeof fetch = async (input, init) => {
       power.markActivity();
       try {
@@ -168,8 +167,9 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
     };
     registerAwsStatusTool(server, { ...settings, fetchImpl: activeFetch, redact, power });
     registerControlPlanePowerTools(server, power);
+    registerProjectOperatorTools(server, { ...settings, fetchImpl: activeFetch, redact });
     registerDeliveryOperatorTools(server, { ...settings, fetchImpl: activeFetch, redact });
-    registerModelFactoryOperatorTools(server, { ...settings, fetchImpl: activeFetch, redact });
+    registerComputeOperatorTools(server, { ...settings, fetchImpl: activeFetch, redact });
     registerCollabOperatorTools(server, { ...settings, ...(options.collabLocalAuthFile ? { localAuthFile: options.collabLocalAuthFile } : {}), fetchImpl: activeFetch, redact });
     registerAgentCredentialTools(server, { ...settings, fetchImpl: activeFetch, ...(options.agentCredentialsDir ? { credentialsDir: options.agentCredentialsDir } : {}) });
     registerAutonomyTools(server, { ...settings, fetchImpl: activeFetch });

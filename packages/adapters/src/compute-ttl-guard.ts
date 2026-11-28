@@ -1,8 +1,8 @@
 import {
   settleGuardTermination,
   type GuardSettlementResult,
-} from '../../core/src/model-factory-guard-settlement.js';
-import type { ModelFactoryStore } from '../../core/src/model-factory.js';
+} from '../../core/src/compute-guard-settlement.js';
+import type { ComputeStore } from '../../core/src/compute.js';
 import type { Ec2SpotTrainerPort } from './aws-ec2-spot-trainer.js';
 
 export interface TtlGuardRegionSummary {
@@ -10,15 +10,13 @@ export interface TtlGuardRegionSummary {
   checked: number;
   terminated: { instanceId: string; jobId: string | null; expiresAt: string | null }[];
   settlements: GuardSettlementResult[];
-  /** Short error texts. A failure in one region or one settlement never stops the others. */
   errors: string[];
 }
 
 export interface TtlGuardRunOptions {
   regions: string[];
   ec2: Pick<Ec2SpotTrainerPort, 'sweepExpiredSpotInstances'>;
-  /** Ledger to settle in. When absent, the guard only terminates instances (the pre-DSQL behavior). */
-  store?: ModelFactoryStore;
+  store?: ComputeStore;
   now?: () => number;
 }
 
@@ -27,13 +25,10 @@ function shortError(error: unknown): string {
 }
 
 /**
- * One TTL Guard run: in every region, terminate managed EC2 instances that are past their expiry tag, then
- * settle each terminated instance's job in the ledger.
- *
- * Termination comes first and never depends on the ledger. When the ledger is unreachable the instances
- * are still terminated, and the settlement error is reported in the summary.
+ * One TTL Guard run: in every region, terminate managed EC2 Spot instances that are past their expiry tag,
+ * then settle each terminated instance's compute job in the ledger.
  */
-export async function runModelFactoryTtlGuard(options: TtlGuardRunOptions): Promise<TtlGuardRegionSummary[]> {
+export async function runComputeTtlGuard(options: TtlGuardRunOptions): Promise<TtlGuardRegionSummary[]> {
   const now = options.now ?? Date.now;
   const summaries: TtlGuardRegionSummary[] = [];
   for (const region of options.regions) {

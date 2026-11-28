@@ -1,24 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  ModelFactoryOrchestrator,
-  composeTrainingUserData,
+  ComputeOrchestrator,
+  composeComputeUserData,
   stagingPrefixBase,
-} from '../apps/control-plane/src/model-factory-orchestrator.js';
+} from '../apps/control-plane/src/compute-orchestrator.js';
 import { createAwsS3ArtifactsPort, type S3ObjectPort } from '../packages/adapters/src/aws-s3-artifacts.js';
 import type { Ec2SpotTrainerPort } from '../packages/adapters/src/aws-ec2-spot-trainer.js';
-import type { CreateModelFactoryJob, ModelArtifactReceipt } from '../packages/contracts/src/model-factory.js';
-import { ModelFactoryStore, computeModelManifestDigest } from '../packages/core/src/model-factory.js';
+import type { CreateComputeJob, ComputeArtifactReceipt } from '../packages/contracts/src/compute.js';
+import { ComputeStore, computeArtifactManifestDigest } from '../packages/core/src/compute.js';
 
 const ROLE_ID = 'AROAEXAMPLEROLEID0001';
 const PREFIX = 'models/smf-tiny-v1/runs/run-staging';
 const INSTANCE = 'i-0123456789abcdef0';
 const STAGING = `staging/${ROLE_ID}:${INSTANCE}`;
 
-function jobInput(): CreateModelFactoryJob {
+function jobInput(): CreateComputeJob {
   return {
     title: 'Staging',
-    modelId: 'smf-tiny-v1',
+    workloadId: 'smf-tiny-v1',
     repository: 'roboco-io/silicon-model-factory',
     baseCommit: 'a'.repeat(40),
     compute: {
@@ -36,18 +36,18 @@ function jobInput(): CreateModelFactoryJob {
 }
 
 test('with a staging role the bootstrap writes to staging/<role id>:<instance id> and keeps the job prefix aside', async () => {
-  const store = new ModelFactoryStore(':memory:', { globalBudgetCapMicros: 1_000_000 });
+  const store = new ComputeStore(':memory:', { globalBudgetCapMicros: 1_000_000 });
   const job = await store.create(jobInput());
-  const script = composeTrainingUserData(job, { artifactsBucket: 'b-bucket', stagingRoleId: ROLE_ID })!;
+  const script = composeComputeUserData(job, { artifactsBucket: 'b-bucket', stagingRoleId: ROLE_ID })!;
   assert.match(script, /^#!\/bin\/bash\n# --- HIVEMIND pinned job metadata/);
   assert.match(script, new RegExp(`export HIVEMIND_JOB_ARTIFACT_PREFIX='${PREFIX}'`));
   assert.match(script, /X-aws-ec2-metadata-token-ttl-seconds: 60/);
   assert.match(script, /export HIVEMIND_ARTIFACT_PREFIX="staging\/AROAEXAMPLEROLEID0001:\$HIVEMIND_INSTANCE_ID"/);
   assert.doesNotMatch(script, new RegExp(`export HIVEMIND_ARTIFACT_PREFIX='${PREFIX}'`));
   assert.ok(script.indexOf('unset HIVEMIND_IMDS_TOKEN') < script.indexOf('echo train'));
-  assert.throws(() => composeTrainingUserData(job, { stagingRoleId: "AROA'; rm -rf /" }), /Invalid training instance role ID/);
+  assert.throws(() => composeComputeUserData(job, { stagingRoleId: "AROA'; rm -rf /" }), /Invalid compute instance role ID/);
   // Without a staging role the old behaviour stays.
-  assert.match(composeTrainingUserData(job, {})!, new RegExp(`export HIVEMIND_ARTIFACT_PREFIX='${PREFIX}'`));
+  assert.match(composeComputeUserData(job, {})!, new RegExp(`export HIVEMIND_ARTIFACT_PREFIX='${PREFIX}'`));
   assert.equal(stagingPrefixBase(ROLE_ID), `staging/${ROLE_ID}:`);
 });
 
@@ -95,19 +95,19 @@ function ec2(state: { value: 'running' | 'stopped' }): Ec2SpotTrainerPort {
   };
 }
 
-function receiptFor(jobId: string, prefix: string, body: Uint8Array): ModelArtifactReceipt {
+function receiptFor(jobId: string, prefix: string, body: Uint8Array): ComputeArtifactReceipt {
   const files = [{ path: 'model/weights.bin', sha256: 'e'.repeat(64), sizeBytes: body.byteLength }];
-  return { version: 1, jobId, s3Bucket: 'b-bucket', s3Prefix: prefix, manifestDigest: computeModelManifestDigest(files), files, recordedAt: '2026-11-27T10:00:00Z' };
+  return { version: 1, jobId, s3Bucket: 'b-bucket', s3Prefix: prefix, manifestDigest: computeArtifactManifestDigest(files), files, recordedAt: '2026-11-27T10:00:00Z' };
 }
 
 async function launched(objects: Map<string, Uint8Array>) {
-  const store = new ModelFactoryStore(':memory:', { globalBudgetCapMicros: 1_000_000 });
+  const store = new ComputeStore(':memory:', { globalBudgetCapMicros: 1_000_000 });
   const s3 = memoryS3(objects);
   const state = { value: 'running' as 'running' | 'stopped' };
-  const orchestrator = new ModelFactoryOrchestrator({ store, ec2: ec2(state), s3: s3.port, trainingRoleId: ROLE_ID, artifactsBucket: 'b-bucket' });
+  const orchestrator = new ComputeOrchestrator({ store, ec2: ec2(state), s3: s3.port, trainingRoleId: ROLE_ID, artifactsBucket: 'b-bucket' });
   const job = await store.create(jobInput());
-  const running = await orchestrator.approveAndLaunchTraining(job.id, job.approvalFingerprint, 'ok');
-  assert.equal(running.status, 'training_running');
+  const running = await orchestrator.approveAndLaunch(job.id, job.approvalFingerprint, 'ok');
+  assert.equal(running.status, 'running');
   return { store, orchestrator, job: running, copies: s3.copies, state };
 }
 
@@ -122,7 +122,7 @@ test('the Control Plane copies a staged receipt from the instance folder to the 
   assert.equal(woken.status, 'evaluating');
   assert.equal(woken.receipt?.s3Prefix, PREFIX);
   assert.deepEqual(copies, [[`${STAGING}/model/weights.bin`, `${PREFIX}/model/weights.bin`]]);
-  const promoted = JSON.parse(new TextDecoder().decode(objects.get(`${PREFIX}/receipt.json`)!)) as ModelArtifactReceipt;
+  const promoted = JSON.parse(new TextDecoder().decode(objects.get(`${PREFIX}/receipt.json`)!)) as ComputeArtifactReceipt;
   assert.equal(promoted.s3Prefix, PREFIX);
 });
 
@@ -136,7 +136,7 @@ test('a receipt in another instance folder, for another job, or naming another p
     objects.set(`${folder}/model/weights.bin`, weights);
     objects.set(`${folder}/receipt.json`, new TextEncoder().encode(JSON.stringify(receipt)));
     const woken = await orchestrator.wakeJob(job.id);
-    assert.equal(woken.status, 'training_running', variant);
+    assert.equal(woken.status, 'running', variant);
     assert.equal(woken.receipt, null, variant);
     assert.equal(copies.length, 0, variant);
   }

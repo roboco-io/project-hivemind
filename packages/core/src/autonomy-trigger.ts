@@ -1,14 +1,16 @@
 import { SqliteDocumentRepository, type DocumentRepository, type DocumentTxState } from './document-repository.js';
 import { DomainError, text } from './store.js';
 import { validateDeliveryPolicy, validateWorkerExecutionPolicy } from './delivery.js';
+import { DEFAULT_PROJECT_ID, validateProjectId } from './projects.js';
 
 /**
- * Periodic trigger that sends "advance one stage" work for a repository to a cloud worker (issue #20).
- * What a stage does is the repository's own business (for Silicon Model Factory: ops/autonomy/state.json);
- * the trigger only decides when to send the next task and never sends a second one while one is open.
+ * Periodic trigger that sends "advance one stage" work for a hosted project repository to a cloud worker.
+ * What a stage does is the project repository's own business; the trigger only decides when to send the next
+ * task and never sends a second one while one is open.
  */
 export interface AutonomyTrigger {
   id: string;
+  projectId?: string;
   repository: string;
   baseBranch: string;
   /** Agent branches; also how the trigger recognises its own tasks. */
@@ -53,7 +55,7 @@ export class SqliteAutonomyTriggerRepository extends SqliteDocumentRepository<Au
 
 export type AutonomyTriggerConfig = Pick<
   AutonomyTrigger,
-  'repository' | 'baseBranch' | 'branchPrefix' | 'title' | 'instructions' | 'provider' | 'intervalMinutes' | 'maxIterations' | 'maxIterationDurationMs' | 'budgetMicros' | 'protectedPaths' | 'testCommand'
+  'projectId' | 'repository' | 'baseBranch' | 'branchPrefix' | 'title' | 'instructions' | 'provider' | 'intervalMinutes' | 'maxIterations' | 'maxIterationDurationMs' | 'budgetMicros' | 'protectedPaths' | 'testCommand'
 >;
 
 const ID = /^[a-z0-9][a-z0-9-]{1,62}$/;
@@ -61,6 +63,10 @@ const ID = /^[a-z0-9][a-z0-9-]{1,62}$/;
 export function validateAutonomyTriggerConfig(input: unknown): AutonomyTriggerConfig {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new DomainError('Invalid trigger configuration', 400);
   const raw = input as Record<string, unknown>;
+  const projectId =
+    raw.projectId === undefined || raw.projectId === DEFAULT_PROJECT_ID
+      ? DEFAULT_PROJECT_ID
+      : validateProjectId(raw.projectId);
   const policy = validateDeliveryPolicy({ mode: 'draft_pr', repository: raw.repository, baseBranch: raw.baseBranch, branchPrefix: raw.branchPrefix, autoMerge: true, protectedPaths: raw.protectedPaths });
   const exec = validateWorkerExecutionPolicy({ maxIterationDurationMs: raw.maxIterationDurationMs, hivemindAgentAccess: true });
   if (raw.provider !== 'codex' && raw.provider !== 'claude') throw new DomainError('provider must be codex or claude', 400);
@@ -72,6 +78,7 @@ export function validateAutonomyTriggerConfig(input: unknown): AutonomyTriggerCo
   if (!Number.isSafeInteger(budgetMicros) || budgetMicros < 0 || budgetMicros > 1_000_000_000) throw new DomainError('Invalid budgetMicros', 400);
   if (!Array.isArray(raw.testCommand) || raw.testCommand.length < 1 || raw.testCommand.length > 16) throw new DomainError('testCommand needs 1..16 arguments', 400);
   return {
+    projectId,
     repository: policy.repository,
     baseBranch: policy.baseBranch,
     branchPrefix: policy.branchPrefix,

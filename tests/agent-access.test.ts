@@ -186,7 +186,7 @@ test('the API returns credentials to the caller only and audits purpose, target,
   assert.equal(res.headers['cache-control'], 'no-store');
   const body = res.json();
   assert.deepEqual(body.credentials, CHILD);
-  assert.deepEqual(body.target, { modelId: 'm1' });
+  assert.deepEqual(body.target, { projectId: null, workloadId: 'm1', modelId: 'm1', s3Prefix: 'models/m1/runs/' });
   const issued = audits.find((a) => a.event === 'hivemind.agent_credentials.issued')!;
   assert.equal(issued.expiration, CHILD.expiration);
   assert.equal(issued.policyHash, body.policyHash);
@@ -248,5 +248,5 @@ test('the MCP tool writes a 0600 credentials file and keeps the secret out of th
   const refused = (await client.callTool({ name: 'hivemind_agent_credentials', arguments: { purpose: 'model-artifacts-read' } })) as {
     structuredContent: Record<string, unknown>;
   };
-  assert.deepEqual(refused.structuredContent, { issued: false, httpStatus: 400, error: 'modelId must match ^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$' });
+  assert.deepEqual(refused.structuredContent, { issued: false, httpStatus: 400, error: 'workloadId (or modelId) must match ^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$' });
 });

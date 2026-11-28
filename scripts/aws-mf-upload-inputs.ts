@@ -4,8 +4,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { AwsEcsCredentials } from '../packages/adapters/src/aws-ecs-driver.js';
 import { createAwsS3ArtifactsPort } from '../packages/adapters/src/aws-s3-artifacts.js';
-import type { ModelTrainingInputFile } from '../packages/contracts/src/model-factory.js';
-import { computeTrainingInputsDigest } from '../packages/core/src/model-factory.js';
+import type { ComputeInputFile } from '../packages/contracts/src/compute.js';
+import { computeInputsDigest } from '../packages/core/src/compute.js';
 
 function loadAwsCredentials(profile: string): AwsEcsCredentials {
   const raw = execFileSync(
@@ -67,7 +67,7 @@ async function main(): Promise<void> {
     throw new Error(`No files found in ${inputDir}`);
   }
 
-  const files: ModelTrainingInputFile[] = [];
+  const files: ComputeInputFile[] = [];
   for (const rel of relPaths) {
     const body = readFileSync(join(inputDir, rel));
     const sha256 = createHash('sha256').update(body).digest('hex');
@@ -76,7 +76,7 @@ async function main(): Promise<void> {
     files.push({ path: rel, sha256, sizeBytes: body.byteLength });
   }
 
-  const digest = computeTrainingInputsDigest(s3Prefix, files);
+  const digest = computeInputsDigest(s3Prefix, files);
   console.log(
     JSON.stringify(
       {

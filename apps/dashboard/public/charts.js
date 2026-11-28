@@ -44,7 +44,7 @@
       : [];
 
     if (!list.length) {
-      container.append(htmlEl('p', '아직 시각화할 Model Factory 비용 이력이 없습니다.', 'empty'));
+      container.append(htmlEl('p', '아직 시각화할 Spot 컴퓨팅 비용 이력이 없습니다.', 'empty'));
       return;
     }
 
@@ -66,7 +66,8 @@
       cumCommitted += settled + reserved;
       return {
         id: String(job.id || job.jobId || ''),
-        modelId: String(job.modelId || ''),
+        workloadId: String(job.workloadId || job.modelId || ''),
+        projectId: String(job.projectId || 'default'),
         label: shortDate(job.createdAt),
         settled,
         reserved,
@@ -81,7 +82,7 @@
       viewBox: `0 0 ${width} ${height}`,
       class: 'hm-svg-chart',
       role: 'img',
-      'aria-label': 'Model Factory 작업별 및 누적 비용 추이 차트',
+      'aria-label': 'Spot 컴퓨팅 작업별 및 누적 비용 추이 차트',
     });
 
     // Horizontal gridlines & left/right axis ticks
@@ -125,7 +126,10 @@
 
       const group = svgEl('g', { class: 'chart-bar-group' });
       const tip =
-        pt.modelId +
+        '[' +
+        pt.projectId +
+        '] ' +
+        pt.workloadId +
         ' (' +
         pt.label +
         ') · 정산 ' +
@@ -269,13 +273,13 @@
     });
   }
 
-  function mfSteps(job) {
-    const labels = ['등록', '학습 승인', 'EC2 학습', '영수증·검증', '공개 승인', '공개 완료'];
+  function computeSteps(job) {
+    const labels = ['등록', '기동 승인', 'Spot 실행', '영수증·검증', '공개 승인', '공개 완료'];
     const s = job?.status || '';
     const terminalFail = s === 'failed' || s === 'cancelled' || s === 'rejected';
     let idx = 0;
-    if (s === 'awaiting_training_approval') idx = 1;
-    else if (s === 'training_queued' || s === 'training_running') idx = 2;
+    if (s === 'awaiting_launch_approval' || s === 'awaiting_training_approval') idx = 1;
+    else if (s === 'queued' || s === 'running' || s === 'training_queued' || s === 'training_running') idx = 2;
     else if (s === 'evaluating') idx = 3;
     else if (s === 'awaiting_release_approval' || s === 'release_approved') idx = 4;
     else if (s === 'released') idx = 6;
@@ -312,7 +316,7 @@
     renderBreakdownBars,
     renderStepper,
     deliverySteps,
-    mfSteps,
+    computeSteps,
     collabSteps,
   };
 })();

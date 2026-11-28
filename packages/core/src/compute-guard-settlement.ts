@@ -1,5 +1,5 @@
-import type { ModelFactoryJob } from '../../contracts/src/model-factory.js';
-import type { ModelFactoryStore } from './model-factory.js';
+import type { ComputeJob } from '../../contracts/src/compute.js';
+import type { ComputeStore } from './compute.js';
 import { DomainError } from './store.js';
 
 /**
@@ -8,14 +8,12 @@ import { DomainError } from './store.js';
  * This is an upper-bound estimate from the price cap, not the billed Spot price.
  */
 export function calculateActualCostMicros(
-  job: ModelFactoryJob,
+  job: ComputeJob,
   endedMs: number,
 ): { actualCostMicros: number; instanceSeconds: number } {
   const launchedMs = job.instance?.launchedAt ? Date.parse(job.instance.launchedAt) : endedMs;
   const elapsedSeconds = Math.max(1, Math.ceil(Math.max(0, endedMs - launchedMs) / 1000));
   const billedSeconds = Math.max(60, elapsedSeconds);
-  // Rounded to 6 decimals before the ceiling, so binary floating-point noise (90000.00000000001) does not
-  // add one micro.
   const rawMicros = Math.ceil(Number(((billedSeconds * job.compute.maxHourlyPriceUsd * 1_000_000) / 3600).toFixed(6)));
   return {
     actualCostMicros: Math.min(rawMicros, job.cost.reservedMicros || rawMicros),
@@ -38,20 +36,14 @@ export interface GuardSettlementResult {
 
 /**
  * Records in the ledger that the TTL Guard terminated a job's instance, and settles its cost.
- *
- * The TTL Guard Lambda calls this while the Control Plane may be stopped. It only records the termination
- * and the cost. It does not load the S3 receipt and does not fail the job: `nextWakeAt` is cleared, so the
- * Control Plane wakes the job on its next start and finishes those steps.
- *
- * It is safe to call twice for the same instance. An instance ID that is not the job's current instance is
- * ignored, so a stale or forged `hivemind:job-id` tag cannot settle another job.
+ * Safe to call twice for the same instance. An instance ID that is not the job's current instance is ignored.
  */
 export async function settleGuardTermination(
-  store: ModelFactoryStore,
+  store: ComputeStore,
   input: { jobId: string; instanceId: string; endedMs: number; reason: string },
 ): Promise<GuardSettlementResult> {
   const base = { jobId: input.jobId, instanceId: input.instanceId };
-  let job: ModelFactoryJob;
+  let job: ComputeJob;
   try {
     job = await store.get(input.jobId);
   } catch (error) {

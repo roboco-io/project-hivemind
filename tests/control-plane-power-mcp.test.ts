@@ -67,8 +67,8 @@ function world(initial: { desired?: number; tasksReadyAfterPolls?: number; realS
     const path = url.pathname;
     if (init?.method === 'POST' && path.endsWith('/reconcile')) { w.reconciles.push(path); return json(path === '/api/delivery/reconcile' ? { checked: w.untouched.length, failed: [], untouched: w.untouched } : {}); }
     if (path === '/api/delivery/tasks') return json({ storageBackend: 'aurora-dsql', tasks: w.delivery });
-    if (path === '/api/model-factory/jobs') return json({ storageBackend: 'aurora-dsql', jobs: w.jobs });
-    if (path === '/api/model-factory/ledger') return json({ globalBudgetCapMicros: 1, totalReservedMicros: 0, totalSettledMicros: 0, remainingBudgetMicros: 1 });
+    if (path === '/api/compute/jobs') return json({ storageBackend: 'aurora-dsql', jobs: w.jobs });
+    if (path === '/api/compute/ledger') return json({ globalBudgetCapMicros: 1, totalReservedMicros: 0, totalSettledMicros: 0, remainingBudgetMicros: 1 });
     if (path === '/api/collab/sessions') return json({ storageBackend: 'aurora-dsql', sessions: w.sessions.map(({ id, status }) => ({ id, status })) });
     const session = w.sessions.find((s) => path === `/api/collab/sessions/${s.id}`);
     if (session) return json({ subtasks: session.subtasks });
@@ -157,12 +157,12 @@ test('stop refuses while work is in progress, settles lost workers first, and fo
   // A record with no recorded worker cannot be settled automatically; the refusal names it.
   w.delivery = [{ id: LEGACY, status: 'running' }, { status: 'cancelled' }];
   w.untouched = [{ taskId: LEGACY, reason: 'no ECS task recorded; cancel the task if its worker is gone' }];
-  w.jobs = [{ status: 'training_running' }, { status: 'evaluating' }];
+  w.jobs = [{ status: 'running' }, { status: 'evaluating' }];
   w.sessions = [{ id: SESSION, status: 'active', subtasks: [{ status: 'running' }, { status: 'running' }, { status: 'completed' }] }];
 
   const refused = await p.stop();
   assert.equal(refused.stopped, false);
-  assert.deepEqual(refused.inProgress, { deliveryTasks: 1, modelFactoryJobs: 1, collabSubtasks: 2, blockingIds: [LEGACY], unverifiable: [{ id: LEGACY, reason: 'no ECS task recorded; cancel the task if its worker is gone' }] });
+  assert.deepEqual(refused.inProgress, { deliveryTasks: 1, computeJobs: 1, collabSubtasks: 2, blockingIds: [LEGACY], unverifiable: [{ id: LEGACY, reason: 'no ECS task recorded; cancel the task if its worker is gone' }] });
   assert.equal(w.desired, 1);
   assert.ok(w.tunnelOpen, 'the tunnel stays open when the stop is refused');
   // Lost workers are settled by the Control Plane before the count.
@@ -242,7 +242,7 @@ test('shutdown lowers a Control Plane this server started, but not while work is
   const busy = world();
   const q = busy.power();
   await q.start();
-  busy.w.jobs = [{ status: 'training_running' }];
+  busy.w.jobs = [{ status: 'running' }];
   assert.equal(await q.shutdown(), 'left_running');
   assert.equal(busy.w.desired, 1, 'a running training job keeps its Control Plane');
   assert.equal(busy.w.tunnelOpen, false);
@@ -403,18 +403,18 @@ test('always-on MCP server: a call after a Spot replacement reopens the tunnel a
   const call = async (name: string) => (await client.callTool({ name, arguments: {} })) as Result;
 
   // No tunnel yet: the first call opens it and returns live data.
-  const first = await call('hivemind_mf_list');
+  const first = await call('hivemind_compute_list');
   assert.ok(!first.isError);
   assert.equal(w.tunnelsOpened, 1);
   // A Spot interruption replaces the task; the next call reconnects by itself.
   w.tunnelOpen = false;
-  const second = await call('hivemind_mf_list');
+  const second = await call('hivemind_compute_list');
   assert.ok(!second.isError);
   assert.equal(w.tunnelsOpened, 2);
   // A service someone lowered with force stays down: calls fail, nothing is raised.
   w.desired = 0;
   w.tunnelOpen = false;
-  const down = await call('hivemind_mf_list');
+  const down = await call('hivemind_compute_list');
   assert.ok(down.isError);
   assert.equal(w.desired, 0);
   assert.equal(w.awsCalls.filter((c) => c.startsWith('ecs update-service')).length, 0);
@@ -442,12 +442,12 @@ test('agent profile: the server keeps the tunnel to the running task but never c
   assert.equal(w.tunnelsOpened, 1);
   // A Spot replacement drops the tunnel; the next call reopens it.
   w.tunnelOpen = false;
-  assert.ok(!(await call('hivemind_mf_list')).isError);
+  assert.ok(!(await call('hivemind_compute_list')).isError);
   assert.equal(w.tunnelsOpened, 2);
   // A service at 0 stays at 0: the call fails and nothing is raised.
   w.desired = 0;
   w.tunnelOpen = false;
-  assert.ok((await call('hivemind_mf_list')).isError);
+  assert.ok((await call('hivemind_compute_list')).isError);
   assert.equal(w.desired, 0);
   assert.equal(w.awsCalls.filter((c) => c.startsWith('ecs update-service')).length, 0, 'the agent profile never changes the desired count');
   // No result carries an AWS credential or the token.

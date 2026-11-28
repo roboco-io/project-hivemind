@@ -3,8 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import type { AwsEcsCredentials } from '../packages/adapters/src/aws-ecs-driver.js';
 import { createAwsS3ArtifactsPort } from '../packages/adapters/src/aws-s3-artifacts.js';
-import type { ModelFactoryJob } from '../packages/contracts/src/model-factory.js';
-import { computeTrainingInputsDigest } from '../packages/core/src/model-factory.js';
+import type { ComputeJob } from '../packages/contracts/src/compute.js';
+import { computeInputsDigest } from '../packages/core/src/compute.js';
 import { openSsmTunnel } from './lib/aws-live.js';
 
 function awsJson(profile: string, region: string, args: string[]): unknown {
@@ -154,7 +154,7 @@ async function main(): Promise<void> {
       sizeBytes: dataBytes.byteLength,
     },
   ];
-  const inputsDigest = computeTrainingInputsDigest(inputsPrefix, inputFiles);
+  const inputsDigest = computeInputsDigest(inputsPrefix, inputFiles);
 
   // UserData executed INSIDE the us-east-2 Spot instance:
   // Control Plane injects HIVEMIND_JOB_ID, HIVEMIND_ARTIFACTS_BUCKET, HIVEMIND_ARTIFACTS_REGION,
@@ -235,9 +235,9 @@ PY
 
   try {
     // Step 2: Register & approve job on deployed Seoul ControlPlaneService (NO caller instanceProfileArn — Control Plane injects its approved profile!).
-    const created = await apiJson<ModelFactoryJob>(`${baseUrl}/api/model-factory/jobs`, operatorToken, {
+    const created = await apiJson<ComputeJob>(`${baseUrl}/api/compute/jobs`, operatorToken, {
       title: 'Issue #12 Instance Self-S3 E2E Proof (us-east-2 -> Seoul KMS S3)',
-      modelId,
+      workloadId: modelId,
       repository: 'roboco-io/silicon-model-factory',
       baseCommit: 'a'.repeat(40),
       compute: {
@@ -261,15 +261,15 @@ PY
     });
     jobId = created.id;
 
-    const launched = await apiJson<ModelFactoryJob>(
-      `${baseUrl}/api/model-factory/jobs/${encodeURIComponent(jobId)}/approve-training`,
+    const launched = await apiJson<ComputeJob>(
+      `${baseUrl}/api/compute/jobs/${encodeURIComponent(jobId)}/approve`,
       operatorToken,
       {
         approvalFingerprint: created.approvalFingerprint,
         reason: 'Issue #12 live instance-self S3 download/upload/shutdown E2E verification',
       },
     );
-    if (launched.status !== 'training_running' || !launched.instance?.instanceId) {
+    if (launched.status !== 'running' || !launched.instance?.instanceId) {
       throw new Error(`Launch failed: ${JSON.stringify(launched)}`);
     }
 
@@ -286,11 +286,11 @@ PY
 
     // Step 3 & 4: Poll Control Plane `/wake` ONLY (zero operator proxy upload!) until instance self-terminates & Control Plane verifies instance-uploaded receipt!
     const deadline = Date.now() + 270_000;
-    let finalJob: ModelFactoryJob = launched;
+    let finalJob: ComputeJob = launched;
     while (Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 15_000));
-      finalJob = await apiJson<ModelFactoryJob>(
-        `${baseUrl}/api/model-factory/jobs/${encodeURIComponent(jobId)}/wake`,
+      finalJob = await apiJson<ComputeJob>(
+        `${baseUrl}/api/compute/jobs/${encodeURIComponent(jobId)}/wake`,
         operatorToken,
         {},
       );
@@ -339,7 +339,7 @@ PY
     );
   } catch (error) {
     if (jobId) {
-      await apiJson(`${baseUrl}/api/model-factory/jobs/${encodeURIComponent(jobId)}/cancel`, operatorToken, {
+      await apiJson(`${baseUrl}/api/compute/jobs/${encodeURIComponent(jobId)}/cancel`, operatorToken, {
         reason: 'Cleanup after self-e2e error',
       }).catch(() => undefined);
     }

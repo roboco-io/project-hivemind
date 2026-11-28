@@ -34,18 +34,21 @@ test('only the two legacy adapters reference code under the archived cloudflare/
 test('the AWS single-path modules do not import the Cloudflare port or contracts', () => {
   const root = process.cwd();
   const awsPathFiles = [
+    'packages/core/src/projects.ts',
     'packages/core/src/delivery.ts',
-    'packages/core/src/model-factory.ts',
+    'packages/core/src/compute.ts',
     'packages/core/src/agent-collab.ts',
     'packages/core/src/document-repository.ts',
+    'apps/control-plane/src/projects-api.ts',
     'apps/control-plane/src/delivery-api.ts',
     'apps/control-plane/src/delivery-orchestrator.ts',
-    'apps/control-plane/src/model-factory-api.ts',
-    'apps/control-plane/src/model-factory-orchestrator.ts',
+    'apps/control-plane/src/compute-api.ts',
+    'apps/control-plane/src/compute-orchestrator.ts',
     'apps/control-plane/src/collab-api.ts',
     'apps/control-plane/src/collab-orchestrator.ts',
+    'apps/mcp-server/src/projects.ts',
     'apps/mcp-server/src/delivery.ts',
-    'apps/mcp-server/src/model-factory.ts',
+    'apps/mcp-server/src/compute.ts',
     'apps/mcp-server/src/collab.ts',
     'infrastructure/aws-runtime/lambda/mf-ttl-guard.ts',
   ];
