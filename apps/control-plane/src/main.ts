@@ -86,7 +86,7 @@ function createAwsAutonomyDispatcherFactory() {
   });
   return (triggers: AutonomyTriggerStore, delivery: DeliveryStore, orchestrator?: DeliveryOrchestrator) =>
     orchestrator
-      ? new AutonomyDispatcher({ triggers, delivery, prepare, dispatchWorker: (taskId, signal) => orchestrator.dispatchWorker(taskId, signal), uploadAcceptance: (task, signal) => orchestrator.uploadAcceptanceSpec(task, signal), primaryRegion: region })
+      ? new AutonomyDispatcher({ triggers, delivery, prepare, dispatchWorker: (taskId, signal) => orchestrator.dispatchWorker(taskId, signal), reconcile: (signal) => orchestrator.reconcileRunningTasks(signal), uploadAcceptance: (task, signal) => orchestrator.uploadAcceptanceSpec(task, signal), primaryRegion: region })
       : undefined;
 }
 

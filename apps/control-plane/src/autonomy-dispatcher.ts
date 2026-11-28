@@ -18,6 +18,11 @@ export interface AutonomyDispatcherOptions {
   dispatchWorker: (taskId: string, signal: AbortSignal) => Promise<unknown>;
   /** Puts the task's acceptance spec where the verifier reads it (DeliveryOrchestrator.uploadAcceptanceSpec). */
   uploadAcceptance: (task: DeliveryTask, signal: AbortSignal) => Promise<unknown>;
+  /**
+   * Fails running tasks whose worker no longer exists (DeliveryOrchestrator.reconcileRunningTasks). Called
+   * when a due trigger finds its task still running, so a lost worker does not block the trigger forever.
+   */
+  reconcile?: (signal: AbortSignal) => Promise<unknown>;
   /** Region the trigger's tasks run in; the agent token exists only on hub workers. */
   primaryRegion: string;
   now?: () => number;
@@ -47,8 +52,18 @@ export class AutonomyDispatcher {
     if (this.ticking) return result;
     this.ticking = true;
     try {
+      let reconciled = false;
       for (const trigger of await this.options.triggers.due((this.options.now ?? Date.now)())) {
-        const open = await this.openTask(trigger);
+        let open = await this.openTask(trigger);
+        if (open?.status === 'running' && this.options.reconcile && !reconciled) {
+          reconciled = true;
+          try {
+            await this.options.reconcile(signal);
+          } catch (error) {
+            this.log({ triggerId: trigger.id, reconcileError: (error instanceof Error ? error.message : String(error)).slice(0, 300) });
+          }
+          open = await this.openTask(trigger);
+        }
         if (open) {
           await this.options.triggers.recordSkip(trigger.id, `Task ${open.id} is still ${open.status}`);
           result.skipped.push(trigger.id);

@@ -71,7 +71,7 @@ AWS가 용량을 회수하면 Control Plane 작업은 2분 전에 SIGTERM을 받
 | 학습 인스턴스 | 계속 실행된다. 수명 초과는 5분 주기 TTL Guard Lambda가 Control Plane과 관계없이 종료하고 정산한다 |
 | 학습 점검(wake) | 새 작업이 5분 주기 점검을 다시 시작한다. 영수증은 S3에 남아 있으므로 다음 점검이 처리한다 |
 | Hugging Face 게시 | 진행 중이던 업로드는 끊기고, 작업은 `release_approved`에 남는다. `publish-release`로 다시 게시한다 |
-| 독립 검증기 | 검증기는 기동 때의 Control Plane 사설 IP로 결과를 보낸다. 새 작업은 IP가 달라 결과를 받지 못하므로, 작업이 `evaluating`에 남으면 `dispatch-verifier`로 다시 기동한다 |
+| 독립 검증기 | 검증기와 워커는 Control Plane을 Cloud Map 사설 DNS 이름(`control-plane.<prefix>.internal`)으로 찾는다. Control Plane 작업이 바뀌는 동안(배포, Spot 회수) 연결이 거부되면 최대 5분 동안 다시 시도한다. 그래도 작업이 `evaluating`에 남으면 `dispatch-verifier`로 다시 기동한다 |
 | SW 전달·협업 워커 | 검증기와 같은 이유로 결과 보고가 실패할 수 있다. `reconcile`이 워커가 끝난 작업을 `failed`로 정리한다 |
 | SSM 터널 | 작업이 바뀌면 끊긴다. MCP 서버는 다음 호출에서 새 작업으로 터널을 다시 연다(아래 3절). 직접 연 터널은 다시 실행한다 |
 
@@ -264,7 +264,7 @@ Control Plane은 부트스트랩에서 IMDSv2로 인스턴스 ID를 읽어 `HIVE
 
 Silicon Model Factory(SMF)는 과제 조사부터 Hugging Face 공개까지를 사람 개입 없이 반복한다(2026-11-28 사람의 결정, SMF `plans/autonomy-loop.md`). 반복의 정책은 SMF가 정하고, HIVEMIND는 아래 다섯 기능으로 실행·권한·감사를 맡는다. 각 기능은 운영자 설정으로 허용한 저장소에만 동작한다.
 
-**1. 주기 트리거.** 트리거는 저장소, 기준 브랜치, 에이전트 브랜치 접두사, 작업 지시, 간격(5분 이상), 보호 경로, 검사 명령을 가진다. 운영자가 `hivemind_autonomy_trigger_configure`(또는 `PUT /api/autonomy/triggers/<id>`)로 만들면 꺼진 상태로 생기고, `hivemind_autonomy_trigger_enable`로 켠다. 켜진 트리거는 간격마다 다음을 한다. 같은 저장소·접두사의 전달 작업이 `awaiting_approval`, `queued`, `running`, `verified`, `draft_pr_published` 중 하나면 보내지 않고 이유를 기록한다. 아니면 GitHub App 토큰으로 기준 브랜치를 복제해 머리 커밋의 번들을 S3에 올리고, 보호 경로 아래의 파일을 수용 파일로 고정하고, 자동 병합과 에이전트 접근을 가진 전달 작업을 등록·승인한 뒤 서울 워커를 띄운다. 워커 기동이 실패하면 그 작업을 취소해 다음 간격에 다시 보낸다. 켜기·끄기·설정은 운영자 토큰만 할 수 있고, 에이전트 토큰은 `hivemind_autonomy_triggers`로 트리거를 조회만 한다. 에이전트 토큰은 `hivemind_delivery_list`와 `hivemind_delivery_get`(또는 `GET /api/delivery/tasks[/<id>]`)으로 트리거가 보낸 전달 작업의 상태와 이벤트도 조회할 수 있다. 조회할 수 있는 작업은 설정된 트리거와 저장소·브랜치 접두사가 같은 작업뿐이다. 다른 작업은 없는 작업과 같이 404로 답하고, 등록·승인·취소는 401로 거절한다. 모든 변경과 발송은 트리거 이벤트로 남는다. 상태는 전달 작업과 같은 Aurora DSQL에 있다.
+**1. 주기 트리거.** 트리거는 저장소, 기준 브랜치, 에이전트 브랜치 접두사, 작업 지시, 간격(5분 이상), 보호 경로, 검사 명령을 가진다. 운영자가 `hivemind_autonomy_trigger_configure`(또는 `PUT /api/autonomy/triggers/<id>`)로 만들면 꺼진 상태로 생기고, `hivemind_autonomy_trigger_enable`로 켠다. 켜진 트리거는 간격마다 다음을 한다. 같은 저장소·접두사의 전달 작업이 `awaiting_approval`, `queued`, `running`, `verified`, `draft_pr_published` 중 하나면 보내지 않고 이유를 기록한다. 아니면 GitHub App 토큰으로 기준 브랜치를 복제해 머리 커밋의 번들을 S3에 올리고, 보호 경로 아래의 파일을 수용 파일로 고정하고, 자동 병합과 에이전트 접근을 가진 전달 작업을 등록·승인한 뒤 서울 워커를 띄운다. 워커 기동이 실패하면 그 작업을 취소해 다음 간격에 다시 보낸다. 간격이 지났는데 작업이 `running`이면, 트리거는 먼저 워커가 사라진 작업을 정리(reconcile)한다. 워커의 ECS 작업이 없으면 그 작업을 `failed`로 바꾸고 다음 작업을 보낸다. 켜기·끄기·설정은 운영자 토큰만 할 수 있고, 에이전트 토큰은 `hivemind_autonomy_triggers`로 트리거를 조회만 한다. 에이전트 토큰은 `hivemind_delivery_list`와 `hivemind_delivery_get`(또는 `GET /api/delivery/tasks[/<id>]`)으로 트리거가 보낸 전달 작업의 상태와 이벤트도 조회할 수 있다. 조회할 수 있는 작업은 설정된 트리거와 저장소·브랜치 접두사가 같은 작업뿐이다. 다른 작업은 없는 작업과 같이 404로 답하고, 등록·승인·취소는 401로 거절한다. 모든 변경과 발송은 트리거 이벤트로 남는다. 상태는 전달 작업과 같은 Aurora DSQL에 있다.
 
 **2. 자동 공개.** 학습 작업의 `releasePolicy.autoPublish: true`는 독립 검증기가 영수증과 같은 산출물로 공개 검사를 통과시키면 운영자 승인 없이 공개한다. Control Plane은 Hugging Face 저장소가 없으면 정책의 공개 범위로 만들고, 승인을 `Auto-publish policy`로 기록한 뒤 게시한다. 게시 기록에는 Hub가 영수증과 같다고 확인한 파일 수(`verifiedFiles`)와 승인 주체(`approvedBy: auto_publish_policy`)가 남는다. 운영자의 자체 검증 기록(`verify-release`)으로는 자동 공개되지 않는다. 등록할 때 저장소가 운영자 접두사(`HIVEMIND_MF_AUTO_PUBLISH_REPO_PREFIXES`, 배포 기본값 `roboco-io/`) 아래에 있어야 하고, 공개 직전에도 다시 확인한다. 검증 결과를 놓쳤거나 게시가 실패한 작업은 5분 주기 점검이 다시 처리한다(게시는 작업당 3회까지).
 

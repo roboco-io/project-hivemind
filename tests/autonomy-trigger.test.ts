@@ -45,6 +45,9 @@ function harness() {
   const dispatched: string[] = [];
   const uploads: string[] = [];
   let failDispatch = false;
+  const reconcileCalls: number[] = [];
+  /** Workers that no longer exist; reconcile fails their runs, like DeliveryOrchestrator.reconcileRunningTasks. */
+  const lostRuns = new Map<string, string>();
   const dispatcher = new AutonomyDispatcher({
     triggers,
     delivery,
@@ -56,11 +59,16 @@ function harness() {
     uploadAcceptance: async (task) => {
       uploads.push(task.id);
     },
+    reconcile: async () => {
+      reconcileCalls.push(clock);
+      for (const [taskId, runId] of lostRuns) await delivery.failOrphanedRun(taskId, runId, 'ECS task is no longer known to ECS and never reported a result');
+      lostRuns.clear();
+    },
     primaryRegion: 'ap-northeast-2',
     now,
     log: () => {},
   });
-  return { triggers, delivery, dispatcher, dispatched, uploads, advance: (ms: number) => { clock += ms; }, failDispatch: (v: boolean) => { failDispatch = v; } };
+  return { triggers, delivery, dispatcher, dispatched, uploads, reconcileCalls, lostRuns, advance: (ms: number) => { clock += ms; }, failDispatch: (v: boolean) => { failDispatch = v; } };
 }
 
 test('a trigger is created disabled, validated, and only sends work once enabled', async () => {
@@ -101,6 +109,35 @@ test('no second task while one is open, and the next one after it closes and the
   assert.notEqual(second.dispatched[0], firstId);
   const types = (await h.triggers.events()).map((e) => e.type);
   assert.equal(types.filter((t) => t === 'autonomy_trigger.skipped').length, 1, 'a repeated skip reason is recorded once');
+});
+
+test('a running task whose worker is gone is reconciled, so the trigger sends the next one', async () => {
+  const h = harness();
+  await h.triggers.configure('smf', CONFIG);
+  await h.triggers.setEnabled('smf', true, 'on');
+  const [firstId] = (await h.dispatcher.tick()).dispatched;
+  await h.delivery.startIteration(firstId!, 'ecs-spot-ap-northeast-2-1', 'run-1');
+  h.advance(31 * 60_000);
+  // The worker is alive: reconcile changes nothing and the trigger waits.
+  assert.deepEqual((await h.dispatcher.tick()).skipped, ['smf']);
+  assert.equal(h.reconcileCalls.length, 1);
+  // The worker lost the Control Plane and stopped without reporting.
+  h.lostRuns.set(firstId!, 'run-1');
+  const next = await h.dispatcher.tick();
+  assert.equal(h.reconcileCalls.length, 2);
+  assert.equal((await h.delivery.get(firstId!)).status, 'failed');
+  assert.equal(next.dispatched.length, 1);
+  assert.notEqual(next.dispatched[0], firstId);
+});
+
+test('a queued task is not reconciled', async () => {
+  const h = harness();
+  await h.triggers.configure('smf', CONFIG);
+  await h.triggers.setEnabled('smf', true, 'on');
+  await h.dispatcher.tick();
+  h.advance(31 * 60_000);
+  assert.deepEqual((await h.dispatcher.tick()).skipped, ['smf']);
+  assert.equal(h.reconcileCalls.length, 0);
 });
 
 test('a worker that cannot start leaves no open task behind', async () => {
