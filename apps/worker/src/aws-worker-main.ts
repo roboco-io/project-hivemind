@@ -1,3 +1,4 @@
+import { controlFetch } from './control-fetch.js';
 import { readFile } from 'node:fs/promises';
 import { setUpCollabWorkerOrFailSubtask } from './collab-worker-setup.js';
 import { join } from 'node:path';
@@ -30,7 +31,7 @@ async function reportWorkerPreflight(
   taskId: string,
   report: Omit<DeliveryPreflightReport, 'checkedAt'>,
 ): Promise<void> {
-  const res = await fetch(
+  const res = await controlFetch(
     new URL(`/api/delivery/tasks/${encodeURIComponent(taskId)}/preflight`, controlApiUrl),
     {
       method: 'POST',
@@ -51,7 +52,7 @@ async function reportWorkerPreflight(
 async function fetchWorkerSpec(controlApiUrl: string, workerToken: string, taskId: string, runId: string): Promise<WorkerSpec> {
   const url = new URL(`/api/delivery/tasks/${encodeURIComponent(taskId)}/worker-spec`, controlApiUrl);
   url.searchParams.set('runId', runId);
-  const res = await fetch(url, {
+  const res = await controlFetch(url, {
     method: 'GET',
     redirect: 'error',
     headers: { authorization: `Bearer ${workerToken}` },
@@ -75,7 +76,7 @@ async function reportWorkerCompleted(
     checkpointS3Key?: string;
   },
 ): Promise<void> {
-  const res = await fetch(
+  const res = await controlFetch(
     new URL(`/api/delivery/tasks/${encodeURIComponent(payload.taskId)}/worker-completed`, controlApiUrl),
     {
       method: 'POST',
@@ -114,7 +115,7 @@ async function runCollabWorkerMode(): Promise<void> {
   const credentials = createEcsTaskCredentialsProvider();
   const secretsManager = createAwsSecretsManagerPort({ region, allowedRegions: [region], credentials });
 
-  const snapRes = await fetch(new URL(`/api/collab/sessions/${encodeURIComponent(sessionId)}`, controlApiUrl), {
+  const snapRes = await controlFetch(new URL(`/api/collab/sessions/${encodeURIComponent(sessionId)}`, controlApiUrl), {
     method: 'GET',
     redirect: 'error',
     headers: { authorization: `Bearer ${workerToken}` },
@@ -131,7 +132,7 @@ async function runCollabWorkerMode(): Promise<void> {
   if (!subtask) throw new Error(`Subtask ${subtaskId} not found in session ${sessionId}`);
 
   const postCollab = async (path: string, body: Record<string, unknown>) => {
-    const res = await fetch(new URL(path, controlApiUrl), {
+    const res = await controlFetch(new URL(path, controlApiUrl), {
       method: 'POST',
       redirect: 'error',
       headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
@@ -311,7 +312,7 @@ async function main(): Promise<void> {
       workRoot,
       control: {
         async reportSpotInterrupted(payload) {
-          const res = await fetch(
+          const res = await controlFetch(
             new URL(`/api/delivery/tasks/${encodeURIComponent(payload.taskId)}/spot-interrupted`, controlApiUrl),
             {
               method: 'POST',

@@ -1,3 +1,4 @@
+import { controlFetch } from './control-fetch.js';
 import { createAwsS3ArtifactsPort } from '../../../packages/adapters/src/aws-s3-artifacts.js';
 import { createEcsTaskCredentialsProvider } from '../../../packages/adapters/src/aws-ecs-metadata-creds.js';
 import { runAwsVerifierOnce } from './aws-verifier-runtime.js';
@@ -25,7 +26,7 @@ async function runModelReleaseVerifierMode(specBase64: string): Promise<void> {
   });
   // The S3 copy is the verifier's own record; the Control Plane decides from the API call below.
   await s3.putObject(`attestations/model-factory/${spec.jobId}.json`, Buffer.from(JSON.stringify(attestation), 'utf8'), 'application/json');
-  const res = await fetch(new URL(`/api/model-factory/jobs/${encodeURIComponent(spec.jobId)}/verifier-attestation`, controlApiUrl), {
+  const res = await controlFetch(new URL(`/api/model-factory/jobs/${encodeURIComponent(spec.jobId)}/verifier-attestation`, controlApiUrl), {
     method: 'POST',
     redirect: 'error',
     headers: { authorization: `Bearer ${workerToken}`, 'content-type': 'application/json' },
@@ -92,7 +93,7 @@ async function main(): Promise<void> {
         const receiptKey = `attestations/${id}/${runId}.json`;
         await s3.putObject(receiptKey, Buffer.from(JSON.stringify(result), 'utf8'), 'application/json');
         if (controlApiUrl && workerToken) {
-          const res = await fetch(new URL(`/api/delivery/tasks/${encodeURIComponent(id)}/verify`, controlApiUrl), {
+          const res = await controlFetch(new URL(`/api/delivery/tasks/${encodeURIComponent(id)}/verify`, controlApiUrl), {
             method: 'POST',
             redirect: 'error',
             headers: {
