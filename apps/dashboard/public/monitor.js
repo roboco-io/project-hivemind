@@ -2,6 +2,18 @@
   'use strict';
 
   const byId = (id) => document.getElementById(id);
+  const charts = () => (typeof globalThis !== 'undefined' ? globalThis.hivemindCharts : null);
+
+  const TAB_ORDER = ['overview', 'inbox', 'delivery', 'model-factory', 'collab', 'costs', 'legacy'];
+  const TAB_TITLES = {
+    overview: '개요 HUD',
+    inbox: '승인 인박스',
+    delivery: 'SW 전달',
+    'model-factory': 'Model Factory',
+    collab: '병렬 협업',
+    costs: '비용 분석',
+    legacy: '로컬 · 레거시 도구',
+  };
 
   const DELIVERY_STATUS = {
     awaiting_approval: '실행 승인 대기',
@@ -34,29 +46,9 @@
   const MF_ATTENTION = new Set(['awaiting_training_approval', 'awaiting_release_approval']);
   const MF_TERMINAL = new Set(['released', 'failed', 'cancelled', 'rejected']);
 
-  const COLLAB_STATUS = {
-    active: '진행 중',
-    completed: '완료',
-    failed: '실패',
-    cancelled: '중단',
-  };
-  const SUBTASK_STATUS = {
-    pending: '대기',
-    queued: '배정 대기',
-    running: '실행 중',
-    completed: '완료',
-    failed: '실패',
-    cancelled: '중단',
-  };
-  const EC2_STATE = {
-    pending: '시작 중',
-    running: '실행 중',
-    stopping: '중지 중',
-    stopped: '중지됨',
-    'shutting-down': '종료 중',
-    terminated: '종료됨',
-    unknown: '확인 필요',
-  };
+  const COLLAB_STATUS = { active: '진행 중', completed: '완료', failed: '실패', cancelled: '중단' };
+  const SUBTASK_STATUS = { pending: '대기', queued: '배정 대기', running: '실행 중', completed: '완료', failed: '실패', cancelled: '중단' };
+  const EC2_STATE = { pending: '시작 중', running: '실행 중', stopping: '중지 중', stopped: '중지됨', 'shutting-down': '종료 중', terminated: '종료됨', unknown: '확인 필요' };
   const WAIT_REASON = {
     awaiting_training_approval: '사람의 학습 승인을 기다립니다.',
     training_in_progress: 'EC2 스팟 인스턴스에서 학습을 진행하고 있습니다.',
@@ -77,17 +69,26 @@
     'hybrid-workers': '하이브리드 워커',
     'cloudflare-bridge': '원격 브리지',
   };
-  const BACKEND_LABEL = {
-    'aurora-dsql': 'Aurora DSQL',
-    sqlite: 'SQLite',
-  };
+  const BACKEND_LABEL = { 'aurora-dsql': 'Aurora DSQL', sqlite: 'SQLite' };
+
+  const TAB_TOKEN_KEY = 'hivemind.operatorToken';
+  const UI_PREFS_KEY = 'hivemind.uiPrefs';
+  const ALLOWED_POLL_MS = new Set([0, 15000, 30000, 60000]);
 
   const state = {
     activeTab: 'overview',
+    theme: 'dark',
+    density: 'comfortable',
+    pollIntervalMs: 15000,
     autoRefresh: true,
+    notificationsEnabled: false,
+    seenAlertsInitialized: false,
+    seenAlertIds: new Set(),
+    lastSyncTs: 0,
     health: null,
     delivery: { storageBackend: null, tasks: [], events: [] },
     deliveryFilter: 'all',
+    deliverySearch: '',
     selectedDeliveryId: null,
     selectedDeliveryFingerprint: null,
     spotPlacement: null,
@@ -95,15 +96,22 @@
     spotChecking: false,
     mf: { storageBackend: null, jobs: [], events: [], ledger: null },
     mfFilter: 'all',
+    mfSearch: '',
     selectedMfId: null,
     selectedMfFingerprint: null,
     collab: { storageBackend: null, sessions: [], selectedId: null, snapshot: null, epoch: 0 },
+    inboxFilter: 'all',
+    eventFilter: { source: 'all', errorsOnly: false, query: '' },
+    drawer: { open: false, kind: null, id: null, fingerprint: null },
     busy: false,
     refreshing: false,
     error: null,
     notice: null,
   };
 
+  let pollTimer = null;
+
+  // ---------- SAFE HELPERS ----------
   function safeText(value, max = 4000) {
     if (value === null || value === undefined) return '';
     let text = String(value);
@@ -173,6 +181,12 @@
     return remM ? h + '시간 ' + remM + '분' : h + '시간';
   }
 
+  function formatElapsedSince(iso) {
+    const ts = Date.parse(iso || '');
+    if (!Number.isFinite(ts)) return '-';
+    return formatDurationSec(Math.max(0, (Date.now() - ts) / 1000));
+  }
+
   function formatBytes(bytes) {
     if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return '미보고';
     if (bytes < 1024) return bytes + ' B';
@@ -222,6 +236,139 @@
     banner.hidden = !state.notice;
   }
 
+  // ---------- NON-SECRET UI PREFS (localStorage) & TAB-SCOPED TOKEN (sessionStorage) ----------
+  function loadUiPrefs() {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      const raw = localStorage.getItem(UI_PREFS_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return;
+      if (parsed.theme === 'dark' || parsed.theme === 'light') state.theme = parsed.theme;
+      if (parsed.density === 'comfortable' || parsed.density === 'compact') state.density = parsed.density;
+      if (typeof parsed.pollIntervalMs === 'number' && ALLOWED_POLL_MS.has(parsed.pollIntervalMs)) {
+        state.pollIntervalMs = parsed.pollIntervalMs;
+        state.autoRefresh = parsed.pollIntervalMs > 0;
+      }
+      if (typeof parsed.notificationsEnabled === 'boolean') state.notificationsEnabled = parsed.notificationsEnabled;
+    } catch {
+      // Ignore storage errors.
+    }
+  }
+
+  function saveUiPrefs() {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      // Only non-secret UI display preferences are persisted here; operator tokens NEVER enter localStorage.
+      localStorage.setItem(
+        UI_PREFS_KEY,
+        JSON.stringify({
+          theme: state.theme,
+          density: state.density,
+          pollIntervalMs: state.autoRefresh ? state.pollIntervalMs || 15000 : 0,
+          notificationsEnabled: state.notificationsEnabled,
+        }),
+      );
+    } catch {
+      // Ignore storage errors.
+    }
+  }
+
+  function applyUiPrefs() {
+    const root = typeof document !== 'undefined' ? document.documentElement : null;
+    if (root && root.dataset) {
+      root.dataset.theme = state.theme;
+      root.dataset.density = state.density;
+    }
+    const themeBtn = byId('monitor-theme-toggle');
+    if (themeBtn) {
+      themeBtn.textContent = state.theme === 'dark' ? '다크' : '라이트';
+      themeBtn.setAttribute('aria-pressed', String(state.theme === 'dark'));
+    }
+    const densityBtn = byId('monitor-density-toggle');
+    if (densityBtn) {
+      densityBtn.textContent = state.density === 'compact' ? '컴팩트' : '기본 밀도';
+      densityBtn.setAttribute('aria-pressed', String(state.density === 'compact'));
+    }
+    const notifyBtn = byId('monitor-notify-toggle');
+    if (notifyBtn) {
+      notifyBtn.textContent = state.notificationsEnabled ? '알림 켜짐' : '알림 꺼짐';
+      notifyBtn.setAttribute('aria-pressed', String(state.notificationsEnabled));
+    }
+    const select = byId('monitor-poll-select');
+    if (select) {
+      select.value = String(state.autoRefresh ? state.pollIntervalMs : 0);
+    }
+    const pollBtn = byId('monitor-poll-toggle');
+    if (pollBtn) {
+      const sec = Math.round(state.pollIntervalMs / 1000);
+      pollBtn.textContent = state.autoRefresh ? '자동 갱신 켜짐 (' + sec + '초)' : '자동 갱신 일시정지';
+      pollBtn.setAttribute('aria-pressed', String(state.autoRefresh));
+    }
+  }
+
+  function reschedulePolling() {
+    if (pollTimer) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    }
+    if (state.autoRefresh && state.pollIntervalMs > 0) {
+      pollTimer = setInterval(() => {
+        if (!document.hidden && state.autoRefresh) void refresh();
+      }, state.pollIntervalMs);
+    }
+  }
+
+  function saveTabToken(token) {
+    try {
+      if (typeof sessionStorage !== 'undefined' && token) {
+        sessionStorage.setItem(TAB_TOKEN_KEY, token);
+      }
+    } catch {
+      // Ignore storage restrictions.
+    }
+  }
+
+  function restoreTabToken() {
+    try {
+      if (typeof sessionStorage === 'undefined') return;
+      const saved = sessionStorage.getItem(TAB_TOKEN_KEY);
+      if (saved && saved.trim()) {
+        const input = byId('operator-token');
+        if (input) input.value = saved.trim();
+      }
+    } catch {
+      // Ignore storage restrictions.
+    }
+  }
+
+  function consumeHashToken() {
+    try {
+      const loc = typeof location !== 'undefined' ? location : null;
+      if (!loc || typeof loc.hash !== 'string' || loc.hash.length < 2) return false;
+      const params = new URLSearchParams(loc.hash.slice(1));
+      if (!params.has('token')) return false;
+      const hashToken = params.get('token');
+      let applied = false;
+      if (hashToken && hashToken.trim()) {
+        const trimmed = hashToken.trim();
+        const input = byId('operator-token');
+        if (input) input.value = trimmed;
+        saveTabToken(trimmed);
+        applied = true;
+      }
+      params.delete('token');
+      const remaining = params.toString();
+      if (typeof history !== 'undefined' && typeof history.replaceState === 'function') {
+        history.replaceState(null, '', (loc.pathname || '/') + (loc.search || '') + (remaining ? '#' + remaining : ''));
+      }
+      return applied;
+    } catch {
+      return false;
+    }
+  }
+
+  // ---------- API ----------
   async function monitorApi(path, body, timeoutMs = 15000) {
     const token = (byId('operator-token')?.value || '').trim();
     const response = await fetch(path, {
@@ -275,23 +422,113 @@
     }
   }
 
+  // ---------- NAVIGATION ----------
   function switchTab(tabName) {
-    const valid = ['overview', 'delivery', 'model-factory', 'collab', 'legacy'];
-    if (!valid.includes(tabName)) return;
+    if (!TAB_ORDER.includes(tabName)) return;
     state.activeTab = tabName;
-    for (const name of valid) {
+    for (const name of TAB_ORDER) {
       const btn = byId('tab-' + name);
       const panel = byId('panel-' + name);
       const active = name === tabName;
       if (btn) {
-        btn.className = active ? 'tab-btn active' : 'tab-btn';
+        const subtle = name === 'legacy' ? ' nav-item-subtle' : '';
+        btn.className = 'nav-item' + subtle + (active ? ' active' : '');
         btn.setAttribute('aria-selected', String(active));
       }
       if (panel) panel.hidden = !active;
     }
+    if (byId('page-title')) byId('page-title').textContent = TAB_TITLES[tabName] || 'HIVEMIND 관제실';
+  }
+
+  // ---------- TAB TITLE & DESKTOP ALERTS ----------
+  function getAttentionItems() {
+    const items = [];
+    for (const t of state.delivery.tasks) {
+      if (DELIVERY_ATTENTION.has(t.status)) {
+        items.push({ kind: 'delivery', id: t.id, title: t.title, status: t.status, updatedAt: t.updatedAt, raw: t });
+      }
+    }
+    for (const j of state.mf.jobs) {
+      if (MF_ATTENTION.has(j.status)) {
+        items.push({ kind: 'mf', id: j.id, title: j.title, status: j.status, updatedAt: j.updatedAt, raw: j });
+      }
+    }
+    items.sort((a, b) => Date.parse(b.updatedAt || '') - Date.parse(a.updatedAt || ''));
+    return items;
+  }
+
+  function updateTabTitleAndAlerts() {
+    const attention = getAttentionItems();
+    const activeCount =
+      state.delivery.tasks.filter((t) => DELIVERY_ACTIVE.has(t.status)).length +
+      state.mf.jobs.filter((j) => MF_ACTIVE.has(j.status)).length +
+      state.collab.sessions.filter((s) => s.status === 'active').length;
+
+    const parts = [];
+    if (attention.length > 0) parts.push(attention.length + ' 대기');
+    if (activeCount > 0) parts.push(activeCount + ' 실행');
+    if (typeof document !== 'undefined') {
+      document.title = parts.length ? '(' + parts.join(' · ') + ') HIVEMIND 관제실' : 'HIVEMIND 관제실';
+    }
+
+    const currentAlertIds = new Set();
+    const freshNotifications = [];
+    for (const item of attention) {
+      const key = item.kind + ':' + item.id + ':' + item.status;
+      currentAlertIds.add(key);
+      if (state.seenAlertsInitialized && !state.seenAlertIds.has(key)) {
+        freshNotifications.push({
+          title: 'HIVEMIND 승인·검토 대기',
+          body: safeText(item.title, 100),
+        });
+      }
+    }
+    for (const t of state.delivery.tasks) {
+      if (t.status === 'failed') {
+        const key = 'delivery:' + t.id + ':failed';
+        currentAlertIds.add(key);
+        if (state.seenAlertsInitialized && !state.seenAlertIds.has(key)) {
+          freshNotifications.push({ title: 'HIVEMIND SW 전달 실패', body: safeText(t.title, 100) });
+        }
+      }
+    }
+    for (const j of state.mf.jobs) {
+      if (j.status === 'failed') {
+        const key = 'mf:' + j.id + ':failed';
+        currentAlertIds.add(key);
+        if (state.seenAlertsInitialized && !state.seenAlertIds.has(key)) {
+          freshNotifications.push({ title: 'HIVEMIND Model Factory 실패', body: safeText(j.title, 100) });
+        }
+      }
+    }
+    state.seenAlertIds = currentAlertIds;
+    state.seenAlertsInitialized = true;
+
+    if (state.notificationsEnabled && freshNotifications.length && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      for (const n of freshNotifications.slice(0, 3)) {
+        try {
+          new Notification(n.title, { body: n.body });
+        } catch {
+          // Ignore browser notification restrictions.
+        }
+      }
+    }
+  }
+
+  // ---------- HEADER & SYNC AGE ----------
+  function updateSyncAge() {
+    const elAge = byId('sync-age');
+    if (!elAge) return;
+    if (!state.lastSyncTs) {
+      elAge.textContent = '';
+      return;
+    }
+    const sec = Math.max(0, Math.round((Date.now() - state.lastSyncTs) / 1000));
+    elAge.textContent = sec < 5 ? '(방금 전)' : '(' + formatDurationSec(sec) + ' 전)';
   }
 
   function renderHeader() {
+    applyUiPrefs();
     const modeBadge = byId('monitor-mode-badge');
     if (modeBadge) {
       if (state.health?.status === 'ok') {
@@ -309,21 +546,289 @@
         modeBadge.className = 'pill tone-danger';
       }
     }
-    const pollBtn = byId('monitor-poll-toggle');
-    if (pollBtn) {
-      pollBtn.textContent = state.autoRefresh ? '자동 갱신 켜짐 (15초)' : '자동 갱신 일시정지';
-      pollBtn.setAttribute('aria-pressed', String(state.autoRefresh));
-    }
     const backendText = (v) => (v && BACKEND_LABEL[v]) || (v ? safeText(v, 32) : '미연결');
     if (byId('monitor-backend-delivery')) byId('monitor-backend-delivery').textContent = backendText(state.delivery.storageBackend);
     if (byId('monitor-backend-mf')) byId('monitor-backend-mf').textContent = backendText(state.mf.storageBackend);
     if (byId('monitor-backend-collab')) byId('monitor-backend-collab').textContent = backendText(state.collab.storageBackend);
 
+    const attentionCount = getAttentionItems().length;
+    const inboxBadge = byId('tab-badge-inbox');
+    if (inboxBadge) {
+      inboxBadge.textContent = String(attentionCount);
+      inboxBadge.className = 'nav-badge badge-attention' + (attentionCount > 0 ? ' has-items' : '');
+    }
     if (byId('tab-badge-delivery')) byId('tab-badge-delivery').textContent = String(state.delivery.tasks.length);
     if (byId('tab-badge-mf')) byId('tab-badge-mf').textContent = String(state.mf.jobs.length);
     if (byId('tab-badge-collab')) byId('tab-badge-collab').textContent = String(state.collab.sessions.length);
     const legacyCount = byId('task-count')?.textContent;
     if (byId('tab-badge-legacy') && legacyCount !== undefined) byId('tab-badge-legacy').textContent = legacyCount;
+    updateSyncAge();
+  }
+
+  // ---------- LIVE STRIP ----------
+  function renderLiveStrip() {
+    const list = byId('live-strip-list');
+    const countEl = byId('live-strip-count');
+    const dot = byId('live-pulse-dot');
+    if (!list) return;
+    list.replaceChildren();
+
+    const activeItems = [];
+    for (const t of state.delivery.tasks) {
+      if (DELIVERY_ACTIVE.has(t.status)) {
+        activeItems.push({
+          kind: 'delivery',
+          kindLabel: 'SW 전달',
+          id: t.id,
+          title: t.title,
+          status: t.status,
+          statusLabel: DELIVERY_STATUS[t.status] || t.status,
+          meta:
+            safeText(t.provider, 16) +
+            ' · 반복 ' +
+            t.currentIteration +
+            '/' +
+            t.maxIterations +
+            (t.activeRegion ? ' · ' + safeText(t.activeRegion, 24) : '') +
+            ' · 갱신 ' +
+            formatElapsedSince(t.updatedAt) +
+            ' 전',
+        });
+      }
+    }
+    for (const j of state.mf.jobs) {
+      if (MF_ACTIVE.has(j.status)) {
+        const inst = j.instance;
+        activeItems.push({
+          kind: 'mf',
+          kindLabel: 'Model Factory',
+          id: j.id,
+          title: j.title,
+          status: j.status,
+          statusLabel: MF_STATUS[j.status] || j.status,
+          meta:
+            safeText(j.compute?.instanceType, 24) +
+            ' · ' +
+            safeText(inst?.region || j.compute?.region, 24) +
+            (inst?.launchedAt ? ' · 경과 ' + formatElapsedSince(inst.launchedAt) : '') +
+            (inst?.expiresAt ? ' · TTL ' + formatTtl(inst.expiresAt) : ''),
+        });
+      }
+    }
+    for (const s of state.collab.sessions) {
+      if (s.status === 'active') {
+        activeItems.push({
+          kind: 'collab',
+          kindLabel: '병렬 협업',
+          id: s.id,
+          title: s.title,
+          status: s.status,
+          statusLabel: COLLAB_STATUS[s.status] || s.status,
+          meta: safeText(s.provider, 16) + ' · 최대 ' + s.maxParallelWorkers + '워커 · 갱신 ' + formatElapsedSince(s.updatedAt) + ' 전',
+        });
+      }
+    }
+
+    if (dot) dot.className = activeItems.length ? 'pulse-dot' : 'pulse-dot idle';
+    if (countEl) countEl.textContent = activeItems.length ? activeItems.length + '개 워크로드 실행 중 (클릭 시 상세 드로어)' : '실행 중인 워크로드 없음';
+
+    if (!activeItems.length) {
+      list.append(el('p', '현재 실행 중인 워커·학습 인스턴스가 없습니다.', 'empty'));
+      return;
+    }
+
+    for (const item of activeItems) {
+      const btn = el('button', undefined, 'live-item-btn');
+      btn.type = 'button';
+      btn.addEventListener('click', () => openDrawer(item.kind, item.id));
+      const top = el('div', undefined, 'live-item-top');
+      top.append(el('span', item.kindLabel, 'pill'), el('span', item.statusLabel, pillClass(item.status)));
+      btn.append(top, el('strong', safeText(item.title, 120)), el('span', item.meta, 'live-item-meta'));
+      list.append(btn);
+    }
+  }
+
+  // ---------- INBOX ----------
+  function buildInboxCard(item) {
+    const card = el('article', undefined, 'inbox-card');
+    const head = el('div', undefined, 'inbox-card-head');
+    const kindText = item.kind === 'delivery' ? 'SW 전달' : 'Model Factory';
+    const statusLabel = item.kind === 'delivery' ? DELIVERY_STATUS[item.status] || item.status : MF_STATUS[item.status] || item.status;
+    head.append(el('span', kindText, 'pill'), el('span', statusLabel, pillClass(item.status)));
+    card.append(head, el('strong', safeText(item.title, 140)));
+
+    const chips = el('div', undefined, 'inbox-chips');
+    if (item.kind === 'delivery') {
+      const t = item.raw;
+      chips.append(el('span', safeText(t.provider, 16) + ' · 예산 ' + formatUsd(t.budgetMicros), 'pill'));
+      if (t.publication && t.latestAttestation) {
+        const matched = t.publication.prTreeHash === t.latestAttestation.verifiedTreeHash;
+        chips.append(el('span', matched ? '트리 해시 3자 일치' : '해시 불일치 주의', matched ? 'pill tone-success' : 'pill tone-danger'));
+      }
+      if (t.publication?.changeSummary) {
+        const cs = t.publication.changeSummary;
+        chips.append(el('span', cs.totalFiles + '파일 (+' + cs.totalInsertions + '/-' + cs.totalDeletions + ')', 'pill'));
+      }
+    } else {
+      const j = item.raw;
+      chips.append(el('span', safeText(j.compute?.instanceType, 24) + ' · 예약 ' + formatUsd(j.cost?.reservedMicros), 'pill'));
+      if (j.placementPlan) {
+        chips.append(el('span', '배치 ' + safeText(j.placementPlan.status, 24), j.placementPlan.status === 'ranked' ? 'pill tone-success' : 'pill tone-attention'));
+      }
+      if (j.releaseAttestation?.attestationSource === 'operator_self_reported') {
+        chips.append(el('span', '비독립 검증(운영자 보고)', 'pill tone-attention'));
+      } else if (j.releaseAttestation?.attestationSource === 'independent_verifier') {
+        chips.append(el('span', '독립 검증 통과', 'pill tone-success'));
+      }
+    }
+    card.append(chips);
+
+    const foot = el('div', undefined, 'inbox-card-foot');
+    foot.append(el('span', '대기 ' + formatElapsedSince(item.updatedAt) + ' · ' + safeText(item.id, 24), 'quiet mono'));
+    const actionBtn = el('button', '검토 · 결정', 'compact-btn');
+    actionBtn.type = 'button';
+    actionBtn.addEventListener('click', () => openDrawer(item.kind, item.id));
+    foot.append(actionBtn);
+    card.append(foot);
+    return card;
+  }
+
+  function renderInbox() {
+    const all = getAttentionItems();
+    const overviewBox = byId('overview-inbox-list');
+    if (overviewBox) {
+      overviewBox.replaceChildren();
+      if (!all.length) {
+        overviewBox.append(el('p', '현재 사람의 결정을 기다리는 항목이 없습니다.', 'empty'));
+      } else {
+        for (const item of all.slice(0, 4)) overviewBox.append(buildInboxCard(item));
+      }
+    }
+
+    const filtered = state.inboxFilter === 'all' ? all : all.filter((i) => i.kind === state.inboxFilter);
+    if (byId('inbox-count-label')) byId('inbox-count-label').textContent = filtered.length + '건 대기 중 / 전체 ' + all.length + '건';
+    const fullBox = byId('inbox-list');
+    if (fullBox) {
+      fullBox.replaceChildren();
+      if (!filtered.length) {
+        fullBox.append(el('p', '선택한 필터에 해당하는 승인·검토 대기 항목이 없습니다.', 'empty'));
+      } else {
+        for (const item of filtered) fullBox.append(buildInboxCard(item));
+      }
+    }
+  }
+
+  // ---------- OVERVIEW & COST ANALYTICS ----------
+  function aggregateBreakdown(jobs, keyFn) {
+    const map = new Map();
+    for (const j of jobs) {
+      const label = safeText(keyFn(j) || '미지정', 64);
+      const entry = map.get(label) || { label, count: 0, settledMicros: 0, reservedMicros: 0, totalMicros: 0 };
+      entry.count += 1;
+      const settled = typeof j.cost?.settledMicros === 'number' ? j.cost.settledMicros : null;
+      if (settled !== null) {
+        entry.settledMicros += settled;
+        entry.totalMicros += settled;
+      } else if (typeof j.cost?.reservedMicros === 'number' && j.cost.reservedMicros > 0) {
+        entry.reservedMicros += j.cost.reservedMicros;
+        entry.totalMicros += j.cost.reservedMicros;
+      }
+      map.set(label, entry);
+    }
+    return Array.from(map.values());
+  }
+
+  function renderCosts() {
+    const ledger = state.mf.ledger;
+    const jobs = state.mf.jobs;
+    const ch = charts();
+
+    if (byId('costs-summary-pill') && ledger) {
+      byId('costs-summary-pill').textContent =
+        '정산 ' + formatUsd(ledger.totalSettledMicros) + ' · 예약 ' + formatUsd(ledger.totalReservedMicros);
+    }
+
+    if (ch) {
+      const chartSource = jobs.length ? jobs : ledger?.jobs || [];
+      ch.renderCostTrendChart(byId('overview-cost-chart'), chartSource, formatUsd, { compact: true });
+      ch.renderCostTrendChart(byId('costs-trend-chart'), chartSource, formatUsd, { compact: false });
+      ch.renderBreakdownBars(byId('costs-by-model'), aggregateBreakdown(jobs, (j) => j.modelId), formatUsd, '모델 기록 없음');
+      ch.renderBreakdownBars(byId('costs-by-region'), aggregateBreakdown(jobs, (j) => j.instance?.region || j.compute?.region), formatUsd, '리전 기록 없음');
+      ch.renderBreakdownBars(byId('costs-by-instance'), aggregateBreakdown(jobs, (j) => j.compute?.instanceType), formatUsd, '인스턴스 기록 없음');
+    }
+
+    // Running EC2 Spot live cost estimator & TTL countdown
+    const liveEc2 = jobs.filter((j) => j.instance && ['pending', 'running'].includes(j.instance.state));
+    if (byId('costs-ec2-count')) {
+      byId('costs-ec2-count').textContent = liveEc2.length + '대';
+      byId('costs-ec2-count').className = liveEc2.length ? 'pill tone-running' : 'pill';
+    }
+    const ec2Box = byId('costs-live-ec2');
+    if (ec2Box) {
+      ec2Box.replaceChildren();
+      if (!liveEc2.length) {
+        ec2Box.append(el('p', '현재 실행 중인 EC2 스팟 인스턴스가 없습니다.', 'empty'));
+      } else {
+        for (const j of liveEc2) {
+          const inst = j.instance;
+          const card = el('div', undefined, 'ec2-live-card');
+          const launchedTs = Date.parse(inst.launchedAt || '');
+          const expiresTs = Date.parse(inst.expiresAt || '');
+          const elapsedSec = Number.isFinite(launchedTs) ? Math.max(0, (Date.now() - launchedTs) / 1000) : 0;
+          const rate = Number(j.cost?.hourlyRateUsd ?? j.compute?.maxHourlyPriceUsd ?? 0);
+          const estMicros = Math.min(j.cost?.reservedMicros ?? Number.MAX_SAFE_INTEGER, Math.round((elapsedSec / 3600) * rate * 1_000_000));
+          const head = el('div', undefined, 'subtask-head');
+          head.append(el('strong', safeText(j.modelId, 64) + ' · ' + safeText(inst.instanceType, 24)), el('span', EC2_STATE[inst.state] || inst.state, 'pill tone-running'));
+          card.append(
+            head,
+            el('p', safeText(inst.instanceId, 32) + ' · ' + safeText(inst.region, 24) + (inst.availabilityZone ? '/' + safeText(inst.availabilityZone, 24) : ''), 'help mono'),
+            el('p', '경과 ' + formatDurationSec(elapsedSec) + ' · 상한가 기준 경과 추정 ' + formatUsd(estMicros) + ' (실청구 아님)', 'help'),
+            el('p', 'TTL: ' + formatTtl(inst.expiresAt), 'help'),
+          );
+          if (Number.isFinite(launchedTs) && Number.isFinite(expiresTs) && expiresTs > launchedTs) {
+            const pct = Math.min(100, Math.max(0, ((Date.now() - launchedTs) / (expiresTs - launchedTs)) * 100));
+            const track = el('div', undefined, 'breakdown-track');
+            const fill = el('div', undefined, 'breakdown-fill reserved');
+            fill.style.width = pct.toFixed(1) + '%';
+            track.append(fill);
+            card.append(track);
+          }
+          const btn = el('button', '상세 보기', 'secondary compact-btn');
+          btn.type = 'button';
+          btn.addEventListener('click', () => openDrawer('mf', j.id));
+          const cardActions = el('div', undefined, 'actions');
+          cardActions.append(btn);
+          card.append(cardActions);
+          ec2Box.append(card);
+        }
+      }
+    }
+
+    // SW Delivery budget & spot savings summary
+    const dlvBox = byId('costs-delivery-summary');
+    if (dlvBox) {
+      dlvBox.replaceChildren();
+      const tasks = state.delivery.tasks;
+      const totalBudget = tasks.reduce((sum, t) => sum + (typeof t.budgetMicros === 'number' ? t.budgetMicros : 0), 0);
+      const placed = tasks.filter((t) => typeof t.lastPlacement?.savingsVsPrimaryPercent === 'number');
+      const avgSavings = placed.length
+        ? placed.reduce((sum, t) => sum + t.lastPlacement.savingsVsPrimaryPercent, 0) / placed.length
+        : null;
+      const facts = el('dl', undefined, 'repository-facts compact-facts');
+      const addFact = (dt, dd) => {
+        const d = el('div');
+        d.append(el('dt', dt), el('dd', dd));
+        facts.append(d);
+      };
+      addFact('총 SW 전달 작업', tasks.length + '건 (Draft PR ' + tasks.filter((t) => Boolean(t.publication)).length + '건)');
+      addFact('승인 예산 합계', formatUsd(totalBudget));
+      addFact('평균 스팟 절감률', avgSavings !== null ? avgSavings.toFixed(1) + '% (' + placed.length + '건 기준)' : '배치 기록 없음');
+      addFact('모델·Fargate 실청구', '미확정 (중앙 원장 미포함 · 별도 구독/AWS 청구)');
+      dlvBox.append(facts);
+      const badges = el('div', undefined, 'status-badges');
+      renderStatusBadges(badges, countByStatus(tasks), DELIVERY_STATUS);
+      dlvBox.append(badges);
+    }
   }
 
   function renderOverview() {
@@ -368,41 +873,39 @@
       byId('legend-cap').textContent = formatUsd(cap);
 
       const tbody = byId('monitor-ledger-body');
-      tbody.replaceChildren();
-      const entries = Array.isArray(ledger.jobs) ? [...ledger.jobs] : [];
-      entries.sort((a, b) => Date.parse(b.createdAt || '') - Date.parse(a.createdAt || ''));
-      if (!entries.length) {
-        const row = el('tr');
-        const cell = el('td', '아직 Model Factory 비용 원장 기록이 없습니다.', 'empty-cell');
-        cell.colSpan = 7;
-        row.append(cell);
-        tbody.append(row);
-      } else {
-        for (const entry of entries) {
-          const row = el('tr', undefined, 'clickable-row');
-          row.addEventListener('click', () => {
-            selectMfJob(entry.jobId);
-            switchTab('model-factory');
-          });
-          row.append(
-            el('td', safeText(entry.jobId, 48), 'mono'),
-            el('td', safeText(entry.modelId, 64)),
-            (() => {
-              const td = el('td');
-              td.append(el('span', MF_STATUS[entry.status] || safeText(entry.status, 32), pillClass(entry.status)));
-              return td;
-            })(),
-            el('td', safeText(entry.region, 32) + ' · ' + safeText(entry.instanceType, 32)),
-            el('td', formatUsd(entry.reservedMicros), 'num mono'),
-            el('td', entry.settledMicros === null ? '미정산' : formatUsd(entry.settledMicros), 'num mono'),
-            el('td', entry.settledAt ? formatDate(entry.settledAt) : '미정산'),
-          );
+      if (tbody) {
+        tbody.replaceChildren();
+        const entries = Array.isArray(ledger.jobs) ? [...ledger.jobs] : [];
+        entries.sort((a, b) => Date.parse(b.createdAt || '') - Date.parse(a.createdAt || ''));
+        if (!entries.length) {
+          const row = el('tr');
+          const cell = el('td', '아직 Model Factory 비용 원장 기록이 없습니다.', 'empty-cell');
+          cell.colSpan = 7;
+          row.append(cell);
           tbody.append(row);
+        } else {
+          for (const entry of entries) {
+            const row = el('tr', undefined, 'clickable-row');
+            row.addEventListener('click', () => openDrawer('mf', entry.jobId));
+            row.append(
+              el('td', safeText(entry.jobId, 48), 'mono'),
+              el('td', safeText(entry.modelId, 64)),
+              (() => {
+                const td = el('td');
+                td.append(el('span', MF_STATUS[entry.status] || safeText(entry.status, 32), pillClass(entry.status)));
+                return td;
+              })(),
+              el('td', safeText(entry.region, 32) + ' · ' + safeText(entry.instanceType, 32)),
+              el('td', formatUsd(entry.reservedMicros), 'num mono'),
+              el('td', entry.settledMicros === null ? '미정산' : formatUsd(entry.settledMicros), 'num mono'),
+              el('td', entry.settledAt ? formatDate(entry.settledAt) : '미정산'),
+            );
+            tbody.append(row);
+          }
         }
       }
     }
 
-    // Subsystem summaries
     const deliveryBudgetSum = state.delivery.tasks.reduce((acc, t) => acc + (typeof t.budgetMicros === 'number' ? t.budgetMicros : 0), 0);
     const prCount = state.delivery.tasks.filter((t) => Boolean(t.publication)).length;
     byId('overview-delivery-budget').textContent =
@@ -416,6 +919,9 @@
     byId('overview-collab-summary').textContent = '총 ' + state.collab.sessions.length + '개 세션 · 활성 ' + collabActive + '개';
     renderStatusBadges(byId('overview-collab-badges'), countByStatus(state.collab.sessions), COLLAB_STATUS);
 
+    renderLiveStrip();
+    renderInbox();
+    renderCosts();
     renderSpotAdvisor();
     renderRecentEvents();
   }
@@ -425,10 +931,7 @@
     const body = byId('spot-advisor-body');
     if (!body) return;
     body.replaceChildren();
-
-    if (state.spotStatusText) {
-      statusEl.textContent = state.spotStatusText;
-    }
+    if (state.spotStatusText && statusEl) statusEl.textContent = state.spotStatusText;
 
     const decision = state.spotPlacement || state.delivery.tasks.find((t) => t.lastPlacement)?.lastPlacement || null;
     if (!decision) {
@@ -460,36 +963,54 @@
     if (Array.isArray(decision.candidates) && decision.candidates.length) {
       const list = el('ul', undefined, 'diag-list');
       for (const c of decision.candidates.slice(0, 6)) {
-        const line =
-          safeText(c.region, 24) +
-          (c.azId ? ' (' + safeText(c.azId, 24) + ')' : '') +
-          ' · 점수 ' +
-          (c.latestScore ?? '-') +
-          ' · 단가 ' +
-          (typeof c.latestPriceUsd === 'number' ? '$' + c.latestPriceUsd.toFixed(4) + '/hr' : '-') +
-          (c.eligible ? ' · 적합' : ' · 제외 (' + safeText(c.rejectionReason || '조건 미달', 80) + ')');
-        list.append(el('li', line));
+        list.append(
+          el(
+            'li',
+            safeText(c.region, 24) +
+              (c.azId ? ' (' + safeText(c.azId, 24) + ')' : '') +
+              ' · 점수 ' +
+              (c.latestScore ?? '-') +
+              ' · 단가 ' +
+              (typeof c.latestPriceUsd === 'number' ? '$' + c.latestPriceUsd.toFixed(4) + '/hr' : '-') +
+              (c.eligible ? ' · 적합' : ' · 제외 (' + safeText(c.rejectionReason || '조건 미달', 80) + ')'),
+          ),
+        );
       }
       body.append(list);
     }
   }
 
+  function isErrorEvent(ev) {
+    const hay = (String(ev.type || '') + ' ' + JSON.stringify(ev.data || {})).toLowerCase();
+    return /fail|error|cancel|reject|interrupt|exceeded|expired|denied|forced/.test(hay);
+  }
+
   function renderRecentEvents() {
     const list = byId('monitor-recent-events');
     if (!list) return;
-    const merged = [
-      ...state.delivery.events.map((e) => ({ source: 'SW 전달', id: e.taskId, type: e.type, at: e.at, data: e.data })),
-      ...state.mf.events.map((e) => ({ source: 'Model Factory', id: e.jobId, type: e.type, at: e.at, data: e.data })),
-    ]
-      .sort((a, b) => Date.parse(b.at || '') - Date.parse(a.at || ''))
-      .slice(0, 25);
+    const { source, errorsOnly, query } = state.eventFilter;
+    const q = query.trim().toLowerCase();
 
-    const sig = JSON.stringify(merged.map((e) => [e.source, e.id, e.type, e.at]));
+    let merged = [
+      ...state.delivery.events.map((e) => ({ kind: 'delivery', source: 'SW 전달', id: e.taskId, type: e.type, at: e.at, data: e.data })),
+      ...state.mf.events.map((e) => ({ kind: 'mf', source: 'Model Factory', id: e.jobId, type: e.type, at: e.at, data: e.data })),
+    ];
+    if (source !== 'all') merged = merged.filter((e) => e.kind === source);
+    if (errorsOnly) merged = merged.filter(isErrorEvent);
+    if (q) {
+      merged = merged.filter((e) =>
+        (e.source + ' ' + e.id + ' ' + e.type + ' ' + JSON.stringify(e.data || {})).toLowerCase().includes(q),
+      );
+    }
+    merged.sort((a, b) => Date.parse(b.at || '') - Date.parse(a.at || ''));
+    merged = merged.slice(0, 40);
+
+    const sig = JSON.stringify([source, errorsOnly, q, merged.map((e) => [e.kind, e.id, e.type, e.at])]);
     if (list.dataset.signature === sig) return;
     list.dataset.signature = sig;
     list.replaceChildren();
     if (!merged.length) {
-      list.append(el('li', '아직 기록된 AWS 단일 경로 이벤트가 없습니다.', 'empty'));
+      list.append(el('li', '조건에 맞는 이벤트가 없습니다.', 'empty'));
       return;
     }
     for (const ev of merged) {
@@ -498,7 +1019,14 @@
       time.dateTime = safeText(ev.at, 40);
       const body = el('div');
       const titleLine = el('div', undefined, 'event-head');
-      titleLine.append(el('span', ev.source, 'pill'), el('strong', safeText(ev.type, 80)), el('span', safeText(ev.id, 48), 'quiet mono'));
+      const idBtn = el('button', safeText(ev.id, 36), 'secondary compact-btn mono');
+      idBtn.type = 'button';
+      idBtn.addEventListener('click', () => openDrawer(ev.kind, ev.id));
+      titleLine.append(
+        el('span', ev.source, isErrorEvent(ev) ? 'pill tone-danger' : 'pill'),
+        el('strong', safeText(ev.type, 80)),
+        idBtn,
+      );
       body.append(titleLine);
       if (ev.data && Object.keys(ev.data).length) {
         body.append(el('p', safeText(JSON.stringify(ev.data), 600)));
@@ -508,12 +1036,372 @@
     }
   }
 
+  // ---------- RIGHT SLIDE-OVER DETAIL DRAWER ----------
+  function openDrawer(kind, id) {
+    state.drawer = { open: true, kind, id, fingerprint: null };
+    if (kind === 'delivery') {
+      const t = state.delivery.tasks.find((x) => x.id === id);
+      state.drawer.fingerprint = t?.approvalFingerprint || null;
+    } else if (kind === 'mf') {
+      const j = state.mf.jobs.find((x) => x.id === id);
+      state.drawer.fingerprint = j?.approvalFingerprint || null;
+    } else if (kind === 'collab') {
+      void selectCollab(id);
+    }
+    renderDrawer();
+  }
+
+  function closeDrawer() {
+    state.drawer = { open: false, kind: null, id: null, fingerprint: null };
+    const drawer = byId('detail-drawer');
+    const backdrop = byId('drawer-backdrop');
+    if (drawer) drawer.hidden = true;
+    if (backdrop) backdrop.hidden = true;
+  }
+
+  function renderDrawer() {
+    const drawer = byId('detail-drawer');
+    const backdrop = byId('drawer-backdrop');
+    if (!drawer || !backdrop) return;
+    if (!state.drawer.open || !state.drawer.kind || !state.drawer.id) {
+      drawer.hidden = true;
+      backdrop.hidden = true;
+      return;
+    }
+    drawer.hidden = false;
+    backdrop.hidden = false;
+
+    const kindEl = byId('drawer-kind');
+    const statusEl = byId('drawer-status');
+    const idEl = byId('drawer-id');
+    const titleEl = byId('drawer-title');
+    const stepperEl = byId('drawer-stepper');
+    const bodyEl = byId('drawer-body');
+    const ch = charts();
+    bodyEl.replaceChildren();
+
+    if (state.drawer.kind === 'delivery') {
+      const task = state.delivery.tasks.find((t) => t.id === state.drawer.id);
+      if (!task) {
+        titleEl.textContent = '작업을 찾을 수 없습니다';
+        return;
+      }
+      kindEl.textContent = 'SW 전달';
+      statusEl.textContent = DELIVERY_STATUS[task.status] || task.status;
+      statusEl.className = pillClass(task.status);
+      idEl.textContent = safeText(task.id, 48);
+      titleEl.textContent = safeText(task.title, 180);
+      if (ch) ch.renderStepper(stepperEl, ch.deliverySteps(task));
+
+      if (state.drawer.fingerprint && state.drawer.fingerprint !== task.approvalFingerprint) {
+        state.drawer.fingerprint = task.approvalFingerprint;
+        setError('검토 중인 SW 전달 작업의 approvalFingerprint가 변경되었습니다. 다시 검토하세요.');
+      }
+
+      const facts = el('dl', undefined, 'repository-facts');
+      const add = (dt, dd, wide) => {
+        const d = el('div', undefined, wide ? 'wide' : undefined);
+        d.append(el('dt', dt), el('dd', dd));
+        facts.append(d);
+      };
+      add('제공자 · 반복', safeText(task.provider, 24) + ' · ' + task.currentIteration + '/' + task.maxIterations);
+      add('승인 예산', formatUsd(task.budgetMicros) + ' (모델·Fargate 미확정)');
+      add('대상 저장소', safeText(task.delivery?.repository, 160) + ' (' + safeText(task.delivery?.baseBranch, 48) + ')');
+      add('리전 · 스팟 재시도', (task.activeRegion || '미배정') + ' · ' + task.spotRetriesUsed + '/' + (task.spot?.maxSpotRetries ?? 0));
+      if (task.publication) {
+        const pubRow = el('div', undefined, 'wide');
+        pubRow.append(el('dt', 'Draft PR'));
+        const dd = el('dd');
+        dd.append(safeHttpsLink(task.publication.prUrl, 'PR #' + task.publication.prNumber + ' · ' + task.publication.branchName));
+        pubRow.append(dd);
+        facts.append(pubRow);
+      }
+      if (task.latestAttestation) {
+        const att = task.latestAttestation;
+        const matched = task.publication ? task.publication.prTreeHash === att.verifiedTreeHash : null;
+        add(
+          '독립 검증 증명',
+          (att.checksPassed ? '통과' : '실패') +
+            ' · 수용 테스트 무수정 ' +
+            (att.acceptancePathsUnmodified ? '확인' : '위반') +
+            (matched !== null ? ' · 트리 해시 ' + (matched ? '3자 일치' : '불일치') : ''),
+          true,
+        );
+      }
+      bodyEl.append(facts);
+
+      if (!DELIVERY_TERMINAL.has(task.status)) {
+        const panel = el('section', undefined, 'decision-panel');
+        const awaitingApproval = task.status === 'awaiting_approval';
+        const awaitingHuman = task.status === 'draft_pr_published';
+        panel.append(
+          el('h3', awaitingApproval ? '실행 승인' : awaitingHuman ? 'Draft PR 검토 결정' : '작업 제어'),
+          el(
+            'p',
+            awaitingApproval
+              ? '승인 시 Fargate Spot 워커가 기동되어 실제 모델 호출 및 독립 검증을 수행합니다.'
+              : awaitingHuman
+                ? '검토 이력을 기록합니다. Git 자동 병합·푸시는 수행하지 않습니다.'
+                : '사유를 입력해 작업을 중단할 수 있습니다.',
+          ),
+        );
+        if (awaitingApproval) panel.append(el('p', 'approvalFingerprint: ' + safeText(task.approvalFingerprint, 64), 'fingerprint-box'));
+        const form = el('form');
+        const reasonInput = el('textarea');
+        reasonInput.rows = 2;
+        reasonInput.maxLength = 2000;
+        reasonInput.required = true;
+        reasonInput.placeholder = '승인·반려·중단 사유를 입력하세요.';
+        const lbl = el('label', '결정 사유');
+        lbl.append(reasonInput);
+        form.append(lbl);
+
+        let openedDiffCheck = null;
+        let durationInput = null;
+        if (awaitingHuman) {
+          openedDiffCheck = el('input');
+          openedDiffCheck.type = 'checkbox';
+          const cbLbl = el('label', undefined, 'checkbox-label');
+          cbLbl.append(openedDiffCheck, el('span', 'Git diff를 직접 열어 확인함 (openedDiff)'));
+          durationInput = el('input');
+          durationInput.type = 'number';
+          durationInput.value = '1';
+          durationInput.step = '0.1';
+          durationInput.min = '0';
+          const durLbl = el('label', '소요 시간 (분)', 'compact-input');
+          durLbl.append(durationInput);
+          form.append(cbLbl, durLbl);
+        }
+
+        const actions = el('div', undefined, 'actions');
+        const addBtn = (text, val, cls) => {
+          const b = el('button', text, cls);
+          b.type = 'submit';
+          b.value = val;
+          b.disabled = state.busy;
+          actions.append(b);
+        };
+        if (awaitingApproval) addBtn('실행 승인 (Fargate Spot 기동)', 'approve');
+        if (awaitingHuman) {
+          addBtn('Draft PR 승인 기록', 'human_approve');
+          addBtn('Draft PR 반려 기록', 'human_reject', 'secondary');
+        }
+        addBtn('작업 중단', 'cancel', 'danger');
+        form.append(actions);
+        form.addEventListener('submit', (e) => {
+          e.preventDefault();
+          const op = e.submitter?.value;
+          const reason = reasonInput.value.trim();
+          if (!reason) {
+            setError('결정 사유를 입력하세요.');
+            return;
+          }
+          const encId = encodeURIComponent(task.id);
+          if (op === 'approve') {
+            return runMutation(() => monitorApi('/api/delivery/tasks/' + encId + '/approve', { approvalFingerprint: task.approvalFingerprint, reason }, 35000), 'SW 전달 작업 실행을 승인했습니다.');
+          }
+          if (op === 'cancel') {
+            return runMutation(() => monitorApi('/api/delivery/tasks/' + encId + '/cancel', { reason }, 35000), 'SW 전달 작업을 중단했습니다.');
+          }
+          if (op === 'human_approve' || op === 'human_reject') {
+            return runMutation(
+              () =>
+                monitorApi('/api/delivery/tasks/' + encId + '/human-decision', {
+                  decision: op === 'human_approve' ? 'approve' : 'reject',
+                  openedDiff: Boolean(openedDiffCheck?.checked),
+                  durationMinutes: Number(durationInput?.value || 0),
+                  reason,
+                }),
+              op === 'human_approve' ? 'Draft PR 승인 검토 이력을 기록했습니다.' : 'Draft PR 반려 검토 이력을 기록했습니다.',
+            );
+          }
+        });
+        panel.append(form);
+        bodyEl.append(panel);
+      }
+
+      bodyEl.append(el('h3', '지시 내용'), el('p', safeText(task.instructions, 3000), 'instructions'));
+    } else if (state.drawer.kind === 'mf') {
+      const job = state.mf.jobs.find((j) => j.id === state.drawer.id);
+      if (!job) {
+        titleEl.textContent = '작업을 찾을 수 없습니다';
+        return;
+      }
+      kindEl.textContent = 'Model Factory';
+      statusEl.textContent = MF_STATUS[job.status] || job.status;
+      statusEl.className = pillClass(job.status);
+      idEl.textContent = safeText(job.id, 48);
+      titleEl.textContent = safeText(job.title, 180);
+      if (ch) ch.renderStepper(stepperEl, ch.mfSteps(job));
+
+      if (state.drawer.fingerprint && state.drawer.fingerprint !== job.approvalFingerprint) {
+        state.drawer.fingerprint = job.approvalFingerprint;
+        setError('검토 중인 Model Factory 작업의 approvalFingerprint가 변경되었습니다. 다시 검토하세요.');
+      }
+
+      if (job.releaseAttestation?.verificationDisclaimer) {
+        bodyEl.append(el('p', safeText(job.releaseAttestation.verificationDisclaimer, 400), 'evidence-warning'));
+      }
+
+      const facts = el('dl', undefined, 'repository-facts');
+      const add = (dt, dd, wide) => {
+        const d = el('div', undefined, wide ? 'wide' : undefined);
+        d.append(el('dt', dt), el('dd', dd));
+        facts.append(d);
+      };
+      add('모델 ID', safeText(job.modelId, 120));
+      add('컴퓨트', safeText(job.compute?.instanceType, 32) + ' · ' + safeText(job.instance?.region || job.compute?.region, 24));
+      add('예약 상한', formatUsd(job.cost?.reservedMicros));
+      add('정산 추정 (실청구 아님)', job.cost?.settledMicros === null ? '미정산' : formatUsd(job.cost?.settledMicros));
+      if (job.instance) {
+        add('EC2 스팟 상태', safeText(job.instance.instanceId, 32) + ' · ' + (EC2_STATE[job.instance.state] || job.instance.state));
+        add('TTL 만료', formatTtl(job.instance.expiresAt));
+      }
+      if (job.placementPlan) {
+        add('배치 계획', safeText(job.placementPlan.status, 24) + ' · ' + safeText(job.placementPlan.note, 200), true);
+      }
+      if (job.publication?.url) {
+        const row = el('div', undefined, 'wide');
+        row.append(el('dt', '공개 결과'));
+        const dd = el('dd');
+        dd.append(safeHttpsLink(job.publication.url, job.publication.url));
+        row.append(dd);
+        facts.append(row);
+      }
+      bodyEl.append(facts);
+
+      if (!MF_TERMINAL.has(job.status)) {
+        const panel = el('section', undefined, 'decision-panel');
+        const awaitingTrain = job.status === 'awaiting_training_approval';
+        const awaitingRelease = job.status === 'awaiting_release_approval';
+        panel.append(
+          el('h3', awaitingTrain ? '학습 승인' : awaitingRelease ? '공개 승인' : '학습 제어'),
+          el(
+            'p',
+            awaitingTrain
+              ? '승인 시 중앙 예산을 예약하고 EC2 스팟 인스턴스를 기동합니다.'
+              : awaitingRelease
+                ? '검증 근거와 다이제스트를 확인한 뒤 공개 여부를 결정하세요.'
+                : '상태를 점검(Wake)하거나 사유를 적어 작업을 중단할 수 있습니다.',
+          ),
+        );
+        if (awaitingTrain) panel.append(el('p', 'approvalFingerprint: ' + safeText(job.approvalFingerprint, 64), 'fingerprint-box'));
+
+        const form = el('form');
+        const reasonInput = el('textarea');
+        reasonInput.rows = 2;
+        reasonInput.maxLength = 2000;
+        reasonInput.required = true;
+        reasonInput.placeholder = '승인·반려·중단 사유를 입력하세요.';
+        const lbl = el('label', '결정 사유');
+        lbl.append(reasonInput);
+        form.append(lbl);
+
+        let openedRawCheck = null;
+        let durationInput = null;
+        if (awaitingRelease) {
+          openedRawCheck = el('input');
+          openedRawCheck.type = 'checkbox';
+          const cbLbl = el('label', undefined, 'checkbox-label');
+          cbLbl.append(openedRawCheck, el('span', '원본 산출물을 직접 열람함 (openedRawArtifacts)'));
+          durationInput = el('input');
+          durationInput.type = 'number';
+          durationInput.value = '1';
+          durationInput.step = '0.1';
+          durationInput.min = '0';
+          const durLbl = el('label', '소요 시간 (분)', 'compact-input');
+          durLbl.append(durationInput);
+          form.append(cbLbl, durLbl);
+        }
+
+        const actions = el('div', undefined, 'actions');
+        const addBtn = (text, val, cls) => {
+          const b = el('button', text, cls);
+          b.type = 'submit';
+          b.value = val;
+          b.disabled = state.busy;
+          actions.append(b);
+        };
+        if (awaitingTrain) addBtn('학습 승인 (예산 예약·EC2 기동)', 'approve_training');
+        if (awaitingRelease) {
+          addBtn('공개 승인', 'approve_release');
+          addBtn('공개 반려', 'reject_release', 'secondary');
+        }
+        addBtn('작업 중단', 'cancel', 'danger');
+        form.append(actions);
+        form.addEventListener('submit', (e) => {
+          e.preventDefault();
+          const op = e.submitter?.value;
+          const reason = reasonInput.value.trim();
+          if (!reason) {
+            setError('결정 사유를 입력하세요.');
+            return;
+          }
+          const encId = encodeURIComponent(job.id);
+          if (op === 'approve_training') {
+            return runMutation(() => monitorApi('/api/model-factory/jobs/' + encId + '/approve-training', { approvalFingerprint: job.approvalFingerprint, reason }, 35000), 'Model Factory 학습을 승인했습니다.');
+          }
+          if (op === 'cancel') {
+            return runMutation(() => monitorApi('/api/model-factory/jobs/' + encId + '/cancel', { reason }, 35000), 'Model Factory 작업을 중단했습니다.');
+          }
+          if (op === 'approve_release' || op === 'reject_release') {
+            return runMutation(
+              () =>
+                monitorApi('/api/model-factory/jobs/' + encId + '/approve-release', {
+                  decision: op === 'approve_release' ? 'approve' : 'reject',
+                  openedRawArtifacts: Boolean(openedRawCheck?.checked),
+                  durationMinutes: Number(durationInput?.value || 0),
+                  reason,
+                }, 60000),
+              op === 'approve_release' ? '산출물 공개를 승인했습니다.' : '산출물 공개를 반려했습니다.',
+            );
+          }
+        });
+        panel.append(form);
+        bodyEl.append(panel);
+      }
+    } else if (state.drawer.kind === 'collab') {
+      const session =
+        (state.collab.snapshot?.session?.id === state.drawer.id ? state.collab.snapshot.session : null) ||
+        state.collab.sessions.find((s) => s.id === state.drawer.id);
+      if (!session) {
+        titleEl.textContent = '협업 세션을 찾을 수 없습니다';
+        return;
+      }
+      const subtasks = state.collab.snapshot?.session?.id === session.id ? state.collab.snapshot.subtasks || [] : [];
+      kindEl.textContent = '병렬 협업';
+      statusEl.textContent = COLLAB_STATUS[session.status] || session.status;
+      statusEl.className = pillClass(session.status);
+      idEl.textContent = safeText(session.id, 48);
+      titleEl.textContent = safeText(session.title, 180);
+      if (ch) ch.renderStepper(stepperEl, ch.collabSteps(session, subtasks));
+
+      bodyEl.append(el('p', safeText(session.goal, 2000), 'instructions'));
+      const subHead = el('h3', '하위 작업 (' + subtasks.length + '건)');
+      bodyEl.append(subHead);
+      if (!subtasks.length) {
+        bodyEl.append(el('p', '하위 작업 정보를 불러오는 중이거나 등록된 항목이 없습니다.', 'empty'));
+      } else {
+        for (const st of subtasks) {
+          const card = el('div', undefined, 'subtask-card');
+          const row = el('div', undefined, 'subtask-head');
+          row.append(el('strong', safeText(st.title, 120)), el('span', SUBTASK_STATUS[st.status] || st.status, pillClass(st.status)));
+          card.append(row, el('p', (st.assignedAgentId || '미배정') + ' · ' + (st.region || '-'), 'help'));
+          bodyEl.append(card);
+        }
+      }
+    }
+  }
+
   // ---------- SW DELIVERY ----------
   function filterDelivery(tasks) {
-    if (state.deliveryFilter === 'active') return tasks.filter((t) => DELIVERY_ACTIVE.has(t.status));
-    if (state.deliveryFilter === 'attention') return tasks.filter((t) => DELIVERY_ATTENTION.has(t.status));
-    if (state.deliveryFilter === 'terminal') return tasks.filter((t) => DELIVERY_TERMINAL.has(t.status));
-    return tasks;
+    let out = tasks;
+    if (state.deliveryFilter === 'active') out = out.filter((t) => DELIVERY_ACTIVE.has(t.status));
+    else if (state.deliveryFilter === 'attention') out = out.filter((t) => DELIVERY_ATTENTION.has(t.status));
+    else if (state.deliveryFilter === 'terminal') out = out.filter((t) => DELIVERY_TERMINAL.has(t.status));
+    const q = state.deliverySearch.trim().toLowerCase();
+    if (q) out = out.filter((t) => (t.id + ' ' + t.title + ' ' + t.provider + ' ' + (t.delivery?.repository || '')).toLowerCase().includes(q));
+    return out;
   }
 
   function selectDelivery(id) {
@@ -563,12 +1451,14 @@
     byId('delivery-detail').hidden = !task;
     if (!task) return;
 
-    // Guard against approval fingerprint drift while user is reviewing
     if (state.selectedDeliveryFingerprint && state.selectedDeliveryFingerprint !== task.approvalFingerprint) {
       state.selectedDeliveryFingerprint = task.approvalFingerprint;
       byId('dlv-reason').value = '';
       setError('선택한 SW 전달 작업의 승인 지문(approvalFingerprint)이 변경되었습니다. 내용을 다시 검토한 뒤 사유를 입력하세요.');
     }
+
+    const ch = charts();
+    if (ch) ch.renderStepper(byId('dlv-stepper'), ch.deliverySteps(task));
 
     byId('dlv-id').textContent = safeText(task.id, 64);
     byId('dlv-title').textContent = safeText(task.title, 200);
@@ -612,17 +1502,12 @@
       outcome.hidden = true;
     }
 
-    // Safe operator controls
     const isTerminal = DELIVERY_TERMINAL.has(task.status);
     byId('dlv-action-section').hidden = isTerminal;
     if (!isTerminal) {
       const awaitingApproval = task.status === 'awaiting_approval';
       const awaitingHuman = task.status === 'draft_pr_published';
-      byId('dlv-action-title').textContent = awaitingApproval
-        ? '실행 승인이 필요합니다'
-        : awaitingHuman
-          ? 'Draft PR 결과를 검토해 주세요'
-          : '작업을 감독하고 있습니다';
+      byId('dlv-action-title').textContent = awaitingApproval ? '실행 승인이 필요합니다' : awaitingHuman ? 'Draft PR 결과를 검토해 주세요' : '작업을 감독하고 있습니다';
       byId('dlv-action-desc').textContent = awaitingApproval
         ? '승인하면 AWS Fargate Spot 워커가 기동되어 실제 모델 호출 및 독립 검증을 수행합니다.'
         : awaitingHuman
@@ -639,19 +1524,11 @@
       for (const b of byId('dlv-action-form').querySelectorAll('button')) b.disabled = state.busy;
     }
 
-    // Attestation & Draft PR
     byId('dlv-test-cmd').textContent = task.acceptance?.testCommand ? safeText(JSON.stringify(task.acceptance.testCommand), 400) : '미보고';
     byId('dlv-acceptance-digest').textContent = safeText(task.acceptance?.digest, 64) || '미보고';
     const att = task.latestAttestation;
     byId('dlv-attest-status').textContent = att
-      ? (att.checksPassed ? '통과' : '실패') +
-        ' · 수용 테스트 무수정 ' +
-        (att.acceptancePathsUnmodified ? '확인' : '위반') +
-        ' · 종료 코드 ' +
-        (att.exitCode === null ? '없음' : att.exitCode) +
-        ' · ' +
-        (att.durationMs / 1000).toFixed(2) +
-        '초'
+      ? (att.checksPassed ? '통과' : '실패') + ' · 수용 테스트 무수정 ' + (att.acceptancePathsUnmodified ? '확인' : '위반') + ' · 종료 코드 ' + (att.exitCode === null ? '없음' : att.exitCode) + ' · ' + (att.durationMs / 1000).toFixed(2) + '초'
       : '아직 보고되지 않음';
     byId('dlv-verified-hash').textContent = att ? safeText(att.verifiedTreeHash, 40) : '미보고';
     byId('dlv-attest-summary').textContent = att ? safeText(att.summary, 2000) : '아직 보고된 검증 요약이 없습니다.';
@@ -675,13 +1552,7 @@
       if (cs && Array.isArray(cs.files) && cs.files.length) {
         const ul = el('ul', undefined, 'diag-list');
         for (const f of cs.files.slice(0, 30)) {
-          ul.append(
-            el(
-              'li',
-              safeText(f.path, 200) + (f.binary ? ' (binary)' : ' (+' + (f.insertions ?? 0) + ' / -' + (f.deletions ?? 0) + ')'),
-              'mono',
-            ),
-          );
+          ul.append(el('li', safeText(f.path, 200) + (f.binary ? ' (binary)' : ' (+' + (f.insertions ?? 0) + ' / -' + (f.deletions ?? 0) + ')'), 'mono'));
         }
         filesBox.append(ul);
       }
@@ -694,7 +1565,6 @@
       byId('dlv-changed-files').replaceChildren();
     }
 
-    // Spot placement & preflight
     const lp = task.lastPlacement;
     byId('dlv-place-region').textContent = lp ? safeText(lp.selectedRegion, 32) + (lp.selectedAzId ? ' / ' + safeText(lp.selectedAzId, 32) : '') : '미배치';
     byId('dlv-place-metrics').textContent = lp
@@ -706,27 +1576,22 @@
     byId('dlv-place-reason').textContent = lp ? safeText(lp.reason, 400) : '배치 기록 없음';
     const pf = task.lastPreflight;
     byId('dlv-preflight').textContent = pf
-      ? (pf.ok ? '통과' : '실패') +
-        ' · CLI ' +
-        (pf.cliVersion ? safeText(pf.cliVersion, 64) : '미보고') +
-        ' · auth ' +
-        (pf.authReady ? 'OK' : '미준비') +
-        ' · git ' +
-        (pf.gitReady ? 'OK' : '미준비') +
-        (pf.reason ? ' · ' + safeText(pf.reason, 200) : '')
+      ? (pf.ok ? '통과' : '실패') + ' · CLI ' + (pf.cliVersion ? safeText(pf.cliVersion, 64) : '미보고') + ' · auth ' + (pf.authReady ? 'OK' : '미준비') + ' · git ' + (pf.gitReady ? 'OK' : '미준비') + (pf.reason ? ' · ' + safeText(pf.reason, 200) : '')
       : '프리플라이트 기록 없음';
 
-    // Task events
     const taskEvents = state.delivery.events.filter((e) => e.taskId === task.id).sort((a, b) => b.sequence - a.sequence);
     renderEntityEvents(byId('dlv-events'), taskEvents);
   }
 
   // ---------- MODEL FACTORY ----------
   function filterMf(jobs) {
-    if (state.mfFilter === 'active') return jobs.filter((j) => MF_ACTIVE.has(j.status));
-    if (state.mfFilter === 'attention') return jobs.filter((j) => MF_ATTENTION.has(j.status));
-    if (state.mfFilter === 'terminal') return jobs.filter((j) => MF_TERMINAL.has(j.status));
-    return jobs;
+    let out = jobs;
+    if (state.mfFilter === 'active') out = out.filter((j) => MF_ACTIVE.has(j.status));
+    else if (state.mfFilter === 'attention') out = out.filter((j) => MF_ATTENTION.has(j.status));
+    else if (state.mfFilter === 'terminal') out = out.filter((j) => MF_TERMINAL.has(j.status));
+    const q = state.mfSearch.trim().toLowerCase();
+    if (q) out = out.filter((j) => (j.id + ' ' + j.title + ' ' + j.modelId + ' ' + (j.compute?.region || '') + ' ' + (j.compute?.instanceType || '')).toLowerCase().includes(q));
+    return out;
   }
 
   function selectMfJob(id) {
@@ -790,6 +1655,9 @@
       setError('선택한 Model Factory 작업의 승인 지문(approvalFingerprint)이 변경되었습니다. 범위를 다시 검토하세요.');
     }
 
+    const ch = charts();
+    if (ch) ch.renderStepper(byId('mf-stepper'), ch.mfSteps(job));
+
     byId('mf-id').textContent = safeText(job.id, 64);
     byId('mf-title').textContent = safeText(job.title, 200);
     byId('mf-status').textContent = MF_STATUS[job.status] || safeText(job.status, 32);
@@ -808,10 +1676,7 @@
         ? '미정산 (실행 종료 후 정산)'
         : formatUsd(job.cost.settledMicros) + (job.cost.settledAt ? ' · ' + formatDate(job.cost.settledAt) : '');
     byId('mf-rate').textContent =
-      '$' +
-      Number(job.cost?.hourlyRateUsd ?? job.compute?.maxHourlyPriceUsd ?? 0).toFixed(4) +
-      '/hr · ' +
-      formatDurationSec(job.cost?.instanceSeconds);
+      '$' + Number(job.cost?.hourlyRateUsd ?? job.compute?.maxHourlyPriceUsd ?? 0).toFixed(4) + '/hr · ' + formatDurationSec(job.cost?.instanceSeconds);
     byId('mf-release-policy').textContent =
       safeText(job.releasePolicy?.mode, 32) +
       ' · ' +
@@ -829,18 +1694,12 @@
       outcome.hidden = false;
     } else if (job.releaseDecision) {
       outcome.textContent =
-        '공개 결정: ' +
-        (job.releaseDecision.decision === 'approve' ? '승인' : '반려') +
-        ' · 원본 열람 ' +
-        (job.releaseDecision.openedRawArtifacts ? '예' : '아니오') +
-        ' · ' +
-        safeText(job.releaseDecision.reason, 400);
+        '공개 결정: ' + (job.releaseDecision.decision === 'approve' ? '승인' : '반려') + ' · 원본 열람 ' + (job.releaseDecision.openedRawArtifacts ? '예' : '아니오') + ' · ' + safeText(job.releaseDecision.reason, 400);
       outcome.hidden = false;
     } else {
       outcome.hidden = true;
     }
 
-    // Safe controls
     const isTerminal = MF_TERMINAL.has(job.status);
     byId('mf-action-section').hidden = isTerminal;
     if (!isTerminal) {
@@ -849,13 +1708,7 @@
       const evaluating = job.status === 'evaluating';
       const awaitingRelease = job.status === 'awaiting_release_approval';
 
-      byId('mf-action-title').textContent = awaitingTrain
-        ? '학습 승인이 필요합니다'
-        : awaitingRelease
-          ? '산출물 공개 승인이 필요합니다'
-          : evaluating
-            ? '산출물 검증 단계입니다'
-            : '학습 작업을 감독하고 있습니다';
+      byId('mf-action-title').textContent = awaitingTrain ? '학습 승인이 필요합니다' : awaitingRelease ? '산출물 공개 승인이 필요합니다' : evaluating ? '산출물 검증 단계입니다' : '학습 작업을 감독하고 있습니다';
       byId('mf-action-desc').textContent = awaitingTrain
         ? '승인하면 중앙 예산에서 예약 상한을 확보하고 EC2 스팟 인스턴스를 기동합니다.'
         : awaitingRelease
@@ -869,13 +1722,11 @@
       const fpRow = byId('mf-fingerprint-row');
       fpRow.hidden = !awaitingTrain;
       fpRow.textContent = awaitingTrain ? '승인 지문 (approvalFingerprint): ' + safeText(job.approvalFingerprint, 64) : '';
-
       byId('mf-quick-actions').hidden = !runningTrain && !evaluating;
       byId('mf-btn-wake').hidden = !runningTrain;
       byId('mf-btn-wake').disabled = state.busy;
       byId('mf-btn-verifier').hidden = !evaluating || !job.receipt;
       byId('mf-btn-verifier').disabled = state.busy;
-
       byId('mf-release-fields').hidden = !awaitingRelease;
       byId('mf-btn-approve-training').hidden = !awaitingTrain;
       byId('mf-btn-approve-release').hidden = !awaitingRelease;
@@ -884,7 +1735,6 @@
       for (const b of byId('mf-action-form').querySelectorAll('button')) b.disabled = state.busy;
     }
 
-    // EC2 Spot Instance state
     const inst = job.instance;
     const instPill = byId('mf-instance-state');
     if (inst) {
@@ -917,7 +1767,6 @@
       diagBlock.hidden = true;
     }
 
-    // Placement plan
     const plan = job.placementPlan;
     const planPill = byId('mf-plan-status');
     const planRegions = byId('mf-plan-regions');
@@ -954,16 +1803,11 @@
       byId('mf-plan-note').textContent = '배치 계획 기록이 없습니다.';
     }
 
-    // Receipt, Attestation & Publication
     const receipt = job.receipt;
     byId('mf-receipt-path').textContent = receipt ? 's3://' + safeText(receipt.s3Bucket, 128) + '/' + safeText(receipt.s3Prefix, 300) : '아직 영수증이 기록되지 않았습니다.';
     byId('mf-receipt-digest').textContent = receipt ? safeText(receipt.manifestDigest, 64) : '미보고';
-    byId('mf-receipt-files').textContent = receipt
-      ? receipt.files.length + '개 (' + formatBytes(receipt.files.reduce((sum, f) => sum + (f.sizeBytes || 0), 0)) + ')'
-      : '0개';
-    byId('mf-verifier-info').textContent = job.releaseVerifier
-      ? safeText(job.releaseVerifier.ecsTaskArn, 180) + ' · ' + formatDate(job.releaseVerifier.dispatchedAt)
-      : '미기동';
+    byId('mf-receipt-files').textContent = receipt ? receipt.files.length + '개 (' + formatBytes(receipt.files.reduce((sum, f) => sum + (f.sizeBytes || 0), 0)) + ')' : '0개';
+    byId('mf-verifier-info').textContent = job.releaseVerifier ? safeText(job.releaseVerifier.ecsTaskArn, 180) + ' · ' + formatDate(job.releaseVerifier.dispatchedAt) : '미기동';
 
     const att = job.releaseAttestation;
     const attPill = byId('mf-attest-source');
@@ -1007,11 +1851,13 @@
     state.collab.selectedId = id;
     state.collab.snapshot = null;
     renderCollab();
+    if (state.drawer.open && state.drawer.kind === 'collab') renderDrawer();
     try {
       const snapshot = await monitorApi('/api/collab/sessions/' + encodeURIComponent(id));
       if (epoch === state.collab.epoch && state.collab.selectedId === id) {
         state.collab.snapshot = snapshot;
         renderCollab();
+        if (state.drawer.open && state.drawer.kind === 'collab') renderDrawer();
       }
     } catch (err) {
       if (epoch === state.collab.epoch) setError('협업 세션 상세 조회 실패: ' + err.message);
@@ -1055,6 +1901,10 @@
     byId('collab-detail').hidden = !session;
     if (!session) return;
 
+    const snap = state.collab.snapshot;
+    const ch = charts();
+    if (ch) ch.renderStepper(byId('clb-stepper'), ch.collabSteps(session, snap?.subtasks || []));
+
     byId('clb-id').textContent = safeText(session.id, 64);
     byId('clb-title').textContent = safeText(session.title, 200);
     byId('clb-status').textContent = COLLAB_STATUS[session.status] || safeText(session.status, 24);
@@ -1065,9 +1915,7 @@
     byId('clb-regions').textContent = Array.isArray(session.allowedRegions) && session.allowedRegions.length ? session.allowedRegions.map((r) => safeText(r, 24)).join(', ') : '기본 리전';
     byId('clb-repo').textContent = session.repository ? safeText(session.repository, 160) + (session.baseCommit ? ' @ ' + safeText(session.baseCommit, 12) : '') : '지정 없음';
     const orch = session.latestOrchestratorRun;
-    byId('clb-orch').textContent = orch
-      ? safeText(orch.status, 24) + ' · ' + safeText(orch.provider, 16) + (orch.model ? ' (' + safeText(orch.model, 48) + ')' : '')
-      : '실행 기록 없음';
+    byId('clb-orch').textContent = orch ? safeText(orch.status, 24) + ' · ' + safeText(orch.provider, 16) + (orch.model ? ' (' + safeText(orch.model, 48) + ')' : '') : '실행 기록 없음';
     byId('clb-updated').textContent = formatDate(session.updatedAt);
 
     const active = session.status === 'active';
@@ -1078,7 +1926,6 @@
     byId('clb-btn-cancel').disabled = state.busy;
     byId('clb-msg-submit').disabled = state.busy;
 
-    const snap = state.collab.snapshot;
     const subtasksBox = byId('clb-subtasks');
     subtasksBox.replaceChildren();
     if (!snap) {
@@ -1098,19 +1945,14 @@
         const card = el('div', undefined, 'subtask-card');
         const head = el('div', undefined, 'subtask-head');
         head.append(el('strong', safeText(st.title, 160)), el('span', SUBTASK_STATUS[st.status] || safeText(st.status, 24), pillClass(st.status)));
-        const meta = el(
-          'p',
-          'ID ' +
-            safeText(st.id, 48) +
-            ' · 제공자 ' +
-            safeText(st.provider, 16) +
-            ' · 에이전트 ' +
-            (st.assignedAgentId ? safeText(st.assignedAgentId, 48) : '미배정') +
-            ' · 리전 ' +
-            (st.region ? safeText(st.region, 24) : '-'),
-          'help',
+        card.append(
+          head,
+          el(
+            'p',
+            'ID ' + safeText(st.id, 48) + ' · 제공자 ' + safeText(st.provider, 16) + ' · 에이전트 ' + (st.assignedAgentId ? safeText(st.assignedAgentId, 48) : '미배정') + ' · 리전 ' + (st.region ? safeText(st.region, 24) : '-'),
+            'help',
+          ),
         );
-        card.append(head, meta);
         if (st.ecsTaskArn) card.append(el('p', 'ECS: ' + safeText(st.ecsTaskArn, 180), 'help mono'));
         if (st.resultSummary) card.append(el('p', '결과: ' + safeText(st.resultSummary, 500)));
         if (st.failureReason) card.append(el('p', '실패: ' + safeText(st.failureReason, 500), 'evidence-warning'));
@@ -1130,10 +1972,7 @@
         const time = el('time', '#' + m.seq + ' · ' + formatDate(m.createdAt));
         const content = el('div');
         const head = el('div', undefined, 'event-head');
-        head.append(
-          el('span', safeText(m.kind, 24), 'pill'),
-          el('strong', safeText(m.sender, 48) + (m.recipient ? ' → ' + safeText(m.recipient, 48) : ' → 전체')),
-        );
+        head.append(el('span', safeText(m.kind, 24), 'pill'), el('strong', safeText(m.sender, 48) + (m.recipient ? ' → ' + safeText(m.recipient, 48) : ' → 전체')));
         content.append(head, el('p', safeText(m.body, 2000)));
         li.append(time, content);
         msgList.append(li);
@@ -1190,6 +2029,8 @@
     renderDelivery();
     renderModelFactory();
     renderCollab();
+    if (state.drawer.open) renderDrawer();
+    updateTabTitleAndAlerts();
   }
 
   function updateConnectionIndicator(ok) {
@@ -1200,7 +2041,9 @@
       conn.style.color = ok ? 'var(--green)' : 'var(--danger)';
     }
     if (sync && ok) {
-      sync.textContent = '동기화 ' + new Date().toLocaleTimeString('ko-KR');
+      state.lastSyncTs = Date.now();
+      sync.textContent = '동기화 ' + new Date(state.lastSyncTs).toLocaleTimeString('ko-KR');
+      updateSyncAge();
     }
   }
 
@@ -1246,7 +2089,6 @@
       }
 
       if (!usedSnapshot) {
-        // Fallback for older Control Plane versions without /api/monitor/snapshot (sequential to stay SSM-friendly).
         try {
           state.health = await monitorApi('/health', undefined, 10000);
         } catch {
@@ -1256,11 +2098,7 @@
           [
             '/api/delivery/tasks',
             (v) => {
-              state.delivery = {
-                storageBackend: v.storageBackend ?? null,
-                tasks: Array.isArray(v.tasks) ? v.tasks : [],
-                events: Array.isArray(v.events) ? v.events : [],
-              };
+              state.delivery = { storageBackend: v.storageBackend ?? null, tasks: Array.isArray(v.tasks) ? v.tasks : [], events: Array.isArray(v.events) ? v.events : [] };
             },
           ],
           [
@@ -1271,12 +2109,7 @@
               state.mf.events = Array.isArray(v.events) ? v.events : [];
             },
           ],
-          [
-            '/api/model-factory/ledger',
-            (v) => {
-              state.mf.ledger = v;
-            },
-          ],
+          ['/api/model-factory/ledger', (v) => { state.mf.ledger = v; }],
           [
             '/api/collab/sessions',
             (v) => {
@@ -1298,14 +2131,14 @@
         }
       }
 
-      if (!firstError && state.collab.selectedId && state.activeTab === 'collab') {
+      if (!firstError && state.collab.selectedId && (state.activeTab === 'collab' || (state.drawer.open && state.drawer.kind === 'collab'))) {
         const id = state.collab.selectedId;
         const epoch = state.collab.epoch;
         try {
           const snap = await monitorApi('/api/collab/sessions/' + encodeURIComponent(id), undefined, 15000);
           if (epoch === state.collab.epoch && state.collab.selectedId === id) state.collab.snapshot = snap;
         } catch {
-          // Keep last snapshot on transient poll failure.
+          // Keep last snapshot.
         }
       }
 
@@ -1314,9 +2147,7 @@
         setError('모니터링 동기화 오류: ' + firstError.message);
       } else {
         updateConnectionIndicator(true);
-        if (state.error && state.error.startsWith('모니터링 동기화 오류:')) {
-          setError(null);
-        }
+        if (state.error && state.error.startsWith('모니터링 동기화 오류:')) setError(null);
       }
 
       renderAll();
@@ -1367,16 +2198,65 @@
   }
 
   // ---------- EVENT WIRING ----------
-  for (const name of ['overview', 'delivery', 'model-factory', 'collab', 'legacy']) {
+  for (const name of TAB_ORDER) {
     byId('tab-' + name)?.addEventListener('click', () => switchTab(name));
   }
+  byId('jump-inbox')?.addEventListener('click', () => switchTab('inbox'));
+  byId('jump-costs')?.addEventListener('click', () => switchTab('costs'));
   byId('jump-delivery')?.addEventListener('click', () => switchTab('delivery'));
   byId('jump-mf')?.addEventListener('click', () => switchTab('model-factory'));
   byId('jump-collab')?.addEventListener('click', () => switchTab('collab'));
 
+  byId('monitor-theme-toggle')?.addEventListener('click', () => {
+    state.theme = state.theme === 'dark' ? 'light' : 'dark';
+    saveUiPrefs();
+    applyUiPrefs();
+  });
+  byId('monitor-density-toggle')?.addEventListener('click', () => {
+    state.density = state.density === 'compact' ? 'comfortable' : 'compact';
+    saveUiPrefs();
+    applyUiPrefs();
+  });
+  byId('monitor-notify-toggle')?.addEventListener('click', async () => {
+    if (!state.notificationsEnabled) {
+      if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+        try {
+          const perm = await Notification.requestPermission();
+          if (perm !== 'granted') {
+            setError('브라우저 데스크톱 알림 권한이 거부되었습니다.');
+            return;
+          }
+        } catch {
+          return;
+        }
+      }
+      state.notificationsEnabled = true;
+    } else {
+      state.notificationsEnabled = false;
+    }
+    saveUiPrefs();
+    applyUiPrefs();
+  });
+  byId('monitor-poll-select')?.addEventListener('change', () => {
+    const val = Number(byId('monitor-poll-select').value);
+    if (!ALLOWED_POLL_MS.has(val)) return;
+    if (val === 0) {
+      state.autoRefresh = false;
+    } else {
+      state.pollIntervalMs = val;
+      state.autoRefresh = true;
+    }
+    saveUiPrefs();
+    applyUiPrefs();
+    reschedulePolling();
+    if (state.autoRefresh) void refresh();
+  });
   byId('monitor-poll-toggle')?.addEventListener('click', () => {
     state.autoRefresh = !state.autoRefresh;
-    renderHeader();
+    if (state.autoRefresh && !state.pollIntervalMs) state.pollIntervalMs = 15000;
+    saveUiPrefs();
+    applyUiPrefs();
+    reschedulePolling();
     if (state.autoRefresh) void refresh();
   });
   byId('monitor-refresh-now')?.addEventListener('click', () => {
@@ -1395,7 +2275,52 @@
     void querySpotPlacement();
   });
 
-  // Delivery filter & actions
+  // Drawer controls
+  byId('drawer-close')?.addEventListener('click', closeDrawer);
+  byId('drawer-backdrop')?.addEventListener('click', closeDrawer);
+  byId('drawer-open-full')?.addEventListener('click', () => {
+    const { kind, id } = state.drawer;
+    closeDrawer();
+    if (kind === 'delivery' && id) {
+      selectDelivery(id);
+      switchTab('delivery');
+    } else if (kind === 'mf' && id) {
+      selectMfJob(id);
+      switchTab('model-factory');
+    } else if (kind === 'collab' && id) {
+      void selectCollab(id);
+      switchTab('collab');
+    }
+  });
+
+  // Event & Inbox filters
+  byId('events-source-filter')?.addEventListener('change', () => {
+    state.eventFilter.source = byId('events-source-filter').value || 'all';
+    renderRecentEvents();
+  });
+  byId('events-errors-only')?.addEventListener('change', () => {
+    state.eventFilter.errorsOnly = Boolean(byId('events-errors-only').checked);
+    renderRecentEvents();
+  });
+  byId('events-search')?.addEventListener('input', () => {
+    state.eventFilter.query = byId('events-search').value || '';
+    renderRecentEvents();
+  });
+  byId('inbox-filters')?.querySelectorAll('button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.inboxFilter = btn.dataset.filter || 'all';
+      byId('inbox-filters').querySelectorAll('button').forEach((b) => {
+        b.className = b === btn ? 'filter-btn active' : 'filter-btn';
+      });
+      renderInbox();
+    });
+  });
+
+  // Delivery filter, search & actions
+  byId('delivery-search')?.addEventListener('input', () => {
+    state.deliverySearch = byId('delivery-search').value || '';
+    renderDelivery();
+  });
   byId('delivery-filters')?.querySelectorAll('button').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.deliveryFilter = btn.dataset.filter || 'all';
@@ -1405,19 +2330,12 @@
       renderDelivery();
     });
   });
-
   byId('delivery-reconcile-btn')?.addEventListener('click', () =>
     runMutation(
       () => monitorApi('/api/delivery/reconcile', {}, 35000),
-      (res) =>
-        'SW 전달 워커 정리를 완료했습니다 (확인 ' +
-        (res.checked ?? 0) +
-        '건 · 실패 처리 ' +
-        (Array.isArray(res.failed) ? res.failed.length : 0) +
-        '건).',
+      (res) => 'SW 전달 워커 정리를 완료했습니다 (확인 ' + (res.checked ?? 0) + '건 · 실패 처리 ' + (Array.isArray(res.failed) ? res.failed.length : 0) + '건).',
     ),
   );
-
   byId('dlv-action-form')?.addEventListener('submit', (event) => {
     event.preventDefault();
     const op = event.submitter?.value;
@@ -1473,7 +2391,11 @@
     }
   });
 
-  // Model Factory filter & actions
+  // Model Factory filter, search & actions
+  byId('mf-search')?.addEventListener('input', () => {
+    state.mfSearch = byId('mf-search').value || '';
+    renderModelFactory();
+  });
   byId('mf-filters')?.querySelectorAll('button').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.mfFilter = btn.dataset.filter || 'all';
@@ -1483,32 +2405,19 @@
       renderModelFactory();
     });
   });
-
   byId('mf-sweep-btn')?.addEventListener('click', () =>
-    runMutation(
-      () => monitorApi('/api/model-factory/sweep-expired', {}, 60000),
-      'Model Factory 만료 정리 및 상태 갱신을 완료했습니다.',
-    ),
+    runMutation(() => monitorApi('/api/model-factory/sweep-expired', {}, 60000), 'Model Factory 만료 정리 및 상태 갱신을 완료했습니다.'),
   );
-
   byId('mf-btn-wake')?.addEventListener('click', () => {
     const job = state.mf.jobs.find((j) => j.id === state.selectedMfId);
     if (!job) return;
-    return runMutation(
-      () => monitorApi('/api/model-factory/jobs/' + encodeURIComponent(job.id) + '/wake', {}, 35000),
-      '인스턴스 상태 확인(Wake)을 완료했습니다.',
-    );
+    return runMutation(() => monitorApi('/api/model-factory/jobs/' + encodeURIComponent(job.id) + '/wake', {}, 35000), '인스턴스 상태 확인(Wake)을 완료했습니다.');
   });
-
   byId('mf-btn-verifier')?.addEventListener('click', () => {
     const job = state.mf.jobs.find((j) => j.id === state.selectedMfId);
     if (!job) return;
-    return runMutation(
-      () => monitorApi('/api/model-factory/jobs/' + encodeURIComponent(job.id) + '/dispatch-verifier', {}, 35000),
-      '독립 검증기(Fargate Spot)를 기동했습니다.',
-    );
+    return runMutation(() => monitorApi('/api/model-factory/jobs/' + encodeURIComponent(job.id) + '/dispatch-verifier', {}, 35000), '독립 검증기(Fargate Spot)를 기동했습니다.');
   });
-
   byId('mf-action-form')?.addEventListener('submit', (event) => {
     event.preventDefault();
     const op = event.submitter?.value;
@@ -1565,30 +2474,18 @@
   byId('clb-btn-reconcile')?.addEventListener('click', () => {
     const id = state.collab.selectedId;
     if (!id) return;
-    return runMutation(
-      () => monitorApi('/api/collab/sessions/' + encodeURIComponent(id) + '/reconcile', {}, 35000),
-      '협업 세션 워커 상태 정리를 완료했습니다.',
-    );
+    return runMutation(() => monitorApi('/api/collab/sessions/' + encodeURIComponent(id) + '/reconcile', {}, 35000), '협업 세션 워커 상태 정리를 완료했습니다.');
   });
-
   byId('clb-btn-complete')?.addEventListener('click', () => {
     const id = state.collab.selectedId;
     if (!id) return;
-    return runMutation(
-      () => monitorApi('/api/collab/sessions/' + encodeURIComponent(id) + '/complete', { status: 'completed' }, 35000),
-      '협업 세션을 완료 처리했습니다.',
-    );
+    return runMutation(() => monitorApi('/api/collab/sessions/' + encodeURIComponent(id) + '/complete', { status: 'completed' }, 35000), '협업 세션을 완료 처리했습니다.');
   });
-
   byId('clb-btn-cancel')?.addEventListener('click', () => {
     const id = state.collab.selectedId;
     if (!id) return;
-    return runMutation(
-      () => monitorApi('/api/collab/sessions/' + encodeURIComponent(id) + '/complete', { status: 'cancelled' }, 35000),
-      '협업 세션을 중단하고 실행 중인 워커를 중지했습니다.',
-    );
+    return runMutation(() => monitorApi('/api/collab/sessions/' + encodeURIComponent(id) + '/complete', { status: 'cancelled' }, 35000), '협업 세션을 중단하고 실행 중인 워커를 중지했습니다.');
   });
-
   byId('clb-message-form')?.addEventListener('submit', (event) => {
     event.preventDefault();
     const id = state.collab.selectedId;
@@ -1601,11 +2498,7 @@
     const kind = byId('clb-msg-kind').value || 'decision';
     return runMutation(
       async () => {
-        const res = await monitorApi('/api/collab/sessions/' + encodeURIComponent(id) + '/messages', {
-          sender: 'operator',
-          kind,
-          body,
-        });
+        const res = await monitorApi('/api/collab/sessions/' + encodeURIComponent(id) + '/messages', { sender: 'operator', kind, body });
         byId('clb-msg-body').value = '';
         return res;
       },
@@ -1613,67 +2506,43 @@
     );
   });
 
-  const TAB_TOKEN_KEY = 'hivemind.operatorToken';
-
-  function saveTabToken(token) {
-    try {
-      if (typeof sessionStorage !== 'undefined' && token) {
-        sessionStorage.setItem(TAB_TOKEN_KEY, token);
-      }
-    } catch {
-      // Ignore storage restrictions.
+  // Keyboard shortcuts
+  function handleKeydown(event) {
+    if (!event || event.metaKey || event.ctrlKey || event.altKey) return;
+    const tag = String(event.target?.tagName || '').toUpperCase();
+    const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || Boolean(event.target?.isContentEditable);
+    if (event.key === 'Escape' && state.drawer.open) {
+      closeDrawer();
+      return;
+    }
+    if (typing) return;
+    if (event.key === 'r') {
+      void refresh();
+    } else if (event.key === '/') {
+      event.preventDefault?.();
+      const targetSearch =
+        state.activeTab === 'delivery'
+          ? byId('delivery-search')
+          : state.activeTab === 'model-factory'
+            ? byId('mf-search')
+            : (switchTab('overview'), byId('events-search'));
+      targetSearch?.focus();
+    } else if (event.key >= '1' && event.key <= '6') {
+      const tab = TAB_ORDER[Number(event.key) - 1];
+      if (tab) switchTab(tab);
     }
   }
+  document.addEventListener('keydown', handleKeydown);
 
-  function restoreTabToken() {
-    try {
-      if (typeof sessionStorage === 'undefined') return;
-      const saved = sessionStorage.getItem(TAB_TOKEN_KEY);
-      if (saved && saved.trim()) {
-        const input = byId('operator-token');
-        if (input) input.value = saved.trim();
-      }
-    } catch {
-      // Ignore storage restrictions.
-    }
-  }
-
-  // Consume one-time #token=... fragment into tab-scoped sessionStorage only and immediately strip it from the URL.
-  // Query strings (?token=...) are intentionally ignored so tokens are never sent in HTTP request lines.
-  function consumeHashToken() {
-    try {
-      const loc = typeof location !== 'undefined' ? location : null;
-      if (!loc || typeof loc.hash !== 'string' || loc.hash.length < 2) return false;
-      const params = new URLSearchParams(loc.hash.slice(1));
-      if (!params.has('token')) return false;
-      const hashToken = params.get('token');
-      let applied = false;
-      if (hashToken && hashToken.trim()) {
-        const trimmed = hashToken.trim();
-        const input = byId('operator-token');
-        if (input) input.value = trimmed;
-        saveTabToken(trimmed);
-        applied = true;
-      }
-      params.delete('token');
-      const remaining = params.toString();
-      if (typeof history !== 'undefined' && typeof history.replaceState === 'function') {
-        history.replaceState(null, '', (loc.pathname || '/') + (loc.search || '') + (remaining ? '#' + remaining : ''));
-      }
-      return applied;
-    } catch {
-      return false;
-    }
-  }
-
-  // Initialize default view & polling
+  // Initialize
+  loadUiPrefs();
   if (!consumeHashToken()) restoreTabToken();
+  applyUiPrefs();
   switchTab('overview');
   renderAll();
   void refresh();
-  setInterval(() => {
-    if (!document.hidden && state.autoRefresh) void refresh();
-  }, 15000);
+  reschedulePolling();
+  setInterval(updateSyncAge, 5000);
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && state.autoRefresh) void refresh();
   });
@@ -1685,7 +2554,10 @@
     selectDelivery,
     selectMfJob,
     selectCollab,
+    openDrawer,
+    closeDrawer,
     querySpotPlacement,
+    handleKeydown,
     formatUsd,
   };
 })();

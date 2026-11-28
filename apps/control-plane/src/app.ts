@@ -208,7 +208,7 @@ export function buildApp(options: AppOptions = {}) {
   app.get('/health',async () => ({status:'ok',mode:healthMode}));
   app.get('/favicon.ico',async (_request,reply) => reply.code(204).send());
   const staticRoot = new URL('../../../../apps/dashboard/public/',import.meta.url);
-  for (const [route,file,mime] of [['/','index.html','text/html'],['/app.js','app.js','application/javascript'],['/tool-audit.js','tool-audit.js','application/javascript'],['/monitor.js','monitor.js','application/javascript'],['/styles.css','styles.css','text/css'],['/brand/hivemind-logo.png','brand/hivemind-logo.png','image/png'],['/brand/hivemind-bee.png','brand/hivemind-bee.png','image/png']] as const) {
+  for (const [route,file,mime] of [['/','index.html','text/html'],['/app.js','app.js','application/javascript'],['/tool-audit.js','tool-audit.js','application/javascript'],['/charts.js','charts.js','application/javascript'],['/monitor.js','monitor.js','application/javascript'],['/styles.css','styles.css','text/css'],['/brand/hivemind-logo.png','brand/hivemind-logo.png','image/png'],['/brand/hivemind-bee.png','brand/hivemind-bee.png','image/png']] as const) {
     app.get(route,async (_request,reply) => reply.type(mime.startsWith('image/') ? mime : mime+'; charset=utf-8').send(await readFile(fileURLToPath(new URL(file,staticRoot)))));
   }
   app.get('/api/capabilities',{preHandler:operator},async () => ({providers:options.repository ? ['mock','codex','claude'] : ['mock'],repository:options.repository ?? null,...(options.cloudflare ? {cloudflare:{...options.cloudflare.capabilities(),...(options.workflows?{workflows:true}:{})}} : {})}));

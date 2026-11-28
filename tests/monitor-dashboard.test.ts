@@ -268,8 +268,8 @@ async function loadDashboardWithMonitor(options?: {
   spotStatus?: number;
   failErrorCanary?: boolean;
 }) {
-  const [html, auditScript, appScript, monitorScript] = await Promise.all(
-    ['index.html', 'tool-audit.js', 'app.js', 'monitor.js'].map((name) =>
+  const [html, auditScript, appScript, chartsScript, monitorScript] = await Promise.all(
+    ['index.html', 'tool-audit.js', 'app.js', 'charts.js', 'monitor.js'].map((name) =>
       readFile(new URL('../apps/dashboard/public/' + name, import.meta.url).pathname.replace('/dist/', '/'), 'utf8'),
     ),
   );
@@ -374,17 +374,35 @@ async function loadDashboardWithMonitor(options?: {
     ],
   };
 
+  const localStoreMap = new Map<string, string>();
+  const localStorage = {
+    getItem: (k: string) => localStoreMap.get(k) ?? null,
+    setItem: (k: string, v: string) => {
+      localStoreMap.set(k, String(v));
+    },
+    removeItem: (k: string) => {
+      localStoreMap.delete(k);
+    },
+  };
+  const docElement = new Element('html');
+  const docObj: any = {
+    title: '',
+    documentElement: docElement,
+    getElementById: get,
+    createElement: (tag: string) => new Element(tag),
+    createElementNS: (_ns: string, tag: string) => new Element(tag),
+    addEventListener() {},
+    hidden: false,
+  };
   const calls: { path: string; method: string; body: any; auth?: string }[] = [];
   const context: any = createContext({
-    document: {
-      getElementById: get,
-      createElement: (tag: string) => new Element(tag),
-      addEventListener() {},
-      hidden: false,
-    },
+    document: docObj,
+    localStorage,
     URL,
+    URLSearchParams,
     AbortSignal,
     setInterval() {},
+    clearInterval() {},
     fetch: async (path: string, init: any = {}) => {
       const body = init.body ? JSON.parse(init.body) : undefined;
       calls.push({ path, method: init.method ?? 'GET', body, auth: init.headers?.Authorization });
@@ -397,8 +415,22 @@ async function loadDashboardWithMonitor(options?: {
           status: 200,
           json: async () => ({
             health: { status: 'ok', mode: 'aws-runtime' },
-            delivery: { storageBackend: 'aurora-dsql', tasks: deliveryTasks, events: [] },
-            modelFactory: { storageBackend: 'aurora-dsql', jobs: mfJobs, events: [], ledger: mfLedger },
+            delivery: {
+              storageBackend: 'aurora-dsql',
+              tasks: deliveryTasks,
+              events: [
+                { sequence: 1, taskId: deliveryTasks[0]?.id ?? 'dlv-1', type: 'delivery.created', at: '2026-11-27T00:00:00Z', data: { provider: 'codex' } },
+                { sequence: 2, taskId: deliveryTasks[0]?.id ?? 'dlv-1', type: 'delivery.verification_failed', at: '2026-11-27T00:10:00Z', data: { reason: 'test error' } },
+              ],
+            },
+            modelFactory: {
+              storageBackend: 'aurora-dsql',
+              jobs: mfJobs,
+              events: [
+                { sequence: 1, jobId: mfJobs[0]?.id ?? 'mf-1', type: 'model_factory.created', at: '2026-11-27T00:05:00Z', data: { modelId: 'demo-lora-v1' } },
+              ],
+              ledger: mfLedger,
+            },
             collab: { storageBackend: 'aurora-dsql', sessions: collabSessions },
           }),
         };
@@ -444,15 +476,18 @@ async function loadDashboardWithMonitor(options?: {
     },
   });
 
-  // Load all three scripts into the SAME global context to verify zero identifier collisions!
+  // Load all four scripts into the SAME global context to verify zero identifier collisions!
   runInContext(auditScript!, context);
   runInContext(appScript!, context);
+  runInContext(chartsScript!, context);
   runInContext(monitorScript!, context);
   await new Promise((r) => setImmediate(r));
 
   return {
     get,
     calls,
+    doc: docObj,
+    localStoreMap,
     monitor: context.hivemindMonitor,
     setDeliveryTasks: (v: any[]) => {
       deliveryTasks = v;
@@ -639,8 +674,15 @@ test('control-plane serves /monitor.js with CSP and without exposing operator cr
   assert.ok(res.headers['content-security-policy']);
   assert.ok(!res.body.includes('super-secret-monitor-token'));
 
+  const chartsRes = await app.inject('/charts.js');
+  assert.equal(chartsRes.statusCode, 200);
+  assert.match(String(chartsRes.headers['content-type']), /application\/javascript/);
+  assert.ok(chartsRes.headers['content-security-policy']);
+  assert.ok(!chartsRes.body.includes('super-secret-monitor-token'));
+
   const html = await app.inject('/');
   assert.equal(html.statusCode, 200);
+  assert.ok(html.body.includes('/charts.js'));
   assert.ok(html.body.includes('/monitor.js'));
   assert.ok(!html.body.includes('super-secret-monitor-token'));
 
@@ -668,8 +710,8 @@ test('control-plane serves /monitor.js with CSP and without exposing operator cr
 });
 
 test('monitor.js consumes #token fragment into tab sessionStorage, survives reload, strips URL hash, and ignores ?token query string', async () => {
-  const [html, auditScript, appScript, monitorScript] = await Promise.all(
-    ['index.html', 'tool-audit.js', 'app.js', 'monitor.js'].map((name) =>
+  const [html, auditScript, appScript, chartsScript, monitorScript] = await Promise.all(
+    ['index.html', 'tool-audit.js', 'app.js', 'charts.js', 'monitor.js'].map((name) =>
       readFile(new URL('../apps/dashboard/public/' + name, import.meta.url).pathname.replace('/dist/', '/'), 'utf8'),
     ),
   );
@@ -702,7 +744,15 @@ test('monitor.js consumes #token fragment into tab sessionStorage, survives relo
     const replaced: string[] = [];
     const seenAuth: string[] = [];
     const context: any = createContext({
-      document: { getElementById: get, createElement: (t: string) => new Element(t), addEventListener() {}, hidden: false },
+      document: {
+        getElementById: get,
+        createElement: (t: string) => new Element(t),
+        createElementNS: (_ns: string, t: string) => new Element(t),
+        documentElement: new Element('html'),
+        title: '',
+        addEventListener() {},
+        hidden: false,
+      },
       location: loc,
       history: { replaceState: (_s: unknown, _t: string, url: string) => replaced.push(url) },
       sessionStorage: storage,
@@ -710,6 +760,7 @@ test('monitor.js consumes #token fragment into tab sessionStorage, survives relo
       URLSearchParams,
       AbortSignal,
       setInterval() {},
+      clearInterval() {},
       fetch: async (_path: string, init: any = {}) => {
         if (init.headers?.Authorization) seenAuth.push(init.headers.Authorization);
         return {
@@ -726,6 +777,7 @@ test('monitor.js consumes #token fragment into tab sessionStorage, survives relo
     });
     runInContext(auditScript!, context);
     runInContext(appScript!, context);
+    runInContext(chartsScript!, context);
     runInContext(monitorScript!, context);
     await new Promise((r) => setImmediate(r));
     return { tokenValue: get('operator-token').value, replaced, seenAuth, storage };
@@ -748,4 +800,58 @@ test('monitor.js consumes #token fragment into tab sessionStorage, survives relo
   assert.equal(fromQuery.tokenValue, 'local-development-only');
   assert.deepEqual(fromQuery.replaced, []);
   assert.ok(!fromQuery.seenAuth.includes('Bearer QUERY_TOKEN_BAD'));
+});
+
+test('HUD renders SVG cost charts without innerHTML, inbox cards, slide-over drawer, event filters, shortcuts, and non-secret UI prefs', async () => {
+  const ui = await loadDashboardWithMonitor();
+
+  // Dynamic browser tab title reflects pending approvals and active runs
+  assert.equal(ui.doc.title, '(2 대기 · 1 실행) HIVEMIND 관제실');
+
+  // Pure SVG cost trend & breakdown charts render via createElementNS (zero innerHTML)
+  assert.ok(ui.get('overview-cost-chart').findTag('svg').length === 1);
+  assert.ok(ui.get('costs-trend-chart').findTag('svg').length === 1);
+  assert.match(ui.get('costs-by-model').textContent, /demo-lora-v1/);
+  assert.match(ui.get('costs-by-region').textContent, /us-east-2/);
+  assert.match(ui.get('costs-by-instance').textContent, /g6e\.2xlarge/);
+  assert.match(ui.get('costs-live-ec2').textContent, /i-0123456789abcdef0/);
+
+  // Live strip & Approval Inbox populated
+  assert.match(ui.get('live-strip-list').textContent, /병렬 리팩터링 세션/);
+  assert.equal(ui.get('tab-badge-inbox').textContent, '2');
+  assert.match(ui.get('overview-inbox-list').textContent, /SW 전달/);
+  assert.match(ui.get('inbox-list').textContent, /LoRA 학습/);
+
+  // Slide-over Detail Drawer opens with pipeline stepper & closes via Escape key
+  ui.monitor.openDrawer('mf', 'mf-22222222-2222-2222-2222-222222222222');
+  assert.equal(ui.get('detail-drawer').hidden, false);
+  assert.equal(ui.get('drawer-title').textContent, 'LoRA 학습 <script>alert(1)</script>');
+  assert.match(ui.get('drawer-stepper').textContent, /학습 승인/);
+  ui.monitor.handleKeydown({ key: 'Escape' });
+  assert.equal(ui.get('detail-drawer').hidden, true);
+
+  // Number shortcuts switch views, but are ignored while typing in INPUT
+  ui.monitor.handleKeydown({ key: '6', target: { tagName: 'BODY' } });
+  assert.equal(ui.monitor.state.activeTab, 'costs');
+  ui.monitor.handleKeydown({ key: '1', target: { tagName: 'INPUT' } });
+  assert.equal(ui.monitor.state.activeTab, 'costs');
+  ui.monitor.handleKeydown({ key: '1', target: { tagName: 'BODY' } });
+  assert.equal(ui.monitor.state.activeTab, 'overview');
+
+  // Event timeline filters by errors-only and keyword search
+  assert.match(ui.get('monitor-recent-events').textContent, /delivery\.created/);
+  ui.get('events-errors-only').checked = true;
+  await ui.get('events-errors-only').dispatch('change');
+  assert.match(ui.get('monitor-recent-events').textContent, /delivery\.verification_failed/);
+  assert.ok(!ui.get('monitor-recent-events').textContent.includes('delivery.created'));
+
+  // Theme & density toggles persist non-secret UI prefs only; operator token NEVER enters localStorage
+  await ui.get('monitor-theme-toggle').dispatch('click');
+  await ui.get('monitor-density-toggle').dispatch('click');
+  assert.equal(ui.doc.documentElement.dataset.theme, 'light');
+  assert.equal(ui.doc.documentElement.dataset.density, 'compact');
+  const savedPrefs = ui.localStoreMap.get('hivemind.uiPrefs') ?? '';
+  assert.match(savedPrefs, /"theme":"light"/);
+  assert.match(savedPrefs, /"density":"compact"/);
+  assert.ok(!savedPrefs.includes('OPERATOR_SECRET_CANARY'));
 });
