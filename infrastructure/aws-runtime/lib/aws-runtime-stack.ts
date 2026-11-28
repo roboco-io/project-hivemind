@@ -17,6 +17,7 @@ import {
   aws_logs as logs,
   aws_s3 as s3,
   aws_secretsmanager as secretsmanager,
+  aws_servicediscovery as servicediscovery,
 } from 'aws-cdk-lib';
 import type { Construct } from 'constructs';
 import { assertAwsRegion } from '../../../packages/adapters/src/autonomous-aws-region.ts';
@@ -611,6 +612,15 @@ export class AwsRuntimeStack extends Stack {
     workerSg.addEgressRule(controlPlaneSg, ec2.Port.tcp(4310), 'Allow workers/verifiers to reach control-plane');
     efsSg.addIngressRule(controlPlaneSg, ec2.Port.tcp(2049), 'Allow control-plane EFS SQLite mount only');
 
+    // Private DNS name of the Control Plane inside the hub VPC. ECS registers the task's IP when it is
+    // healthy and removes it when it stops; workers resolve the name on each new connection.
+    const controlPlaneNamespace = new servicediscovery.PrivateDnsNamespace(this, 'ControlPlaneNamespace', {
+      name: `${prefix}.internal`,
+      vpc,
+      description: `HIVEMIND ${prefix} private names (Control Plane API for workers)`,
+    });
+    const controlPlaneHost = `control-plane.${prefix}.internal`;
+
     const controlPlaneTaskDef = new ecs.FargateTaskDefinition(this, 'ControlPlaneTaskDef', {
       family: `${prefix}-control-plane`,
       cpu: 512,
@@ -673,6 +683,9 @@ export class AwsRuntimeStack extends Stack {
           ? { HIVEMIND_MF_REGION_NETWORKS_JSON: cfg.modelFactoryRegionNetworksJson }
           : {}),
         HIVEMIND_ALLOW_VPC_INTERNAL_HTTP: 'true',
+        // Stable name for workers (Cloud Map). The task's private IP changes on every replacement (deploy,
+        // Spot interruption), which used to cut off every worker that was running at that moment.
+        HIVEMIND_CONTROL_API_URL: `http://${controlPlaneHost}:4310`,
       },
       secrets: {
         HIVEMIND_OPERATOR_TOKEN: ecs.Secret.fromSecretsManager(this.operatorTokenSecret),
@@ -698,6 +711,12 @@ export class AwsRuntimeStack extends Stack {
       // before it stops, and the service starts a replacement when Spot capacity is available. Fargate
       // does not fall back to on-demand capacity by itself.
       capacityProviderStrategies: [{ capacityProvider: 'FARGATE_SPOT', weight: 1, base: 1 }],
+      cloudMapOptions: {
+        name: 'control-plane',
+        cloudMapNamespace: controlPlaneNamespace,
+        dnsRecordType: servicediscovery.DnsRecordType.A,
+        dnsTtl: Duration.seconds(10),
+      },
     });
 
     if (cfg.notifyTopicArn) {

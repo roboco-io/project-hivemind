@@ -459,3 +459,27 @@ test('the Control Plane may publish only to the configured notification topic', 
   assert.doesNotMatch(JSON.stringify(without.findResources('AWS::IAM::Policy')), /sns:Publish/);
   assert.throws(() => synth({ notifyTopicArn: 'arn:aws:sqs:us-east-2:123456789012:x' }), /SNS topic ARN/);
 });
+
+test('workers reach the Control Plane by a Cloud Map name that follows task replacement', () => {
+  const template = synth();
+  template.resourceCountIs('AWS::ServiceDiscovery::PrivateDnsNamespace', 1);
+  const namespaces = template.findResources('AWS::ServiceDiscovery::PrivateDnsNamespace');
+  const name = (Object.values(namespaces)[0] as { Properties: { Name: string } }).Properties.Name;
+  assert.match(name, /\.internal$/);
+  template.hasResourceProperties('AWS::ServiceDiscovery::Service', {
+    Name: 'control-plane',
+    DnsConfig: Match.objectLike({ DnsRecords: [{ Type: 'A', TTL: 10 }] }),
+  });
+  template.hasResourceProperties('AWS::ECS::Service', {
+    CapacityProviderStrategy: [{ CapacityProvider: 'FARGATE_SPOT', Weight: 1, Base: 1 }],
+    ServiceRegistries: Match.anyValue(),
+  });
+  template.hasResourceProperties('AWS::ECS::TaskDefinition', {
+    ContainerDefinitions: Match.arrayWith([
+      Match.objectLike({
+        Name: 'control-plane',
+        Environment: Match.arrayWith([{ Name: 'HIVEMIND_CONTROL_API_URL', Value: `http://control-plane.${name}:4310` }]),
+      }),
+    ]),
+  });
+});
