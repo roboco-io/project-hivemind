@@ -1,3 +1,4 @@
+import type { ApprovalDecisionRecord } from './approval-policy.js';
 import type { RegionPlacementDecision, RegionRoutingPolicy } from './multi-region.js';
 
 export type DeliveryProvider = 'codex' | 'claude';
@@ -219,6 +220,8 @@ export interface DeliveryTask {
   humanDecision: HumanDeliveryDecision | null;
   /** Outcome of the auto-merge policy, when the policy asked for it. */
   autoMerge?: { outcome: 'merged' | 'refused'; reason: string; mergeCommitSha?: string; touchedProtectedPaths?: string[]; at: string } | null;
+  /** Chronological audit trail of approval policy evaluations and operator decisions for this task. */
+  approvalDecisions?: ApprovalDecisionRecord[];
   createdAt: string;
   updatedAt: string;
   approvedAt: string | null;

@@ -1,3 +1,5 @@
+import type { ApprovalDecisionRecord } from './approval-policy.js';
+
 export const COMPUTE_WORKLOAD_KINDS = ['batch', 'training', 'data_build', 'evaluation', 'custom'] as const;
 export type ComputeWorkloadKind = (typeof COMPUTE_WORKLOAD_KINDS)[number];
 
@@ -228,6 +230,8 @@ export interface ComputeJob {
   placementPlan?: ComputePlacementPlan | null;
   releaseDecision: ComputeReleaseDecision | null;
   publication: ComputeReleasePublication | null;
+  /** Chronological audit trail of approval policy evaluations and operator decisions for this job. */
+  approvalDecisions?: ApprovalDecisionRecord[];
   createdAt: string;
   updatedAt: string;
   approvedAt: string | null;

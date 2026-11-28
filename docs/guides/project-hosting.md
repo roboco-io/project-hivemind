@@ -79,7 +79,8 @@ make project-bootstrap ARGS="--id my-project --name 'My Project' --repo owner/my
 - **MCP 프로필 `project-agent`**: 스캐폴딩된 `.mcp.json`과 `.codex/config.toml`은 `HIVEMIND_MCP_PROFILE=project-agent`와 프로젝트 전용 `HIVEMIND_AGENT_TOKEN_FILE`만 사용합니다.
 - **교차 프로젝트 차단**: 프로젝트 토큰으로 다른 프로젝트의 컴퓨팅 작업·SW 전달 작업·협업 세션을 조회하면 `404`, 타 프로젝트 저장소·리전·S3 접두사·자격 증명을 요청하면 `403`으로 거절됩니다.
 - **2단계 예산 보호**: 각 프로젝트는 자신의 예산 상한과 단일 작업 상한 안에서만 승인할 수 있으며, 전체 프로젝트 합계도 호스트 전역 예산 천장을 넘지 못합니다.
-- **관제실 UI 제어**: 상단 프로젝트 필터(`#project-filter`)와 `프로젝트` 탭에서 프로젝트 생성, 예산 사용률 확인, 일시 정지(`paused`)/재개(`active`), 토큰 발급·폐기를 운영자 권한으로 즉시 수행할 수 있습니다.
+- **관제실 UI 제어**: 상단 프로젝트 필터(`#project-filter`)와 `프로젝트` 탭에서 프로젝트 생성, 승인 정책 모드(`minimal_human`/`balanced`/`manual_first`) 조회·변경, 예산 사용률 확인, 일시 정지(`paused`)/재개(`active`), 토큰 발급·폐기를 운영자 권한으로 즉시 수행할 수 있습니다.
+- **승인 정책 및 건별 판단 근거**: 에이전트는 `POST /api/compute/jobs/:id/request-approval` 또는 `POST /api/delivery/tasks/:id/request-approval`(MCP: `hivemind_compute_request_approval`)으로 정책 평가를 요청합니다. 중앙 Control Plane은 프로젝트의 `approvalPolicy` 규칙(비용 상한, 최대 수명, 인스턴스 패밀리, 독립 검증기, 공개 범위, 에이전트 에스컬레이션)을 검증해 자동 승인 또는 수동 승인 요청을 결정하고, 모든 판단 근거를 `GET /api/approvals`·`GET /api/projects/:id/approvals`와 관제실 `승인 인박스 → 건별 승인 판단 근거 이력`에 기록합니다.
 
 ## 4. 사람이 웹에서 확인해야 하는 체크리스트
 

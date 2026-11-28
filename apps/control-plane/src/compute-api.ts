@@ -1,10 +1,16 @@
 import type { FastifyInstance } from 'fastify';
+import type { RequestApprovalInput } from '../../../packages/contracts/src/approval-policy.js';
 import type {
   ComputeArtifactReceipt,
   ComputeReleaseDecision,
   CreateComputeJob,
   SubmitComputeReleaseAttestation,
 } from '../../../packages/contracts/src/compute.js';
+import {
+  evaluateComputeLaunchApproval,
+  evaluateComputeReleaseApproval,
+  makeOperatorDecisionRecord,
+} from '../../../packages/core/src/approval-policy.js';
 import type { ComputeStore } from '../../../packages/core/src/compute.js';
 import {
   assertProjectCapability,
@@ -151,20 +157,124 @@ export function registerComputeRoutes(app: FastifyInstance, options: ComputeApiO
     },
   );
 
+  app.post<{ Params: { id: string }; Body: RequestApprovalInput }>(
+    '/api/compute/jobs/:id/request-approval',
+    { onRequest: canWriteCompute, bodyLimit: 16384 },
+    async (request, reply) => {
+      const principal = getPrincipal(request);
+      const job = await assertJobVisibleToPrincipal(request.params.id, request);
+      const project = job.projectId !== DEFAULT_PROJECT_ID ? await projects.get(job.projectId) : null;
+      if (project) assertProjectCapability(project, 'compute');
+
+      const ledger = await store.ledger(
+        project
+          ? { projectId: project.id, projectBudgetCaps: { [project.id]: project.budget.computeBudgetCapMicros } }
+          : undefined,
+      );
+      const actorKind = principal?.role === 'operator' ? 'operator' : 'agent';
+      const actorId =
+        principal?.role === 'project_agent'
+          ? `agent:${principal.tokenId}`
+          : principal?.role === 'legacy_agent'
+            ? 'agent:legacy'
+            : 'operator';
+
+      const decision = evaluateComputeLaunchApproval({
+        project,
+        job,
+        approvalFingerprint: String(request.body?.approvalFingerprint ?? ''),
+        actorKind,
+        actorId,
+        agentAssessment: {
+          ...(request.body?.recommendedOutcome ? { recommendedOutcome: request.body.recommendedOutcome } : {}),
+          ...(request.body?.rationale ? { rationale: request.body.rationale } : {}),
+        },
+        remainingProjectBudgetMicros: ledger.remainingBudgetMicros,
+        nowIso: new Date().toISOString(),
+      });
+
+      let updatedJob = await store.recordApprovalDecision(job.id, decision);
+      if (decision.outcome === 'auto_approved') {
+        const budgetContext = project
+          ? {
+              projectBudgetCapMicros: project.budget.computeBudgetCapMicros,
+              maxSingleJobCostMicros: project.budget.maxSingleJobCostMicros,
+            }
+          : {};
+        const reason = request.body?.rationale?.trim()
+          ? `[자동 승인 · 정책 ${decision.policyVersion}] ${request.body.rationale.trim()}`
+          : `[자동 승인 · 정책 ${decision.policyVersion}] ${decision.summary}`;
+        updatedJob = orchestrator
+          ? await orchestrator.approveAndLaunch(
+              job.id,
+              request.body.approvalFingerprint,
+              reason,
+              AbortSignal.timeout(30_000),
+              budgetContext,
+            )
+          : await store.approveLaunch(job.id, request.body.approvalFingerprint, reason, budgetContext);
+        return reply.code(200).send({ decision, executed: true, job: updatedJob });
+      }
+      if (decision.outcome === 'manual_approval_required') {
+        return reply.code(202).send({ decision, executed: false, job: updatedJob });
+      }
+      return reply.code(403).send({ error: decision.summary, decision, executed: false, job: updatedJob });
+    },
+  );
+
   app.post<{ Params: { id: string }; Body: { approvalFingerprint: string; reason: string } }>(
     '/api/compute/jobs/:id/approve',
     { onRequest: canWriteCompute, bodyLimit: 16384 },
-    async (request) => {
+    async (request, reply) => {
+      const principal = getPrincipal(request);
       const job = await assertJobVisibleToPrincipal(request.params.id, request);
+      const project = job.projectId !== DEFAULT_PROJECT_ID ? await projects.get(job.projectId) : null;
       let budgetContext: { projectBudgetCapMicros?: number; maxSingleJobCostMicros?: number | null } = {};
-      if (job.projectId !== DEFAULT_PROJECT_ID) {
-        const project = await projects.get(job.projectId);
+      if (project) {
         assertProjectCapability(project, 'compute');
         budgetContext = {
           projectBudgetCapMicros: project.budget.computeBudgetCapMicros,
           maxSingleJobCostMicros: project.budget.maxSingleJobCostMicros,
         };
       }
+
+      // Project agents cannot bypass a project's approval policy by calling /approve directly.
+      if (principal?.role === 'project_agent') {
+        const ledger = await store.ledger(
+          project
+            ? { projectId: project.id, projectBudgetCaps: { [project.id]: project.budget.computeBudgetCapMicros } }
+            : undefined,
+        );
+        const decision = evaluateComputeLaunchApproval({
+          project,
+          job,
+          approvalFingerprint: String(request.body?.approvalFingerprint ?? ''),
+          actorKind: 'agent',
+          actorId: `agent:${principal.tokenId}`,
+          agentAssessment: { recommendedOutcome: 'auto_approved', rationale: request.body?.reason },
+          remainingProjectBudgetMicros: ledger.remainingBudgetMicros,
+          nowIso: new Date().toISOString(),
+        });
+        await store.recordApprovalDecision(job.id, decision);
+        if (decision.outcome !== 'auto_approved') {
+          return reply.code(403).send({ error: decision.summary, decision });
+        }
+      } else {
+        const decision = makeOperatorDecisionRecord({
+          project,
+          gate: 'compute_launch',
+          targetKind: 'compute_job',
+          targetId: job.id,
+          targetTitle: job.title,
+          projectId: job.projectId,
+          approvalFingerprint: job.approvalFingerprint,
+          approved: true,
+          reason: request.body.reason,
+          nowIso: new Date().toISOString(),
+        });
+        await store.recordApprovalDecision(job.id, decision);
+      }
+
       if (orchestrator) {
         return orchestrator.approveAndLaunch(
           job.id,
@@ -224,10 +334,21 @@ export function registerComputeRoutes(app: FastifyInstance, options: ComputeApiO
     '/api/compute/jobs/:id/verifier-attestation',
     { onRequest: workerOnly, bodyLimit: 32768 },
     async (request) => {
-      const job = await store.recordReleaseAttestation(request.params.id, request.body, 'independent_verifier');
-      const projectPrefixes =
-        job.projectId !== DEFAULT_PROJECT_ID ? await projects.autoPublishPrefixesFor(job.projectId) : undefined;
-      if (orchestrator && store.isAutoPublishEligible(job, projectPrefixes)) {
+      let job = await store.recordReleaseAttestation(request.params.id, request.body, 'independent_verifier');
+      const project = job.projectId !== DEFAULT_PROJECT_ID ? await projects.find(job.projectId) : null;
+      const projectPrefixes = project ? project.compute.autoPublishHfRepoPrefixes : undefined;
+      const autoPublishEligible = store.isAutoPublishEligible(job, projectPrefixes);
+      const releaseDecision = evaluateComputeReleaseApproval({
+        project,
+        job,
+        actorKind: 'system_policy',
+        actorId: 'system:release_verifier',
+        autoPublishEligible,
+        nowIso: new Date().toISOString(),
+      });
+      job = await store.recordApprovalDecision(job.id, releaseDecision);
+      const policyAllowsAutoPublish = project ? releaseDecision.outcome === 'auto_approved' : autoPublishEligible;
+      if (orchestrator && autoPublishEligible && policyAllowsAutoPublish) {
         void orchestrator.autoReleaseIfEligible(job.id, AbortSignal.timeout(60_000)).catch((error) => {
           console.error(JSON.stringify({ event: 'hivemind.compute_auto_publish.error', jobId: job.id, message: error instanceof Error ? error.message.slice(0, 300) : String(error) }));
         });
@@ -240,10 +361,24 @@ export function registerComputeRoutes(app: FastifyInstance, options: ComputeApiO
     '/api/compute/jobs/:id/approve-release',
     { onRequest: operatorOnly, bodyLimit: 16384 },
     async (request) => {
-      if (orchestrator) {
-        return orchestrator.approveAndStartPublishRelease(request.params.id, request.body);
-      }
-      return store.recordReleaseDecision(request.params.id, request.body);
+      const current = await store.get(request.params.id);
+      const project = current.projectId !== DEFAULT_PROJECT_ID ? await projects.find(current.projectId) : null;
+      const result = orchestrator
+        ? await orchestrator.approveAndStartPublishRelease(request.params.id, request.body)
+        : await store.recordReleaseDecision(request.params.id, request.body);
+      const opRecord = makeOperatorDecisionRecord({
+        project,
+        gate: 'compute_release',
+        targetKind: 'compute_job',
+        targetId: current.id,
+        targetTitle: current.title,
+        projectId: current.projectId,
+        approvalFingerprint: current.approvalFingerprint,
+        approved: request.body.decision === 'approve',
+        reason: request.body.reason,
+        nowIso: new Date().toISOString(),
+      });
+      return store.recordApprovalDecision(current.id, opRecord).catch(() => result);
     },
   );
 

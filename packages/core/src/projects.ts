@@ -23,6 +23,11 @@ import {
   type ProjectTokenScope,
   type UpdateProjectInput,
 } from '../../contracts/src/projects.js';
+import {
+  defaultApprovalPolicyForTemplate,
+  normalizeApprovalPolicy,
+  validateApprovalPolicy,
+} from './approval-policy.js';
 import { SqliteDocumentRepository, type DocumentRepository, type DocumentTxState } from './document-repository.js';
 import { DomainError, equalSecret, text } from './store.js';
 
@@ -156,8 +161,11 @@ export function validateProjectId(raw: unknown): string {
 }
 
 export function toProjectPublicView(record: ProjectRecord): ProjectPublicView {
+  const cloned = structuredClone(record);
+  const approvalPolicy = normalizeApprovalPolicy(cloned.approvalPolicy, cloned.template);
   return {
-    ...structuredClone(record),
+    ...cloned,
+    approvalPolicy,
     tokens: record.tokens.map(({ tokenHash: _hash, ...rest }) => structuredClone(rest)),
   };
 }
@@ -473,6 +481,7 @@ export class ProjectStore {
       maxLifetimeMs: preset.compute.maxLifetimeMs,
     };
     const compute = validateCompute(id, input.compute, defaultCompute);
+    const approvalPolicy = validateApprovalPolicy(input.approvalPolicy, defaultApprovalPolicyForTemplate(template));
     const notificationChannel =
       input.notificationChannel === undefined || input.notificationChannel === null || input.notificationChannel === ''
         ? null
@@ -494,6 +503,7 @@ export class ProjectStore {
         budget,
         delivery,
         compute,
+        approvalPolicy,
         notificationChannel,
         extensions,
         tokens: [],
@@ -506,6 +516,7 @@ export class ProjectStore {
         template: saved.template,
         capabilities: saved.capabilities,
         computeBudgetCapMicros: saved.budget.computeBudgetCapMicros,
+        approvalAutonomyMode: saved.approvalPolicy.autonomyMode,
         repositories: saved.delivery.repositories,
       });
       return toProjectPublicView(saved);
@@ -518,6 +529,7 @@ export class ProjectStore {
     }
     return this.tx(() => {
       const existing = this.load(id);
+      existing.approvalPolicy = normalizeApprovalPolicy(existing.approvalPolicy, existing.template);
       if (input.name !== undefined) existing.name = text(input.name, 'name', 120);
       if (input.description !== undefined) {
         existing.description = input.description === '' ? '' : text(input.description, 'description', 1000);
@@ -532,6 +544,9 @@ export class ProjectStore {
       if (input.budget !== undefined) existing.budget = validateBudget(input.budget, existing.budget);
       if (input.delivery !== undefined) existing.delivery = validateDelivery(input.delivery, existing.delivery);
       if (input.compute !== undefined) existing.compute = validateCompute(id, input.compute, existing.compute);
+      if (input.approvalPolicy !== undefined) {
+        existing.approvalPolicy = validateApprovalPolicy(input.approvalPolicy, existing.approvalPolicy);
+      }
       if (input.notificationChannel !== undefined) {
         existing.notificationChannel =
           input.notificationChannel === null || input.notificationChannel === ''
@@ -544,6 +559,7 @@ export class ProjectStore {
         status: saved.status,
         capabilities: saved.capabilities,
         computeBudgetCapMicros: saved.budget.computeBudgetCapMicros,
+        approvalAutonomyMode: saved.approvalPolicy.autonomyMode,
         repositories: saved.delivery.repositories,
       });
       return toProjectPublicView(saved);

@@ -1,3 +1,4 @@
+import type { ApprovalDecisionRecord } from '../../contracts/src/approval-policy.js';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   SqliteDeliveryRepository,
@@ -1054,6 +1055,27 @@ export class DeliveryStore {
       task.activeWorkerId = null;
       const saved = this.save(task);
       this.emit(saved.id, 'delivery.cancelled', { reason: cleanReason });
+      return saved;
+    });
+  }
+
+  /** Appends an immutable approval policy evaluation or operator decision record to the delivery task. */
+  async recordApprovalDecision(id: string, record: ApprovalDecisionRecord): Promise<DeliveryTask> {
+    return this.tx(() => {
+      const task = this.load(id);
+      const list = Array.isArray(task.approvalDecisions) ? [...task.approvalDecisions] : [];
+      list.push(structuredClone(record));
+      task.approvalDecisions = list.slice(-50);
+      const saved = this.save(task);
+      this.emit(saved.id, 'delivery.approval_evaluated', {
+        decisionId: record.id,
+        gate: record.gate,
+        outcome: record.outcome,
+        actorKind: record.actorKind,
+        policyVersion: record.policyVersion,
+        policyMode: record.policyMode,
+        summary: record.summary,
+      });
       return saved;
     });
   }

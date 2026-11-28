@@ -48,12 +48,13 @@ test('default MCP profile exposes the AWS single path in one server and no retir
 
   const unset = await connect(t);
   const names = (await unset.client.listTools()).tools.map((tool) => tool.name).sort();
-  assert.equal(names.length, 39, 'status 1 + control plane start/stop 2 + projects 4 + delivery 7 + compute 10 + collab 10 + agent credentials 1 + autonomy triggers 4');
+  assert.equal(names.length, 41, 'status 1 + control plane start/stop 2 + projects/approvals 5 + delivery 7 + compute 11 + collab 10 + agent credentials 1 + autonomy triggers 4');
   assert.ok(names.includes('hivemind_agent_credentials'));
   assert.ok(names.includes('hivemind_status'));
+  assert.ok(names.includes('hivemind_approval_list'));
   assert.equal(names.filter((n) => n.startsWith('hivemind_project_')).length, 4);
   assert.equal(names.filter((n) => n.startsWith('hivemind_delivery_')).length, 7);
-  assert.equal(names.filter((n) => n.startsWith('hivemind_compute_')).length, 10);
+  assert.equal(names.filter((n) => n.startsWith('hivemind_compute_')).length, 11);
   assert.ok(names.includes('hivemind_compute_wake'));
   assert.equal(names.filter((n) => n.startsWith('hivemind_collab_')).length, 10);
   // Retired Cloudflare-path tools are gone from the default profile.

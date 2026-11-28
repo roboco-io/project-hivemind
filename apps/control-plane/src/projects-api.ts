@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify';
+import type { ApprovalDecisionRecord } from '../../../packages/contracts/src/approval-policy.js';
 import type {
   CreateProjectInput,
   IssueProjectTokenInput,
   UpdateProjectInput,
 } from '../../../packages/contracts/src/projects.js';
+import { approvalPolicyVersion } from '../../../packages/core/src/approval-policy.js';
 import type { ComputeStore } from '../../../packages/core/src/compute.js';
 import type { DeliveryStore } from '../../../packages/core/src/delivery.js';
 import type { AgentCollabService } from '../../../packages/core/src/agent-collab.js';
@@ -129,4 +131,66 @@ export function registerProjectRoutes(app: FastifyInstance, options: ProjectsApi
       projectBudgetCaps: { [project.id]: project.budget.computeBudgetCapMicros },
     });
   });
+
+  /** Returns the project's approval policy and chronological decision evidence across compute & delivery. */
+  app.get<{ Params: { id: string }; Querystring: { outcome?: string; gate?: string; limit?: string } }>(
+    '/api/projects/:id/approvals',
+    { onRequest: operatorOnly },
+    async (request) => {
+      const project = await store.get(request.params.id);
+      const [jobs, tasks] = await Promise.all([computeStore.list(project.id), deliveryStore.list(project.id)]);
+      const decisions = collectApprovalDecisions(jobs, tasks, {
+        projectId: project.id,
+        outcome: request.query.outcome,
+        gate: request.query.gate,
+        limit: Number(request.query.limit ?? 100),
+      });
+      return {
+        projectId: project.id,
+        approvalPolicy: project.approvalPolicy,
+        policyVersion: approvalPolicyVersion(project.approvalPolicy),
+        decisions,
+      };
+    },
+  );
+
+  /** Host-wide chronological audit trail of all approval policy evaluations and operator decisions. */
+  app.get<{ Querystring: { projectId?: string; outcome?: string; gate?: string; limit?: string } }>(
+    '/api/approvals',
+    { onRequest: operatorOnly },
+    async (request) => {
+      const projectId = request.query.projectId?.trim() || undefined;
+      const [jobs, tasks] = await Promise.all([computeStore.list(projectId), deliveryStore.list(projectId)]);
+      const decisions = collectApprovalDecisions(jobs, tasks, {
+        projectId,
+        outcome: request.query.outcome,
+        gate: request.query.gate,
+        limit: Number(request.query.limit ?? 150),
+      });
+      return { decisions };
+    },
+  );
+}
+
+export function collectApprovalDecisions(
+  jobs: ReadonlyArray<{ approvalDecisions?: ApprovalDecisionRecord[] }>,
+  tasks: ReadonlyArray<{ approvalDecisions?: ApprovalDecisionRecord[] }>,
+  filter: { projectId?: string; outcome?: string; gate?: string; limit?: number } = {},
+): ApprovalDecisionRecord[] {
+  const all: ApprovalDecisionRecord[] = [];
+  for (const job of jobs) {
+    if (Array.isArray(job.approvalDecisions)) all.push(...job.approvalDecisions);
+  }
+  for (const task of tasks) {
+    if (Array.isArray(task.approvalDecisions)) all.push(...task.approvalDecisions);
+  }
+  const filtered = all.filter((d) => {
+    if (filter.projectId && d.projectId !== filter.projectId) return false;
+    if (filter.outcome && d.outcome !== filter.outcome) return false;
+    if (filter.gate && d.gate !== filter.gate) return false;
+    return true;
+  });
+  filtered.sort((a, b) => (b.decidedAt || '').localeCompare(a.decidedAt || ''));
+  const max = Number.isFinite(filter.limit) && (filter.limit as number) > 0 ? Math.min(filter.limit as number, 500) : 150;
+  return filtered.slice(0, max);
 }

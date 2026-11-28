@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { RequestApprovalInput } from '../../../packages/contracts/src/approval-policy.js';
 import type {
   CreateDeliveryTask,
   DeliveryModelUsage,
@@ -7,6 +8,10 @@ import type {
   HumanDeliveryDecision,
   VerificationAttestation,
 } from '../../../packages/contracts/src/delivery.js';
+import {
+  evaluateDeliveryExecuteApproval,
+  makeOperatorDecisionRecord,
+} from '../../../packages/core/src/approval-policy.js';
 import { DeliveryStore } from '../../../packages/core/src/delivery.js';
 import {
   assertProjectCapability,
@@ -186,11 +191,80 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
     },
   );
 
+  app.post<{ Params: { id: string }; Body: RequestApprovalInput }>(
+    '/api/delivery/tasks/:id/request-approval',
+    { onRequest: operatorOrAgentWrite, bodyLimit: 16384 },
+    async (request, reply) => {
+      const principal = getPrincipal(request);
+      const task = await store.get(request.params.id);
+      const taskProjectId = task.projectId ?? DEFAULT_PROJECT_ID;
+      if (principal?.role === 'project_agent' && taskProjectId !== principal.projectId) {
+        throw new DomainError('Delivery task not found', 404);
+      }
+      const project =
+        projects && taskProjectId !== DEFAULT_PROJECT_ID ? await projects.find(taskProjectId) : null;
+      if (project) assertProjectCapability(project, 'delivery');
+
+      const actorKind = principal?.role === 'operator' ? 'operator' : 'agent';
+      const actorId =
+        principal?.role === 'project_agent'
+          ? `agent:${principal.tokenId}`
+          : 'operator';
+
+      const decision = evaluateDeliveryExecuteApproval({
+        project,
+        task,
+        approvalFingerprint: String(request.body?.approvalFingerprint ?? ''),
+        actorKind,
+        actorId,
+        agentAssessment: {
+          ...(request.body?.recommendedOutcome ? { recommendedOutcome: request.body.recommendedOutcome } : {}),
+          ...(request.body?.rationale ? { rationale: request.body.rationale } : {}),
+        },
+        nowIso: new Date().toISOString(),
+      });
+
+      let updated = await store.recordApprovalDecision(task.id, decision);
+      if (decision.outcome === 'auto_approved') {
+        const reason = request.body?.rationale?.trim()
+          ? `[자동 승인 · 정책 ${decision.policyVersion}] ${request.body.rationale.trim()}`
+          : `[자동 승인 · 정책 ${decision.policyVersion}] ${decision.summary}`;
+        updated = await store.approve(task.id, request.body.approvalFingerprint, reason);
+        if (orchestrator && updated.bundle?.s3Key) {
+          const dispatched = await orchestrator.dispatchWorker(updated.id, AbortSignal.timeout(30_000));
+          updated = dispatched.task;
+        }
+        return reply.code(200).send({ decision, executed: true, task: updated });
+      }
+      if (decision.outcome === 'manual_approval_required') {
+        return reply.code(202).send({ decision, executed: false, task: updated });
+      }
+      return reply.code(403).send({ error: decision.summary, decision, executed: false, task: updated });
+    },
+  );
+
   app.post<{ Params: { id: string }; Body: { approvalFingerprint: string; reason: string } }>(
     '/api/delivery/tasks/:id/approve',
     { onRequest: operatorOnly, bodyLimit: 16384 },
     async (request) => {
       const approved = await store.approve(request.params.id, request.body.approvalFingerprint, request.body.reason);
+      const taskProjectId = approved.projectId ?? DEFAULT_PROJECT_ID;
+      const project = projects && taskProjectId !== DEFAULT_PROJECT_ID ? await projects.find(taskProjectId) : null;
+      await store.recordApprovalDecision(
+        approved.id,
+        makeOperatorDecisionRecord({
+          project,
+          gate: 'delivery_execute',
+          targetKind: 'delivery_task',
+          targetId: approved.id,
+          targetTitle: approved.title,
+          projectId: taskProjectId,
+          approvalFingerprint: approved.approvalFingerprint,
+          approved: true,
+          reason: request.body.reason,
+          nowIso: new Date().toISOString(),
+        }),
+      );
       if (orchestrator && approved.bundle?.s3Key) {
         const dispatched = await orchestrator.dispatchWorker(approved.id, AbortSignal.timeout(30_000));
         console.log(
@@ -204,7 +278,7 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
         );
         return dispatched.task;
       }
-      return approved;
+      return store.get(approved.id);
     },
   );
 
@@ -217,7 +291,26 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
   app.post<{ Params: { id: string }; Body: Omit<HumanDeliveryDecision, 'decidedAt'> }>(
     '/api/delivery/tasks/:id/human-decision',
     { onRequest: operatorOnly, bodyLimit: 16384 },
-    async (request) => await store.recordHumanDecision(request.params.id, request.body),
+    async (request) => {
+      const decided = await store.recordHumanDecision(request.params.id, request.body);
+      const taskProjectId = decided.projectId ?? DEFAULT_PROJECT_ID;
+      const project = projects && taskProjectId !== DEFAULT_PROJECT_ID ? await projects.find(taskProjectId) : null;
+      return store.recordApprovalDecision(
+        decided.id,
+        makeOperatorDecisionRecord({
+          project,
+          gate: 'delivery_merge',
+          targetKind: 'delivery_task',
+          targetId: decided.id,
+          targetTitle: decided.title,
+          projectId: taskProjectId,
+          approvalFingerprint: decided.approvalFingerprint,
+          approved: request.body.decision === 'approve',
+          reason: request.body.reason,
+          nowIso: new Date().toISOString(),
+        }),
+      );
+    },
   );
 
   app.post<{ Params: { id: string }; Body: { reason: string } }>(

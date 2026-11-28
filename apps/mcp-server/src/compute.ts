@@ -187,6 +187,30 @@ export function registerComputeOperatorTools(server: McpServer, options: Compute
   );
 
   server.registerTool(
+    'hivemind_compute_request_approval',
+    {
+      title: 'HIVEMIND 컴퓨팅 정책 기반 승인 요청 (자동/수동 판단)',
+      description:
+        '프로젝트의 승인 정책(approvalPolicy)에 따라 중앙 Control Plane이 자동 승인 또는 수동 승인 요청을 판단하고 건별 근거를 기록합니다. 자동 승인 기준을 모두 충족하고 에이전트가 수동 검토를 요청하지 않으면 즉시 기동합니다.',
+      inputSchema: z.strictObject({
+        jobId,
+        approvalFingerprint: hex64,
+        recommendedOutcome: z.enum(['auto_approved', 'manual_approval_required']).optional(),
+        rationale: z.string().trim().min(1).max(1000).optional(),
+      }),
+      annotations: mutation,
+    },
+    async ({ jobId: id, approvalFingerprint, recommendedOutcome, rationale }, extra) =>
+      run(() =>
+        api(`/api/compute/jobs/${encodeURIComponent(id)}/request-approval`, extra.signal, {
+          approvalFingerprint,
+          ...(recommendedOutcome ? { recommendedOutcome } : {}),
+          ...(rationale ? { rationale } : {}),
+        }),
+      ),
+  );
+
+  server.registerTool(
     'hivemind_compute_approve',
     {
       title: 'HIVEMIND Spot 컴퓨팅 실행 승인 및 기동',

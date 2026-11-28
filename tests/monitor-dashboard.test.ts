@@ -327,6 +327,14 @@ async function loadDashboardWithMonitor(options?: {
       budget: { computeBudgetCapMicros: 50_000_000, maxSingleJobCostMicros: 10_000_000, maxDeliveryTaskBudgetMicros: 25_000_000 },
       delivery: { repositories: ['roboco-io/silicon-model-factory'], autoMergeRepositories: [], defaultBranchPrefix: 'agent/', defaultProtectedPaths: [], allowAgentAccess: true, allowedWebHosts: [] },
       compute: { allowedRegions: ['us-east-2'], s3ArtifactPrefixes: ['projects/silicon-mf/', 'models/'], autoPublishHfRepoPrefixes: ['roboco-io/'], credentialPurposes: [], maxLifetimeMs: 86_400_000 },
+      approvalPolicy: {
+        autonomyMode: 'minimal_human',
+        summary: '사람 개입 최소화: 예산·리전·독립검증 범위 내 자동 승인',
+        computeLaunch: { mode: 'auto_within_policy', maxAutoApproveCostMicros: 150_000_000, maxAutoApproveLifetimeMs: 86_400_000, allowedInstanceFamilies: [] },
+        computeRelease: { mode: 'auto_within_policy', requireIndependentVerifier: true, allowPrivateAutoApprove: true, allowPublicAutoApprove: true },
+        deliveryExecute: { mode: 'auto_within_policy', maxAutoApproveBudgetMicros: 50_000_000 },
+        deliveryMerge: { mode: 'auto_within_policy', requireIndependentVerifier: true, requireCleanProtectedPaths: true },
+      },
       notificationChannel: null,
       tokens: [],
       createdAt: '2026-11-27T00:00:00Z',
@@ -484,6 +492,31 @@ async function loadDashboardWithMonitor(options?: {
               ledger: mfLedger,
             },
             collab: { storageBackend: 'aurora-dsql', sessions: collabSessions },
+            approvals: {
+              decisions: [
+                {
+                  id: 'apv-1',
+                  projectId: 'silicon-mf',
+                  gate: 'compute_launch',
+                  targetKind: 'compute_job',
+                  targetId: mfJobs[0]?.id ?? 'cmp-1',
+                  targetTitle: 'LoRA 학습 <script>alert(1)</script>',
+                  approvalFingerprint: 'b'.repeat(64),
+                  outcome: 'manual_approval_required',
+                  actorKind: 'agent',
+                  actorId: 'agent:ptok-1',
+                  policyVersion: 'abc123def456',
+                  policyMode: 'minimal_human',
+                  policySummary: '사람 개입 최소화',
+                  agentAssessment: { recommendedOutcome: 'manual_approval_required', rationale: '신규 아키텍처 <img src=x> 검토 요청' },
+                  summary: '수동 승인 필요: 자동 승인 한도 초과',
+                  checks: [
+                    { ruleId: 'auto_cost_limit', label: '자동 승인 비용 상한', passed: false, severity: 'escalate_manual', actual: '$25.00', threshold: '<= $10.00', detail: '한도 초과' },
+                  ],
+                  decidedAt: '2026-11-27T01:40:00Z',
+                },
+              ],
+            },
           }),
         };
       }
@@ -568,6 +601,10 @@ test('monitor.js loads cleanly alongside app.js and tool-audit.js and renders ov
   assert.match(ui.get('monitor-ledger-body').textContent, /미정산/);
   assert.equal(ui.get('tab-badge-projects').textContent, '2');
   assert.match(ui.get('projects-list').textContent, /Silicon Model Factory/);
+  assert.match(ui.get('projects-list').textContent, /사람 개입 최소화/);
+  assert.match(ui.get('approval-history-list').textContent, /수동 승인 요청/);
+  assert.match(ui.get('approval-history-list').textContent, /자동 승인 비용 상한/);
+  assert.match(ui.get('approval-history-list').textContent, /신규 아키텍처 <img src=x> 검토 요청/);
 });
 
 test('untrusted HTML and secrets are safely rendered as text and redacted in error banners', async () => {

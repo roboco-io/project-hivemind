@@ -1,3 +1,5 @@
+import type { ProjectApprovalPolicy, ProjectApprovalPolicyPatch } from './approval-policy.js';
+
 export const PROJECT_CAPABILITIES = [
   'delivery',
   'compute',
@@ -102,6 +104,8 @@ export interface ProjectRecord {
   budget: ProjectBudgetPolicy;
   delivery: ProjectDeliveryPolicy;
   compute: ProjectComputePolicy;
+  /** Per-project policy defining when agents may auto-approve vs require manual human approval. */
+  approvalPolicy: ProjectApprovalPolicy;
   notificationChannel: string | null;
   /** Non-secret project-defined extension metadata for future workload/runtime slots. */
   extensions: Record<string, string | number | boolean>;
@@ -123,6 +127,7 @@ export interface CreateProjectInput {
   budget?: Partial<ProjectBudgetPolicy>;
   delivery?: Partial<ProjectDeliveryPolicy>;
   compute?: Partial<ProjectComputePolicy>;
+  approvalPolicy?: ProjectApprovalPolicyPatch;
   notificationChannel?: string | null;
   extensions?: Record<string, string | number | boolean>;
 }
@@ -135,6 +140,7 @@ export interface UpdateProjectInput {
   budget?: Partial<ProjectBudgetPolicy>;
   delivery?: Partial<ProjectDeliveryPolicy>;
   compute?: Partial<ProjectComputePolicy>;
+  approvalPolicy?: ProjectApprovalPolicyPatch;
   notificationChannel?: string | null;
   extensions?: Record<string, string | number | boolean>;
 }

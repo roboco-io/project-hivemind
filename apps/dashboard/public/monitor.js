@@ -17,6 +17,33 @@
   };
 
   const PROJECT_STATUS = { active: '활성', paused: '일시정지', archived: '보관' };
+  const AUTONOMY_MODE_LABEL = {
+    minimal_human: '사람 개입 최소화',
+    balanced: '균형 정책',
+    manual_first: '수동 승인 우선',
+  };
+  const GATE_MODE_LABEL = {
+    auto_within_policy: '정책 내 자동 승인',
+    manual_required: '수동 승인 필수',
+    deny: '차단 (거부)',
+  };
+  const APPROVAL_GATE_LABEL = {
+    compute_launch: '컴퓨팅 기동',
+    compute_release: '릴리즈 공개',
+    delivery_execute: 'SW 전달 실행',
+    delivery_merge: 'PR 병합',
+  };
+  const APPROVAL_OUTCOME_LABEL = {
+    auto_approved: '자동 승인',
+    manual_approved: '수동 승인',
+    manual_approval_required: '수동 승인 요청',
+    rejected: '거부',
+  };
+  const APPROVAL_ACTOR_LABEL = {
+    agent: '에이전트',
+    operator: '운영자',
+    system_policy: '시스템 정책',
+  };
   const CAPABILITY_LABEL = {
     delivery: 'SW 전달',
     compute: 'Spot 컴퓨팅',
@@ -121,6 +148,8 @@
     selectedComputeId: null,
     selectedComputeFingerprint: null,
     collab: { storageBackend: null, sessions: [], selectedId: null, snapshot: null, epoch: 0 },
+    approvals: { decisions: [] },
+    approvalOutcomeFilter: 'all',
     inboxFilter: 'all',
     eventFilter: { source: 'all', errorsOnly: false, query: '' },
     drawer: { open: false, kind: null, id: null, fingerprint: null },
@@ -707,10 +736,22 @@
       if (p.description) card.append(el('p', safeText(p.description, 200), 'help'));
 
       const caps = el('div', undefined, 'project-cap-row');
+      if (p.approvalPolicy?.autonomyMode) {
+        const modeTone =
+          p.approvalPolicy.autonomyMode === 'minimal_human'
+            ? 'pill tone-success'
+            : p.approvalPolicy.autonomyMode === 'manual_first'
+              ? 'pill tone-attention'
+              : 'pill tone-running';
+        caps.append(el('span', '승인: ' + (AUTONOMY_MODE_LABEL[p.approvalPolicy.autonomyMode] || p.approvalPolicy.autonomyMode), modeTone));
+      }
       for (const cap of p.capabilities || []) {
         caps.append(el('span', CAPABILITY_LABEL[cap] || cap, 'cap-chip'));
       }
       card.append(caps);
+      if (p.approvalPolicy?.summary) {
+        card.append(el('p', safeText(p.approvalPolicy.summary, 220), 'help'));
+      }
 
       const pl = ledgerByProject[p.id];
       const capMicros = p.budget?.computeBudgetCapMicros ?? 0;
@@ -840,6 +881,195 @@
     }
   }
 
+  // ---------- APPROVAL POLICY & DECISION EVIDENCE ----------
+  function visibleApprovalDecisions() {
+    const raw =
+      Array.isArray(state.approvals?.decisions) && state.approvals.decisions.length
+        ? state.approvals.decisions
+        : [
+            ...state.compute.jobs.flatMap((j) => (Array.isArray(j.approvalDecisions) ? j.approvalDecisions : [])),
+            ...state.delivery.tasks.flatMap((t) => (Array.isArray(t.approvalDecisions) ? t.approvalDecisions : [])),
+          ].sort((a, b) => String(b.decidedAt || '').localeCompare(String(a.decidedAt || '')));
+    return raw.filter((d) => matchesProject(d.projectId));
+  }
+
+  function approvalOutcomeTone(outcome) {
+    if (outcome === 'auto_approved') return 'pill tone-success';
+    if (outcome === 'manual_approved') return 'pill tone-running';
+    if (outcome === 'manual_approval_required') return 'pill tone-attention';
+    if (outcome === 'rejected') return 'pill tone-danger';
+    return 'pill';
+  }
+
+  function formatPolicyDuration(ms) {
+    if (typeof ms !== 'number' || !Number.isFinite(ms)) return '-';
+    const mins = Math.round(ms / 60000);
+    if (mins >= 60 && mins % 60 === 0) return mins / 60 + '시간';
+    if (mins >= 60) return Math.floor(mins / 60) + '시간 ' + (mins % 60) + '분';
+    return mins + '분';
+  }
+
+  function buildApprovalPolicyBox(project, allowEdit) {
+    const policy = project?.approvalPolicy;
+    const box = el('section', undefined, 'approval-policy-box');
+    const head = el('div', undefined, 'section-title');
+    head.append(
+      el('h3', '승인 정책 (자동 · 수동 기준)'),
+      el(
+        'span',
+        policy?.autonomyMode ? AUTONOMY_MODE_LABEL[policy.autonomyMode] || policy.autonomyMode : '기본 정책',
+        policy?.autonomyMode === 'minimal_human'
+          ? 'pill tone-success'
+          : policy?.autonomyMode === 'manual_first'
+            ? 'pill tone-attention'
+            : 'pill tone-running',
+      ),
+    );
+    box.append(head);
+    if (!policy) {
+      box.append(el('p', '등록된 승인 정책 정보가 없습니다.', 'help'));
+      return box;
+    }
+    if (policy.summary) box.append(el('p', safeText(policy.summary, 500), 'help'));
+
+    const grid = el('div', undefined, 'approval-gate-grid');
+    const addGate = (title, mode, detailLines) => {
+      const item = el('div', undefined, 'approval-gate-item');
+      const gh = el('div', undefined, 'subtask-head');
+      gh.append(
+        el('strong', title),
+        el('span', GATE_MODE_LABEL[mode] || safeText(mode, 24), mode === 'auto_within_policy' ? 'pill tone-success' : mode === 'deny' ? 'pill tone-danger' : 'pill tone-attention'),
+      );
+      item.append(gh);
+      for (const line of detailLines) item.append(el('span', line, 'help'));
+      grid.append(item);
+    };
+
+    const cl = policy.computeLaunch || {};
+    addGate('컴퓨팅 기동', cl.mode, [
+      '자동 승인 비용 상한: ' + formatUsd(cl.maxAutoApproveCostMicros),
+      '자동 승인 최대 수명: ' + formatPolicyDuration(cl.maxAutoApproveLifetimeMs),
+      '허용 패밀리: ' + (Array.isArray(cl.allowedInstanceFamilies) && cl.allowedInstanceFamilies.length ? cl.allowedInstanceFamilies.join(', ') : '프로젝트 허용 전체'),
+    ]);
+
+    const cr = policy.computeRelease || {};
+    addGate('릴리즈 공개', cr.mode, [
+      '독립 검증기 필수: ' + (cr.requireIndependentVerifier ? '예' : '아니오'),
+      '비공개 자동 승인: ' + (cr.allowPrivateAutoApprove ? '허용' : '수동') + ' · 공개 자동 승인: ' + (cr.allowPublicAutoApprove ? '허용' : '수동'),
+    ]);
+
+    const de = policy.deliveryExecute || {};
+    addGate('SW 전달 실행', de.mode, ['자동 승인 예산 상한: ' + formatUsd(de.maxAutoApproveBudgetMicros)]);
+
+    const dm = policy.deliveryMerge || {};
+    addGate('PR 병합', dm.mode, [
+      '독립 검증기 필수: ' + (dm.requireIndependentVerifier ? '예' : '아니오'),
+      '보호 경로 미변경 필수: ' + (dm.requireCleanProtectedPaths ? '예' : '아니오'),
+    ]);
+    box.append(grid);
+
+    if (allowEdit) {
+      const form = el('form');
+      const sel = el('select');
+      for (const [val, label] of [
+        ['minimal_human', '사람 개입 최소화 (minimal_human)'],
+        ['balanced', '균형 정책 (balanced)'],
+        ['manual_first', '수동 승인 우선 (manual_first)'],
+      ]) {
+        const opt = el('option', label);
+        opt.value = val;
+        if (policy.autonomyMode === val) opt.selected = true;
+        sel.append(opt);
+      }
+      const lbl = el('label', '승인 자율성 모드 변경');
+      lbl.append(sel);
+      const saveBtn = el('button', '승인 정책 적용', 'secondary compact-btn');
+      saveBtn.type = 'submit';
+      saveBtn.disabled = state.busy;
+      form.append(lbl, saveBtn);
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const nextMode = sel.value;
+        return runMutation(
+          () => monitorApi('/api/projects/' + encodeURIComponent(project.id), { approvalPolicy: { autonomyMode: nextMode } }, 15000, 'PATCH'),
+          '프로젝트 승인 정책을 ' + (AUTONOMY_MODE_LABEL[nextMode] || nextMode) + ' 모드로 갱신했습니다.',
+        );
+      });
+      box.append(form);
+    }
+    return box;
+  }
+
+  function buildApprovalDecisionCard(decision, showOpenBtn) {
+    const card = el('article', undefined, 'approval-decision-card');
+    const head = el('div', undefined, 'approval-decision-head');
+    const badges = el('div', undefined, 'approval-decision-badges');
+    badges.append(
+      el('span', APPROVAL_OUTCOME_LABEL[decision.outcome] || safeText(decision.outcome, 32), approvalOutcomeTone(decision.outcome)),
+      el('span', APPROVAL_GATE_LABEL[decision.gate] || safeText(decision.gate, 32), 'pill'),
+      el('span', safeText(decision.projectId || 'default', 48), 'cap-chip mono'),
+      el('span', (APPROVAL_ACTOR_LABEL[decision.actorKind] || safeText(decision.actorKind, 24)) + ' · 정책 ' + safeText(decision.policyVersion || '-', 16), 'quiet mono'),
+    );
+    head.append(badges, el('span', formatDate(decision.decidedAt), 'quiet mono'));
+    card.append(head);
+
+    const titleRow = el('div', undefined, 'subtask-head');
+    titleRow.append(el('strong', safeText(decision.targetTitle || decision.targetId, 160)), el('span', safeText(decision.targetId, 48), 'quiet mono'));
+    card.append(titleRow);
+
+    card.append(el('p', safeText(decision.summary, 600)));
+
+    if (decision.agentAssessment?.rationale) {
+      const rBox = el('div', undefined, 'agent-rationale-box');
+      rBox.append(
+        el('strong', '에이전트 판단 사유' + (decision.agentAssessment.recommendedOutcome ? ' (' + (APPROVAL_OUTCOME_LABEL[decision.agentAssessment.recommendedOutcome] || decision.agentAssessment.recommendedOutcome) + ')' : '') + ': '),
+        el('span', safeText(decision.agentAssessment.rationale, 800)),
+      );
+      card.append(rBox);
+    }
+
+    if (Array.isArray(decision.checks) && decision.checks.length) {
+      const checksWrap = el('div', undefined, 'approval-checks-list');
+      for (const ck of decision.checks) {
+        const cls = ck.passed ? 'check-pass' : ck.severity === 'hard_reject' ? 'check-reject' : 'check-escalate';
+        const icon = ck.passed ? '✓ 통과' : ck.severity === 'hard_reject' ? '✕ 거부' : '▲ 수동 전환';
+        const row = el('div', undefined, 'approval-check-row ' + cls);
+        row.append(
+          el('strong', icon),
+          el('span', safeText(ck.label || ck.ruleId, 80)),
+          el('span', '실제: ' + safeText(ck.actual, 80) + ' / 기준: ' + safeText(ck.threshold, 80), 'quiet mono'),
+          el('span', safeText(ck.detail, 300), 'approval-check-detail'),
+        );
+        checksWrap.append(row);
+      }
+      card.append(checksWrap);
+    }
+
+    if (showOpenBtn && decision.targetId) {
+      const foot = el('div', undefined, 'inbox-card-foot');
+      foot.append(el('span', '정책 모드: ' + (AUTONOMY_MODE_LABEL[decision.policyMode] || safeText(decision.policyMode, 24)), 'quiet'));
+      const openBtn = el('button', '대상 작업 보기', 'secondary compact-btn');
+      openBtn.type = 'button';
+      openBtn.addEventListener('click', () => openDrawer(decision.targetKind === 'delivery_task' ? 'delivery' : 'compute', decision.targetId));
+      foot.append(openBtn);
+      card.append(foot);
+    }
+    return card;
+  }
+
+  function renderApprovalDecisionList(container, decisions, emptyText, showOpenBtn) {
+    if (!container) return;
+    container.replaceChildren();
+    if (!Array.isArray(decisions) || !decisions.length) {
+      container.append(el('p', emptyText || '기록된 승인 정책 판단 이력이 없습니다.', 'empty'));
+      return;
+    }
+    const sorted = [...decisions].sort((a, b) => String(b.decidedAt || '').localeCompare(String(a.decidedAt || '')));
+    for (const d of sorted) {
+      container.append(buildApprovalDecisionCard(d, showOpenBtn));
+    }
+  }
+
   // ---------- INBOX ----------
   function buildInboxCard(item) {
     const card = el('article', undefined, 'inbox-card');
@@ -875,6 +1105,13 @@
     }
     card.append(chips);
 
+    const latestDecision = Array.isArray(item.raw?.approvalDecisions) && item.raw.approvalDecisions.length
+      ? item.raw.approvalDecisions[item.raw.approvalDecisions.length - 1]
+      : null;
+    if (latestDecision) {
+      card.append(el('p', '판단 근거: ' + safeText(latestDecision.summary, 240), 'help'));
+    }
+
     const foot = el('div', undefined, 'inbox-card-foot');
     foot.append(el('span', '대기 ' + formatElapsedSince(item.updatedAt) + ' · ' + safeText(item.id, 24), 'quiet mono'));
     const actionBtn = el('button', '검토 · 결정', 'compact-btn');
@@ -908,6 +1145,21 @@
         for (const item of filtered) fullBox.append(buildInboxCard(item));
       }
     }
+
+    const allDecisions = visibleApprovalDecisions();
+    const filteredDecisions =
+      state.approvalOutcomeFilter === 'all'
+        ? allDecisions
+        : allDecisions.filter((d) => d.outcome === state.approvalOutcomeFilter);
+    if (byId('approval-history-count')) {
+      byId('approval-history-count').textContent = filteredDecisions.length + '건 / 전체 ' + allDecisions.length + '건';
+    }
+    renderApprovalDecisionList(
+      byId('approval-history-list'),
+      filteredDecisions,
+      '선택한 조건에 해당하는 승인 정책 판단 이력이 없습니다.',
+      true,
+    );
   }
 
   // ---------- OVERVIEW & COST ANALYTICS ----------
@@ -1566,6 +1818,13 @@
         panel.append(form);
         bodyEl.append(panel);
       }
+
+      if (Array.isArray(job.approvalDecisions) && job.approvalDecisions.length) {
+        bodyEl.append(el('h3', '승인 정책 판단 근거 (' + job.approvalDecisions.length + '건)'));
+        const listWrap = el('div', undefined, 'approval-history-list');
+        renderApprovalDecisionList(listWrap, job.approvalDecisions, '', false);
+        bodyEl.append(listWrap);
+      }
     } else if (state.drawer.kind === 'project') {
       const project = state.projects.list.find((p) => p.id === state.drawer.id);
       if (!project) {
@@ -1592,6 +1851,15 @@
       add('허용 저장소', (project.delivery?.repositories || []).join(', ') || '미지정', true);
       add('S3 네임스페이스', (project.compute?.s3ArtifactPrefixes || []).join(', ') || '-', true);
       bodyEl.append(facts);
+      bodyEl.append(buildApprovalPolicyBox(project, true));
+
+      const projDecisions = visibleApprovalDecisions().filter((d) => d.projectId === project.id);
+      if (projDecisions.length) {
+        bodyEl.append(el('h3', '최근 승인 판단 근거 (' + projDecisions.length + '건)'));
+        const dWrap = el('div', undefined, 'approval-history-list');
+        renderApprovalDecisionList(dWrap, projDecisions.slice(0, 10), '', true);
+        bodyEl.append(dWrap);
+      }
 
       const ctrl = el('section', undefined, 'decision-panel');
       ctrl.append(el('h3', '프로젝트 상태 및 전용 토큰'));
@@ -1886,6 +2154,13 @@
       ? (pf.ok ? '통과' : '실패') + ' · CLI ' + (pf.cliVersion ? safeText(pf.cliVersion, 64) : '미보고') + ' · auth ' + (pf.authReady ? 'OK' : '미준비') + ' · git ' + (pf.gitReady ? 'OK' : '미준비') + (pf.reason ? ' · ' + safeText(pf.reason, 200) : '')
       : '프리플라이트 기록 없음';
 
+    renderApprovalDecisionList(
+      byId('dlv-approvals-list'),
+      task.approvalDecisions || [],
+      '이 SW 전달 작업에 기록된 승인 정책 평가가 없습니다.',
+      false,
+    );
+
     const taskEvents = state.delivery.events.filter((e) => e.taskId === task.id).sort((a, b) => b.sequence - a.sequence);
     renderEntityEvents(byId('dlv-events'), taskEvents);
   }
@@ -2155,6 +2430,13 @@
       pubInfo.append(el('span', '아직 공개되지 않았습니다.', 'quiet'));
     }
 
+    renderApprovalDecisionList(
+      byId('cmp-approvals-list'),
+      job.approvalDecisions || [],
+      '이 Spot 컴퓨팅 작업에 기록된 승인 정책 평가가 없습니다.',
+      false,
+    );
+
     const jobEvents = state.compute.events.filter((e) => e.jobId === job.id).sort((a, b) => b.sequence - a.sequence);
     renderEntityEvents(byId('cmp-events'), jobEvents);
   }
@@ -2401,6 +2683,9 @@
           state.compute.ledger = snapCompute.ledger ?? null;
           state.collab.storageBackend = snap.collab.storageBackend ?? null;
           state.collab.sessions = Array.isArray(snap.collab.sessions) ? snap.collab.sessions : [];
+          state.approvals = {
+            decisions: Array.isArray(snap.approvals?.decisions) ? snap.approvals.decisions : [],
+          };
         }
       } catch (err) {
         if (err.status !== 404) {
@@ -2566,12 +2851,22 @@
     if (p) p.hidden = true;
   });
   byId('project-token-dismiss')?.addEventListener('click', clearOneTimeTokenBanner);
+  byId('approval-history-filters')?.querySelectorAll('button').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      state.approvalOutcomeFilter = btn.dataset.outcome || 'all';
+      byId('approval-history-filters').querySelectorAll('button').forEach((b) => {
+        b.className = b === btn ? 'filter-btn active' : 'filter-btn';
+      });
+      renderInbox();
+    });
+  });
   byId('project-create-form')?.addEventListener('submit', (event) => {
     event.preventDefault();
     const id = (byId('proj-id')?.value || '').trim().toLowerCase();
     const name = (byId('proj-name')?.value || '').trim();
     const template = byId('proj-template')?.value || 'generic';
     const budgetUsd = Number(byId('proj-budget')?.value || 0);
+    const autonomyMode = (byId('proj-autonomy-mode')?.value || '').trim();
     const repos = (byId('proj-repos')?.value || '').split(',').map((s) => s.trim()).filter(Boolean);
     const description = (byId('proj-desc')?.value || '').trim();
     const autoMerge = Boolean(byId('proj-automerge')?.checked);
@@ -2588,6 +2883,7 @@
           template,
           budget: { computeBudgetCapMicros: Math.max(0, Math.round(budgetUsd * 1_000_000)) },
           delivery: { repositories: repos, autoMergeRepositories: autoMerge ? repos : [] },
+          ...(autonomyMode ? { approvalPolicy: { autonomyMode } } : {}),
         });
         if (byId('project-create-panel')) byId('project-create-panel').hidden = true;
         if (byId('proj-id')) byId('proj-id').value = '';

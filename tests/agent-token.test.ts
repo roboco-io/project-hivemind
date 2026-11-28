@@ -141,6 +141,7 @@ test('the MCP agent profile exposes no release, delivery write, collaboration or
     'hivemind_compute_get',
     'hivemind_compute_ledger',
     'hivemind_compute_list',
+    'hivemind_compute_request_approval',
     'hivemind_compute_wake',
     'hivemind_delivery_get',
     'hivemind_delivery_list',

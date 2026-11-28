@@ -341,6 +341,14 @@
               <label for="proj-budget">컴퓨팅 예산 상한 (USD)
                 <input id="proj-budget" type="number" min="0" max="10000" step="1" value="100">
               </label>
+              <label for="proj-autonomy-mode">승인 정책 모드
+                <select id="proj-autonomy-mode">
+                  <option value="">템플릿 기본 정책 사용</option>
+                  <option value="minimal_human">사람 개입 최소화 (minimal_human · 정책 내 자동 승인)</option>
+                  <option value="balanced">균형 정책 (balanced · 소규모 자동 · 고위험 수동)</option>
+                  <option value="manual_first">수동 승인 우선 (manual_first · 모든 실행 수동)</option>
+                </select>
+              </label>
               <label class="wide" for="proj-repos">허용 GitHub 저장소 (쉼표 구분)
                 <input id="proj-repos" type="text" placeholder="roboco-io/my-project, roboco-io/another-repo">
               </label>
@@ -375,6 +383,28 @@
           <div id="inbox-list" class="inbox-grid inbox-grid-full">
             <p class="empty">현재 사람의 승인이나 검토를 기다리는 항목이 없습니다.</p>
           </div>
+
+          <section id="approval-history-section" class="monitor-card approval-history-card">
+            <div class="section-title">
+              <div>
+                <p class="context">중앙 승인 정책 평가 · 운영자 결정 감사</p>
+                <h2>건별 승인 판단 근거 이력</h2>
+              </div>
+              <span id="approval-history-count" class="quiet">0건</span>
+            </div>
+            <div class="toolbar">
+              <div id="approval-history-filters" class="filter-group" role="group" aria-label="승인 결과 필터">
+                <button type="button" class="filter-btn active" data-outcome="all">전체</button>
+                <button type="button" class="filter-btn" data-outcome="auto_approved">자동 승인</button>
+                <button type="button" class="filter-btn" data-outcome="manual_approved">수동 승인</button>
+                <button type="button" class="filter-btn" data-outcome="manual_approval_required">수동 승인 요청</button>
+                <button type="button" class="filter-btn" data-outcome="rejected">거부</button>
+              </div>
+            </div>
+            <div id="approval-history-list" class="approval-history-list">
+              <p class="empty">기록된 승인 정책 판단 이력이 없습니다.</p>
+            </div>
+          </section>
         </section>
 
         <!-- 3. SW DELIVERY TAB -->
@@ -483,6 +513,13 @@
                     <div class="wide"><dt>배치 근거</dt><dd id="dlv-place-reason"></dd></div>
                     <div class="wide"><dt>최근 프리플라이트</dt><dd id="dlv-preflight"></dd></div>
                   </dl>
+                </section>
+
+                <section class="execution-section">
+                  <div class="section-title"><h3>승인 정책 판단 근거</h3><span class="quiet">자동 · 수동 결정 이력</span></div>
+                  <div id="dlv-approvals-list" class="approval-history-list">
+                    <p class="empty">기록된 승인 정책 평가가 없습니다.</p>
+                  </div>
                 </section>
 
                 <section class="events-section">
@@ -617,6 +654,13 @@
                     <div class="wide"><dt>검증 지표 · 요약</dt><dd id="cmp-attest-summary"></dd></div>
                     <div class="wide"><dt>공개 결과</dt><dd id="cmp-pub-info"></dd></div>
                   </dl>
+                </section>
+
+                <section class="execution-section">
+                  <div class="section-title"><h3>승인 정책 판단 근거</h3><span class="quiet">자동 · 수동 결정 이력</span></div>
+                  <div id="cmp-approvals-list" class="approval-history-list">
+                    <p class="empty">기록된 승인 정책 평가가 없습니다.</p>
+                  </div>
                 </section>
 
                 <section class="events-section">

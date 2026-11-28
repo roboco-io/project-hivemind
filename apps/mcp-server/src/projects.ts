@@ -167,4 +167,29 @@ export function registerProjectOperatorTools(server: McpServer, options: Project
     async ({ projectId, status }, extra) =>
       run(() => api('PATCH', `/api/projects/${encodeURIComponent(projectId)}`, extra.signal, { status })),
   );
+
+  server.registerTool(
+    'hivemind_approval_list',
+    {
+      title: 'HIVEMIND 승인 정책 판단 근거 이력 조회',
+      description: '프로젝트별 자동 승인·수동 승인·수동 승인 요청·거부 판단과 규칙별 검증 근거를 최신순으로 조회합니다.',
+      inputSchema: z.strictObject({
+        projectId: projectIdSchema.optional(),
+        outcome: z.enum(['auto_approved', 'manual_approved', 'manual_approval_required', 'rejected']).optional(),
+        gate: z.enum(['compute_launch', 'compute_release', 'delivery_execute', 'delivery_merge']).optional(),
+        limit: z.number().int().min(1).max(200).optional(),
+      }),
+      annotations: readOnly,
+    },
+    async ({ projectId, outcome, gate, limit }, extra) =>
+      run(() => {
+        const params = new URLSearchParams();
+        if (projectId) params.set('projectId', projectId);
+        if (outcome) params.set('outcome', outcome);
+        if (gate) params.set('gate', gate);
+        if (limit) params.set('limit', String(limit));
+        const qs = params.toString();
+        return api('GET', `/api/approvals${qs ? `?${qs}` : ''}`, extra.signal);
+      }),
+  );
 }

@@ -1,4 +1,5 @@
 import { dirname, join, resolve } from 'node:path';
+import type { ProjectApprovalPolicyPatch } from '../../packages/contracts/src/approval-policy.js';
 import type {
   CreateProjectInput,
   IssuedProjectToken,
@@ -24,6 +25,7 @@ export interface ProjectBootstrapManifest {
   s3ArtifactPrefixes?: string[];
   protectedPaths?: string[];
   branchPrefix?: string;
+  approvalPolicy?: ProjectApprovalPolicyPatch;
   notificationChannel?: string | null;
   trigger?: {
     enabledByDefault?: false;
@@ -112,6 +114,7 @@ export function buildCreateProjectPayload(manifest: ProjectBootstrapManifest): C
       credentialPurposes: [...preset.compute.credentialPurposes],
       maxLifetimeMs: preset.compute.maxLifetimeMs,
     },
+    ...(manifest.approvalPolicy ? { approvalPolicy: manifest.approvalPolicy } : {}),
     ...(manifest.notificationChannel !== undefined ? { notificationChannel: manifest.notificationChannel } : {}),
   };
 }

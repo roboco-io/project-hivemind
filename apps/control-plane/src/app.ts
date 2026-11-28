@@ -25,7 +25,7 @@ import { registerCollabRoutes } from './collab-api.js';
 import type { CollabOrchestrator } from './collab-orchestrator.js';
 import { registerDeliveryRoutes } from './delivery-api.js';
 import { registerComputeRoutes } from './compute-api.js';
-import { registerProjectRoutes } from './projects-api.js';
+import { collectApprovalDecisions, registerProjectRoutes } from './projects-api.js';
 import { registerAgentCredentialRoutes, type AgentCredentialsApiOptions } from './agent-access-api.js';
 import { registerNotificationRoutes, type NotificationGate } from './notifications-api.js';
 import { registerAutonomyRoutes } from './autonomy-api.js';
@@ -282,6 +282,7 @@ export function buildApp(options: AppOptions = {}) {
       compute: { storageBackend: computeStore.storageBackend, jobs: computeJobs, events: computeEvents, ledger: computeLedger },
       collab: { storageBackend: collabService.storageBackend, sessions: collabSessions },
       autonomy: { storageBackend: autonomyStore.storageBackend, triggers: autonomyTriggers, events: autonomyEvents },
+      approvals: { decisions: collectApprovalDecisions(computeJobs, deliveryTasks, { limit: 200 }) },
     };
   });
   if (options.cloudflare) {

@@ -510,7 +510,8 @@ test('MCP compute profile registers all 7 Delivery + 10 Compute operator tools',
   assert.ok(tools.includes('hivemind_compute_ledger'));
   assert.ok(tools.includes('hivemind_compute_wake'));
   assert.ok(tools.includes('hivemind_compute_publish_release'));
-  assert.equal(tools.length, 17);
+  assert.ok(tools.includes('hivemind_compute_request_approval'));
+  assert.equal(tools.length, 18);
 });
 
 test('Issue #12 follow-up: instanceProfile allowlist, pinned S3 inputs fingerprint + preflight, bootstrap metadata, and attestationSource provenance', async () => {

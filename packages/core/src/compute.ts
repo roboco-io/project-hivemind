@@ -1,3 +1,4 @@
+import type { ApprovalDecisionRecord } from '../../contracts/src/approval-policy.js';
 import { createHash, randomUUID } from 'node:crypto';
 import {
   COMPUTE_WORKLOAD_KINDS,
@@ -1395,6 +1396,32 @@ export class ComputeStore {
       }
       const saved = this.save(job);
       this.emit(saved.id, 'compute.cancelled', { reason: cleanReason }, saved.projectId);
+      return saved;
+    });
+  }
+
+  /** Appends an immutable approval policy evaluation or operator decision record to the job audit trail. */
+  async recordApprovalDecision(id: string, record: ApprovalDecisionRecord): Promise<ComputeJob> {
+    return this.tx(() => {
+      const job = this.load(id);
+      const list = Array.isArray(job.approvalDecisions) ? [...job.approvalDecisions] : [];
+      list.push(structuredClone(record));
+      job.approvalDecisions = list.slice(-50);
+      const saved = this.save(job);
+      this.emit(
+        saved.id,
+        'compute.approval_evaluated',
+        {
+          decisionId: record.id,
+          gate: record.gate,
+          outcome: record.outcome,
+          actorKind: record.actorKind,
+          policyVersion: record.policyVersion,
+          policyMode: record.policyMode,
+          summary: record.summary,
+        },
+        saved.projectId,
+      );
       return saved;
     });
   }
