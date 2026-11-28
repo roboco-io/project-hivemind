@@ -147,6 +147,50 @@ test('the API lets the agent read triggers but only the operator configure, enab
   assert.equal((await call('POST', '/api/autonomy/triggers/smf/disable', OP, { reason: '' })).statusCode, 400);
 });
 
+test('the agent token reads only the delivery tasks of a configured trigger, and changes none', async (t) => {
+  const OP = 'operator-token-0000000000000000000001';
+  const AG = 'agent-token-000000000000000000000003';
+  const app = buildApp({ operatorToken: OP, workerToken: 'worker-token-00000000000000000000002', agentToken: AG, deliveryAutoMergeRepositories: [REPO] });
+  t.after(() => app.close());
+  const call = (method: 'GET' | 'POST' | 'PUT', url: string, token: string, payload?: Record<string, unknown>) =>
+    app.inject({ method, url, headers: { authorization: `Bearer ${token}` }, ...(payload ? { payload } : {}) });
+  const body = (branchPrefix: string) => {
+    const snap = snapshot();
+    return {
+      title: 'task', instructions: 'do it', provider: 'codex', maxIterations: 1, budgetMicros: 0,
+      acceptance: snap.acceptance, bundle: snap.bundle,
+      delivery: { mode: 'draft_pr', repository: REPO, baseBranch: 'main', branchPrefix, autoMerge: false },
+      spot: { maxSpotRetries: 2, checkpointFlushTimeoutMs: 90_000 },
+      routing: { primaryRegion: 'ap-northeast-2', allowedRegions: ['ap-northeast-2'], workloadClass: 'cpu-arm-worker' },
+    };
+  };
+  const own = await call('POST', '/api/delivery/tasks', OP, body(CONFIG.branchPrefix));
+  assert.equal(own.statusCode, 201, own.body);
+  const other = await call('POST', '/api/delivery/tasks', OP, body('agent/other/'));
+  assert.equal(other.statusCode, 201, other.body);
+  const ownId = own.json().id as string;
+  const otherId = other.json().id as string;
+
+  // No trigger yet: the agent sees nothing.
+  assert.deepEqual((await call('GET', '/api/delivery/tasks', AG)).json().tasks, []);
+  assert.equal((await call('GET', `/api/delivery/tasks/${ownId}`, AG)).statusCode, 404);
+
+  assert.equal((await call('PUT', '/api/autonomy/triggers/smf', OP, CONFIG)).statusCode, 200);
+  const listed = (await call('GET', '/api/delivery/tasks', AG)).json() as { tasks: { id: string }[]; events: { taskId: string }[] };
+  assert.deepEqual(listed.tasks.map((x) => x.id), [ownId]);
+  assert.ok(listed.events.length > 0 && listed.events.every((e) => e.taskId === ownId));
+  assert.equal((await call('GET', `/api/delivery/tasks/${ownId}`, AG)).statusCode, 200);
+  // Another task answers like a missing one.
+  assert.equal((await call('GET', `/api/delivery/tasks/${otherId}`, AG)).statusCode, 404);
+  // The operator still sees every task.
+  assert.equal((await call('GET', '/api/delivery/tasks', OP)).json().tasks.length, 2);
+  // No write, approval or cancellation with the agent token.
+  const fingerprint = own.json().approvalFingerprint as string;
+  assert.equal((await call('POST', `/api/delivery/tasks/${ownId}/approve`, AG, { approvalFingerprint: fingerprint, reason: 'x' })).statusCode, 401);
+  assert.equal((await call('POST', `/api/delivery/tasks/${ownId}/cancel`, AG, { reason: 'x' })).statusCode, 401);
+  assert.equal((await call('POST', '/api/delivery/tasks', AG, body(CONFIG.branchPrefix))).statusCode, 401);
+});
+
 test('the snapshot preparer bundles the branch head and pins only files under protected paths', async () => {
   const root = mkdtempSync(join(tmpdir(), 'hm-autonomy-src-'));
   try {

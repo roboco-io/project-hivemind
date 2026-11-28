@@ -7,6 +7,8 @@ export interface DeliveryMcpOptions {
   operatorToken: string;
   fetchImpl?: typeof fetch;
   redact?: (value: string) => string;
+  /** Registers only the list and get tools (agent profile: reads tasks the autonomy triggers send). */
+  readOnly?: boolean;
 }
 
 const TOOL_ERROR = 'HIVEMIND 전달 작업 요청을 처리하지 못했습니다. 연결·권한·입력과 현재 작업 상태를 확인하세요.';
@@ -83,6 +85,7 @@ export function registerDeliveryOperatorTools(server: McpServer, options: Delive
     },
     async ({ taskId: id }, extra) => run(() => api(`/api/delivery/tasks/${encodeURIComponent(id)}`, extra.signal)),
   );
+  if (options.readOnly) return;
 
   server.registerTool(
     'hivemind_delivery_create',

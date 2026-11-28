@@ -59,7 +59,7 @@ test('the agent token reaches only the Model Factory agent routes', async (t) =>
     ['POST', `/api/model-factory/jobs/${job.id}/verify-release`, {}],
     ['POST', `/api/model-factory/jobs/${job.id}/receipt`, {}],
     ['POST', '/api/model-factory/sweep-expired', {}],
-    ['GET', '/api/delivery/tasks'],
+    ['POST', '/api/delivery/tasks', {}],
     ['GET', '/api/collab/sessions'],
     ['GET', '/api/capabilities'],
   ];
@@ -111,7 +111,7 @@ test('the MCP agent profile reads only the agent token file and refuses mixing i
   assert.throws(() => loadMcpSettings({ HIVEMIND_MCP_PROFILE: 'agent', HIVEMIND_AGENT_TOKEN_FILE: tokenFile('OPERATOR_TOKEN', AG) }));
 });
 
-test('the MCP agent profile exposes no release, delivery, collaboration or Control Plane power tool', async (t) => {
+test('the MCP agent profile exposes no release, delivery write, collaboration or Control Plane power tool', async (t) => {
   const app = buildApp({ operatorToken: OP, workerToken: WK, agentToken: AG, modelFactoryBudgetCapMicros: 1_000_000 });
   t.after(() => app.close());
   const fetchImpl: typeof fetch = async (input, init) => {
@@ -134,6 +134,8 @@ test('the MCP agent profile exposes no release, delivery, collaboration or Contr
   assert.deepEqual(names, [
     'hivemind_agent_credentials',
     'hivemind_autonomy_triggers',
+    'hivemind_delivery_get',
+    'hivemind_delivery_list',
     'hivemind_mf_approve_training',
     'hivemind_mf_cancel',
     'hivemind_mf_create',

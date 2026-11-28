@@ -15,10 +15,14 @@ export interface DeliveryApiOptions {
   operatorToken: string;
   workerToken: string;
   orchestrator?: DeliveryOrchestrator;
+  /** Model Factory agent token: may read only the tasks an autonomy trigger sends (issue #20). */
+  agentToken?: string;
+  /** Repository and branch prefix of each autonomy trigger; a task matching one is readable by the agent. */
+  agentReadableScopes?: () => Promise<Array<{ repository: string; branchPrefix: string }>>;
 }
 
 export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryApiOptions): void {
-  const { store, operatorToken, workerToken, orchestrator } = options;
+  const { store, operatorToken, workerToken, orchestrator, agentToken, agentReadableScopes } = options;
 
   const authorize = (role: 'operator' | 'worker') => async (request: FastifyRequest, reply: FastifyReply) => {
     const expected = role === 'operator' ? operatorToken : workerToken;
@@ -29,12 +33,29 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
 
   const operatorOnly = authorize('operator');
   const workerOnly = authorize('worker');
+  const isAgent = (request: FastifyRequest) =>
+    Boolean(agentToken && agentReadableScopes) && equalSecret(request.headers.authorization ?? '', `Bearer ${agentToken}`);
+  const operatorOrAgentRead = async (request: FastifyRequest, reply: FastifyReply) => {
+    if (!isAgent(request) && !equalSecret(request.headers.authorization ?? '', `Bearer ${operatorToken}`)) {
+      return reply.code(401).send({ error: 'Unauthorized' });
+    }
+  };
+  /** The agent sees a task only when an autonomy trigger with the same repository and branch prefix exists. */
+  const agentFilter = async () => {
+    const scopes = await agentReadableScopes!();
+    return (task: Awaited<ReturnType<DeliveryStore['get']>>) =>
+      scopes.some((s) => s.repository === task.delivery.repository && s.branchPrefix === task.delivery.branchPrefix);
+  };
 
-  app.get('/api/delivery/tasks', { onRequest: operatorOnly }, async () => ({
-    storageBackend: store.storageBackend,
-    tasks: await store.list(),
-    events: await store.events(),
-  }));
+  app.get('/api/delivery/tasks', { onRequest: operatorOrAgentRead }, async (request) => {
+    const tasks = await store.list();
+    const events = await store.events();
+    if (!isAgent(request)) return { storageBackend: store.storageBackend, tasks, events };
+    const readable = await agentFilter();
+    const visible = tasks.filter(readable);
+    const ids = new Set(visible.map((t) => t.id));
+    return { storageBackend: store.storageBackend, tasks: visible, events: events.filter((e) => ids.has(e.taskId)) };
+  });
 
   app.get<{
     Querystring: {
@@ -66,10 +87,12 @@ export function registerDeliveryRoutes(app: FastifyInstance, options: DeliveryAp
     return orchestrator.reconcileRunningTasks(AbortSignal.timeout(30_000));
   });
 
-  app.get<{ Params: { id: string } }>('/api/delivery/tasks/:id', { onRequest: operatorOnly }, async (request) => ({
-    task: await store.get(request.params.id),
-    events: await store.events(request.params.id),
-  }));
+  app.get<{ Params: { id: string } }>('/api/delivery/tasks/:id', { onRequest: operatorOrAgentRead }, async (request) => {
+    const task = await store.get(request.params.id);
+    // Same answer as a missing task, so the agent cannot probe for other tasks.
+    if (isAgent(request) && !(await agentFilter())(task)) throw new DomainError('Delivery task not found', 404);
+    return { task, events: await store.events(request.params.id) };
+  });
 
   app.post<{ Body: CreateDeliveryTask }>(
     '/api/delivery/tasks',

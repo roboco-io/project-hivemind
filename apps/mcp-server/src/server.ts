@@ -141,6 +141,7 @@ export function createHivemindMcpServer(options: HivemindMcpOptions): McpServer 
     registerModelFactoryOperatorTools(server, { ...settings, fetchImpl: agentFetch, redact, agent: true });
     registerAgentCredentialTools(server, { ...settings, fetchImpl: agentFetch, ...(options.agentCredentialsDir ? { credentialsDir: options.agentCredentialsDir } : {}) });
     registerAutonomyTools(server, { ...settings, fetchImpl: agentFetch, readOnly: true });
+    registerDeliveryOperatorTools(server, { ...settings, fetchImpl: agentFetch, redact, readOnly: true });
     return server;
   }
   if (options.profile === 'model-factory') {

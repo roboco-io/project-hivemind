@@ -115,7 +115,7 @@ export function buildApp(options: AppOptions = {}) {
     mfWakeTimer.unref();
   }
   app.addHook('onClose',async()=>{if(mfWakeTimer)clearInterval(mfWakeTimer);if(autonomyTimer)clearInterval(autonomyTimer);await autonomyStore.close();await collabService.close();await deliveryStore.close();await modelFactoryStore.close();autonomousStore.close();toolAuditDb.close();});
-  registerDeliveryRoutes(app,{store:deliveryStore,operatorToken,workerToken,orchestrator:deliveryOrchestrator});
+  registerDeliveryRoutes(app,{store:deliveryStore,operatorToken,workerToken,orchestrator:deliveryOrchestrator,...(agentToken?{agentToken,agentReadableScopes:async()=>(await autonomyStore.list()).map((t)=>({repository:t.repository,branchPrefix:t.branchPrefix}))}:{})});
   registerModelFactoryRoutes(app,{store:modelFactoryStore,operatorToken,workerToken,...(agentToken?{agentToken}:{}),orchestrator:modelFactoryOrchestrator});
   registerCollabRoutes(app,{service:collabService,operatorToken,workerToken,orchestrator:collabOrchestrator});
   registerAutonomyRoutes(app,{store:autonomyStore,...(autonomyDispatcher?{dispatcher:autonomyDispatcher}:{}),operatorToken,...(agentToken?{agentToken}:{})});
