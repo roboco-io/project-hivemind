@@ -22,7 +22,9 @@ test('SNS notifications carry a channel attribute: urgent kinds for every subscr
   const notifier = createAwsSnsNotifier({ topicArn: TOPIC, credentials: () => ({ accessKeyId: 'AKIDEXAMPLE', secretAccessKey: 's'.repeat(40) }), fetch: fetchImpl, redact: ['secret-token-value-1234567890'] });
   assert.deepEqual(await notifier.notify({ kind: 'release_published', subject: 'Released\nmodel', message: 'ok with secret-token-value-1234567890' }), { messageId: 'm-1' });
   await notifier.notify({ kind: 'budget_exhausted', subject: 'Budget', message: 'cap reached' });
-  assert.deepEqual(hosts, ['sns.us-east-2.amazonaws.com', 'sns.us-east-2.amazonaws.com']);
+  await notifier.notify({ kind: 'improvement_proposed', subject: 'Proposal', message: 'plans/improvements/x.md' });
+  assert.deepEqual(hosts, ['sns.us-east-2.amazonaws.com', 'sns.us-east-2.amazonaws.com', 'sns.us-east-2.amazonaws.com']);
+  assert.equal(bodies[2]!.get('MessageAttributes.entry.1.Value.StringValue'), 'email');
   assert.equal(bodies[0]!.get('TopicArn'), TOPIC);
   assert.equal(bodies[0]!.get('MessageAttributes.entry.1.Value.StringValue'), 'email');
   assert.equal(bodies[1]!.get('MessageAttributes.entry.1.Value.StringValue'), 'urgent');
@@ -57,6 +59,7 @@ test('the notification API accepts the operator and the agent, only known kinds,
   const post = (token: string, payload: Record<string, unknown>) => app.inject({ method: 'POST', url: '/api/notifications', headers: { authorization: `Bearer ${token}` }, payload });
   assert.equal((await post(AG, { kind: 'task_finished', subject: 'Task done', message: 'rtl-repair finished' })).statusCode, 200);
   assert.equal((await post(OP, { kind: 'loop_stopped', subject: 'Stopped', message: 'three failures' })).statusCode, 200);
+  assert.equal((await post(AG, { kind: 'improvement_proposed', subject: 'Proposal', message: 'plans/improvements/x.md' })).statusCode, 200);
   assert.equal((await post('wrong', { kind: 'task_finished', subject: 's', message: 'm' })).statusCode, 401);
   assert.equal((await post(AG, { kind: 'anything', subject: 's', message: 'm' })).statusCode, 400);
   assert.equal((await post(AG, { kind: 'task_finished', subject: '', message: 'm' })).statusCode, 400);
@@ -64,5 +67,5 @@ test('the notification API accepts the operator and the agent, only known kinds,
   const failed = await post(AG, { kind: 'task_finished', subject: 's', message: 'm' });
   assert.equal(failed.statusCode, 502);
   assert.doesNotMatch(failed.body, /arn:aws/);
-  assert.deepEqual(sent, ['task_finished:Task done', 'loop_stopped:Stopped']);
+  assert.deepEqual(sent, ['task_finished:Task done', 'loop_stopped:Stopped', 'improvement_proposed:Proposal']);
 });

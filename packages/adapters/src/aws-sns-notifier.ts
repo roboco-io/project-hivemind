@@ -10,6 +10,8 @@ export const NOTIFICATION_KINDS = {
   release_published: { urgent: false },
   release_failed: { urgent: false },
   task_finished: { urgent: false },
+  /** A worker wrote a proposal to change protected paths under plans/improvements/; a person reviews it. */
+  improvement_proposed: { urgent: false },
   budget_exhausted: { urgent: true },
   loop_stopped: { urgent: true },
   auto_merge_refused: { urgent: true },
