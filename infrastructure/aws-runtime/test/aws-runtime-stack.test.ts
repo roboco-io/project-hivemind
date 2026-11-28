@@ -346,6 +346,7 @@ test('verifier role can read model artifacts for release verification but still 
     Object.entries(template.findResources('AWS::IAM::Policy')).find(([id]) => id.startsWith('VerifierTaskRole'))![1],
   );
   assert.ok(policy.includes('/models/*'), 'verifier reads models/*');
+  assert.ok(policy.includes('/projects/*'), 'verifier reads projects/*');
   assert.ok(policy.includes('/attestations/*'));
   assert.ok(!policy.includes('secretsmanager'));
   assert.ok(!policy.includes('dsql:'));
@@ -377,6 +378,7 @@ test('training instances write only their own staging folder and the Control Pla
   const deny = train.find((st) => st.Sid === 'DenyWritingModelsDirectly');
   assert.equal(deny?.Effect, 'Deny');
   assert.match(JSON.stringify(deny?.Resource), /\/models\/\*"/);
+  assert.match(JSON.stringify(deny?.Resource), /\/projects\/\*"/);
   // No allow statement lets the instance put anywhere else.
   for (const st of train.filter((st) => st.Effect === 'Allow')) {
     if (JSON.stringify(st.Action).includes('s3:PutObject')) assert.equal(st.Sid, 'PutOwnInstanceStagingOnly');
@@ -423,7 +425,7 @@ test('agent credentials parent role is separate, assumable only by the Control P
   assert.match(cp, /sts:AssumeRole/);
   const env = JSON.stringify(template.findResources('AWS::ECS::TaskDefinition'));
   assert.match(env, /HIVEMIND_AGENT_CREDENTIALS_PARENT_ROLE_ARN/);
-  assert.match(env, /spot-placement-read,model-inputs-upload,model-artifacts-read/);
+  assert.match(env, /spot-placement-read,project-inputs-upload,project-artifacts-read,model-inputs-upload,model-artifacts-read/);
   assert.match(env, /HIVEMIND_ARTIFACTS_KMS_KEY_ARN/);
 });
 

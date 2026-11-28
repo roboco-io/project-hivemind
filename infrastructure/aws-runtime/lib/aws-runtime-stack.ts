@@ -311,6 +311,7 @@ export class AwsRuntimeStack extends Stack {
     this.artifactsBucket.grantRead(this.controlPlaneRole, 'patches/*');
     this.artifactsBucket.grantRead(this.controlPlaneRole, 'attestations/*');
     this.artifactsBucket.grantReadWrite(this.controlPlaneRole, 'models/*');
+    this.artifactsBucket.grantReadWrite(this.controlPlaneRole, 'projects/*');
     this.artifactsBucket.grantRead(this.controlPlaneRole, 'staging/*');
     this.githubDraftPrSecret.grantRead(this.controlPlaneRole);
     this.hfReleaseTokenSecret.grantRead(this.controlPlaneRole);
@@ -415,8 +416,9 @@ export class AwsRuntimeStack extends Stack {
     this.artifactsBucket.grantRead(this.verifierRole, 'acceptance/*');
     this.artifactsBucket.grantRead(this.verifierRole, 'patches/*');
     this.artifactsBucket.grantPut(this.verifierRole, 'attestations/*');
-    // Model Factory release verification: the verifier reads artifacts and pinned inputs, never writes them.
+    // Compute release verification: the verifier reads artifacts and pinned inputs, never writes them.
     this.artifactsBucket.grantRead(this.verifierRole, 'models/*');
+    this.artifactsBucket.grantRead(this.verifierRole, 'projects/*');
 
     // 4. Model Factory EC2 Training Instance Role & Instance Profile:
     // Reads models/*/inputs/*; writes only staging/<role id>:<instance id>/*, so one job cannot overwrite
@@ -430,7 +432,10 @@ export class AwsRuntimeStack extends Stack {
       new iam.PolicyStatement({
         sid: 'ReadModelFactoryInputsOnly',
         actions: ['s3:GetObject'],
-        resources: [this.artifactsBucket.arnForObjects('models/*/inputs/*')],
+        resources: [
+          this.artifactsBucket.arnForObjects('models/*/inputs/*'),
+          this.artifactsBucket.arnForObjects('projects/*/*/inputs/*'),
+        ],
       }),
     );
     this.trainingInstanceRole.addToPolicy(
@@ -446,7 +451,10 @@ export class AwsRuntimeStack extends Stack {
         sid: 'DenyWritingModelsDirectly',
         effect: iam.Effect.DENY,
         actions: ['s3:PutObject', 's3:DeleteObject'],
-        resources: [this.artifactsBucket.arnForObjects('models/*')],
+        resources: [
+          this.artifactsBucket.arnForObjects('models/*'),
+          this.artifactsBucket.arnForObjects('projects/*'),
+        ],
       }),
     );
     this.trainingInstanceRole.addToPolicy(
@@ -498,14 +506,20 @@ export class AwsRuntimeStack extends Stack {
       new iam.PolicyStatement({
         sid: 'ModelInputsUpload',
         actions: ['s3:PutObject', 's3:GetObject'],
-        resources: [this.artifactsBucket.arnForObjects('models/*/inputs/*')],
+        resources: [
+          this.artifactsBucket.arnForObjects('models/*/inputs/*'),
+          this.artifactsBucket.arnForObjects('projects/*/*/inputs/*'),
+        ],
       }),
     );
     this.agentCredentialsParentRole.addToPolicy(
       new iam.PolicyStatement({
         sid: 'ModelArtifactsRead',
         actions: ['s3:GetObject'],
-        resources: [this.artifactsBucket.arnForObjects('models/*/runs/*')],
+        resources: [
+          this.artifactsBucket.arnForObjects('models/*/runs/*'),
+          this.artifactsBucket.arnForObjects('projects/*/*/runs/*'),
+        ],
       }),
     );
     this.agentCredentialsParentRole.addToPolicy(
@@ -513,7 +527,11 @@ export class AwsRuntimeStack extends Stack {
         sid: 'ListModelPrefixes',
         actions: ['s3:ListBucket'],
         resources: [this.artifactsBucket.bucketArn],
-        conditions: { StringLike: { 's3:prefix': ['models/*/inputs/*', 'models/*/runs/*'] } },
+        conditions: {
+          StringLike: {
+            's3:prefix': ['models/*/inputs/*', 'models/*/runs/*', 'projects/*/*/inputs/*', 'projects/*/*/runs/*'],
+          },
+        },
       }),
     );
     this.agentCredentialsParentRole.addToPolicy(
@@ -669,7 +687,7 @@ export class AwsRuntimeStack extends Stack {
         HIVEMIND_MF_INSTANCE_PROFILE_ARN: this.trainingInstanceProfile.attrArn,
         HIVEMIND_MF_TRAINING_ROLE_ID: this.trainingInstanceRole.roleId,
         HIVEMIND_AGENT_CREDENTIALS_PARENT_ROLE_ARN: this.agentCredentialsParentRole.roleArn,
-        HIVEMIND_AGENT_CREDENTIAL_PURPOSES: 'spot-placement-read,model-inputs-upload,model-artifacts-read',
+        HIVEMIND_AGENT_CREDENTIAL_PURPOSES: 'spot-placement-read,project-inputs-upload,project-artifacts-read,model-inputs-upload,model-artifacts-read',
         HIVEMIND_ARTIFACTS_KMS_KEY_ARN: artifactKey.keyArn,
         HIVEMIND_MF_ALLOWED_REGIONS: 'ap-northeast-2,us-east-2,us-east-1,us-west-2,ap-northeast-1',
         HIVEMIND_MF_BUDGET_CAP_MICROS: '500000000',
